@@ -3,16 +3,13 @@ use bulkistore_commons::proto::grpc_bulkistore_client::GrpcBulkistoreClient;
 use bulkistore_commons::proto::{RequestMetadata, RpcRequest};
 use mpi::topology::SimpleCommunicator;
 use mpi::traits::*;
-use rmp_serde;
 use rand::Rng;
+use rmp_serde;
 use std::env;
 use std::fs;
 use std::io::Write;
-use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
 use tonic::transport::Channel;
-use tonic::Request;
-use uuid::Uuid;
 
 pub struct ClientContext {
     world: SimpleCommunicator,
@@ -154,7 +151,7 @@ impl ClientContext {
     pub async fn send_request(
         &self,
         server_rank: usize,
-        operation: &str,
+        _operation: &str,
         binary_data: Vec<u8>,
     ) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
         let mut client = self.connect_to_server(server_rank).await?;

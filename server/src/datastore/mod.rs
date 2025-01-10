@@ -1,5 +1,4 @@
 pub mod bulki_store {
-    use bulkistore_commons::common::RPCData;
 
     #[derive(Default)]
     pub struct BulkiStore {

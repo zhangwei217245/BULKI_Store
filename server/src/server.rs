@@ -25,7 +25,9 @@ const MAX_SERVER_ADDR_LEN: usize = 256;
 pub struct ServerContext {
     rank: i32,
     size: i32,
+    #[allow(unused)]
     world: mpi::topology::SimpleCommunicator,
+    #[allow(unused)]
     hostname: String,
     server_addresses: Vec<String>,
     store: BulkiStore,
