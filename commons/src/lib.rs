@@ -1,7 +1,7 @@
 pub mod common {
     use serde::{Deserialize, Serialize};
 
-    #[derive(Serialize, Deserialize, Debug)]
+    #[derive(Serialize, Clone, Deserialize, Debug)]
     pub struct RPCData {
         pub func_name: String,
         pub data: Vec<u8>,

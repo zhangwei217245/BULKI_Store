@@ -19,6 +19,17 @@ pub struct ClientContext {
     client_addresses: Vec<String>,
 }
 
+#[derive(Debug)]
+pub struct BenchmarkStats {
+    total_requests: usize,
+    successful_requests: usize,
+    failed_requests: usize,
+    total_duration_ms: u128,
+    min_latency_ms: u128,
+    max_latency_ms: u128,
+    avg_latency_ms: f64,
+}
+
 impl ClientContext {
     pub fn new(world: SimpleCommunicator) -> Result<Self, Box<dyn std::error::Error>> {
         let rank = world.rank();
@@ -233,6 +244,75 @@ impl ClientContext {
     pub fn get_client_addresses(&self) -> &[String] {
         &self.client_addresses
     }
+
+    pub async fn benchmark_rpc(
+        &self,
+        server_rank: usize,
+        num_requests: usize,
+        rpc_data: RPCData,
+    ) -> BenchmarkStats {
+        let mut stats = BenchmarkStats {
+            total_requests: num_requests,
+            successful_requests: 0,
+            failed_requests: 0,
+            total_duration_ms: 0,
+            min_latency_ms: u128::MAX,
+            max_latency_ms: 0,
+            avg_latency_ms: 0.0,
+        };
+
+        let mut total_latency = 0u128;
+        let benchmark_start = SystemTime::now();
+
+        for i in 0..num_requests {
+            let request_start = SystemTime::now();
+            match self.send_rpc(server_rank, rpc_data.clone()).await {
+                Ok(_result) => {
+                    let latency = request_start.elapsed().unwrap().as_millis();
+                    stats.successful_requests += 1;
+                    total_latency += latency;
+                    stats.min_latency_ms = stats.min_latency_ms.min(latency);
+                    stats.max_latency_ms = stats.max_latency_ms.max(latency);
+
+                    if (i + 1) % 100 == 0 {
+                        println!(
+                            "[Client {}] Completed {} requests, current latency: {}ms",
+                            self.get_rank(),
+                            i + 1,
+                            latency
+                        );
+                    }
+                }
+                Err(e) => {
+                    stats.failed_requests += 1;
+                    eprintln!(
+                        "[Client {}] Request {} failed: {}",
+                        self.get_rank(),
+                        i + 1,
+                        e
+                    );
+                }
+            }
+        }
+
+        stats.total_duration_ms = benchmark_start.elapsed().unwrap().as_millis();
+        stats.avg_latency_ms = total_latency as f64 / stats.successful_requests as f64;
+
+        println!("\nBenchmark Results for Client {}:", self.get_rank());
+        println!("Total Requests: {}", stats.total_requests);
+        println!("Successful Requests: {}", stats.successful_requests);
+        println!("Failed Requests: {}", stats.failed_requests);
+        println!("Total Duration: {}ms", stats.total_duration_ms);
+        println!("Average Latency: {:.2}ms", stats.avg_latency_ms);
+        println!("Min Latency: {}ms", stats.min_latency_ms);
+        println!("Max Latency: {}ms", stats.max_latency_ms);
+        println!(
+            "Requests/second: {:.2}",
+            (stats.successful_requests as f64 * 1000.0) / stats.total_duration_ms as f64
+        );
+
+        stats
+    }
 }
 
 #[tokio::main]
@@ -245,7 +325,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let context = ClientContext::new(world)?;
     println!("Client running on MPI process {}", context.get_rank());
 
-    // Create test RPCData
     let rpc_data = RPCData {
         func_name: if context.get_rank() % 2 == 0 {
             "times_three"
@@ -264,7 +343,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     );
 
     // Send RPC request
-    match context.send_rpc(0, rpc_data).await {
+    match context.send_rpc(0, rpc_data.clone()).await {
         Ok(result) => {
             println!(
                 "[Client {}] Received response: func_name='{}', data={:?}",
@@ -277,6 +356,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             eprintln!("[Client {}] Request failed: {}", context.get_rank(), e);
         }
     }
+
+    // Run benchmark with 1000 requests
+    let num_requests = 1000;
+    context
+        .benchmark_rpc(0, num_requests, rpc_data.clone())
+        .await;
 
     Ok(())
 }
