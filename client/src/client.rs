@@ -1,10 +1,14 @@
+use bulkistore_commons::common::RPCData;
 use bulkistore_commons::proto::grpc_bulkistore_client::GrpcBulkistoreClient;
 use bulkistore_commons::proto::{RequestMetadata, RpcRequest};
 use mpi::topology::SimpleCommunicator;
 use mpi::traits::*;
+use rmp_serde;
+use rand::Rng;
 use std::env;
 use std::fs;
 use std::io::Write;
+use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
 use tonic::transport::Channel;
 use tonic::Request;
@@ -53,7 +57,7 @@ impl ClientContext {
     /// Read server addresses from the PDC_TMP directory
     fn read_server_addresses(&mut self) -> Result<(), Box<dyn std::error::Error>> {
         let pdc_tmp = Self::get_pdc_tmp_dir();
-        let file_path = format!("{}/server_addresses.txt", pdc_tmp);
+        let file_path = format!("{}/server_list", pdc_tmp);
         let contents = fs::read_to_string(file_path)?;
 
         // Filter out empty lines and collect
@@ -112,7 +116,7 @@ impl ClientContext {
         if self.rank == 0 {
             let pdc_tmp = Self::get_pdc_tmp_dir();
             fs::create_dir_all(&pdc_tmp)?;
-            let file_path = format!("{}/client_addresses.txt", pdc_tmp);
+            let file_path = format!("{}/client_list", pdc_tmp);
             let mut file = fs::OpenOptions::new()
                 .create(true)
                 .write(true)
@@ -151,29 +155,70 @@ impl ClientContext {
         &self,
         server_rank: usize,
         operation: &str,
-        data: Vec<u8>,
+        binary_data: Vec<u8>,
     ) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
         let mut client = self.connect_to_server(server_rank).await?;
 
-        let request = Request::new(RpcRequest {
-            metadata: Some(RequestMetadata {
-                client_rank: self.rank,
-                client_world_size: self.size,
-                timestamp_ms: Self::get_timestamp_ms(),
-                request_id: Uuid::new_v4().to_string(),
-                operation_type: operation.to_string(),
-            }),
-            binary_data: data,
+        // Generate request ID
+        let request_id = rand::thread_rng().gen::<u64>();
+
+        // Create request metadata
+        let metadata = RequestMetadata {
+            client_rank: self.rank,
+            client_world_size: self.size,
+            timestamp_ms: Self::get_timestamp_ms(),
+            request_id,
+        };
+
+        // Create request
+        let request = tonic::Request::new(RpcRequest {
+            metadata: Some(metadata),
+            binary_data,
         });
 
+        // Send request and wait for response
         let response = client.process_request(request).await?;
         let response = response.into_inner();
 
+        // Check status
         if response.status != 0 {
-            return Err(format!("Server error: {}", response.error_message).into());
+            return Err(format!(
+                "Request failed with status {}: {}",
+                response.status, response.error_message
+            )
+            .into());
+        }
+
+        // Log response metadata if present
+        if let Some(metadata) = response.metadata {
+            println!(
+                "[Client {}] Response for request {}: processed by server {} in {}ms",
+                self.rank,
+                metadata.request_id,
+                metadata.server_rank,
+                metadata.processed_at_ms - metadata.received_at_ms
+            );
         }
 
         Ok(response.result_data)
+    }
+
+    pub async fn send_rpc(
+        &self,
+        server_rank: usize,
+        rpc_data: RPCData,
+    ) -> Result<RPCData, Box<dyn std::error::Error>> {
+        // Serialize the RPCData
+        let binary_data = rmp_serde::to_vec(&rpc_data)?;
+
+        // Send the request
+        let result_data = self
+            .send_request(server_rank, &rpc_data.func_name, binary_data)
+            .await?;
+
+        // Deserialize the response
+        let result = rmp_serde::from_slice(&result_data)?;
+        Ok(result)
     }
 
     pub fn get_rank(&self) -> i32 {
@@ -203,15 +248,36 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let context = ClientContext::new(world)?;
     println!("Client running on MPI process {}", context.get_rank());
 
-    // Send a test request to server 0
-    let test_data = vec![1, 2, 3];
-    match context.send_request(0, "test_operation", test_data).await {
+    // Create test RPCData
+    let rpc_data = RPCData {
+        func_name: if context.get_rank() % 2 == 0 {
+            "times_three"
+        } else {
+            "times_two"
+        }
+        .to_string(),
+        data: vec![1, 2, 3],
+    };
+
+    println!(
+        "[Client {}] Sending RPC: func_name='{}', data={:?}",
+        context.get_rank(),
+        rpc_data.func_name,
+        rpc_data.data
+    );
+
+    // Send RPC request
+    match context.send_rpc(0, rpc_data).await {
         Ok(result) => {
-            println!("Request completed successfully");
-            println!("Received result data: {:?}", result);
+            println!(
+                "[Client {}] Received response: func_name='{}', data={:?}",
+                context.get_rank(),
+                result.func_name,
+                result.data
+            );
         }
         Err(e) => {
-            eprintln!("Request failed: {}", e);
+            eprintln!("[Client {}] Request failed: {}", context.get_rank(), e);
         }
     }
 

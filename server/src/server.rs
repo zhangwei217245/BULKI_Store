@@ -7,24 +7,48 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
+use bulkistore_commons::common::RPCData;
 use bulkistore_commons::proto::grpc_bulkistore_server::{GrpcBulkistore, GrpcBulkistoreServer};
 use bulkistore_commons::proto::{ResponseMetadata, RpcRequest, RpcResponse};
 use hostname::get as get_hostname;
 use mpi::traits::*;
+use rmp_serde;
 use tonic::{transport::Server, Request, Response, Status};
+
+mod datastore;
+use datastore::bulki_store::{BulkiStore, Dispatchable};
 
 const DEFAULT_BASE_PORT: u16 = 50051;
 const MAX_PORT_ATTEMPTS: u16 = 1000;
 const MAX_SERVER_ADDR_LEN: usize = 256;
 
 pub struct ServerContext {
-    world: mpi::topology::SimpleCommunicator,
     rank: i32,
     size: i32,
+    world: mpi::topology::SimpleCommunicator,
+    hostname: String,
     server_addresses: Vec<String>,
+    store: BulkiStore,
 }
 
 impl ServerContext {
+    pub fn new(
+        world: mpi::topology::SimpleCommunicator,
+    ) -> Result<Self, Box<dyn std::error::Error>> {
+        let rank = world.rank();
+        let size = world.size();
+        let hostname = get_hostname()?.into_string().unwrap();
+
+        Ok(Self {
+            rank,
+            size,
+            world,
+            hostname,
+            server_addresses: Vec::new(),
+            store: BulkiStore::new(),
+        })
+    }
+
     fn get_timestamp_ms() -> u64 {
         SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -51,23 +75,66 @@ impl GrpcBulkistore for ServerContext {
         request: Request<RpcRequest>,
     ) -> Result<Response<RpcResponse>, Status> {
         let request_inner = request.into_inner();
-        let received_at = Self::get_timestamp_ms();
 
-        // TODO: Implement actual request processing logic
-        let processed_at = Self::get_timestamp_ms();
+        // Get metadata from request
+        let metadata = request_inner.metadata.unwrap_or_default();
+        println!(
+            "[Server {}] Received request {} from client {} (world size: {})",
+            self.rank, metadata.request_id, metadata.client_rank, metadata.client_world_size
+        );
 
-        Ok(Response::new(RpcResponse {
-            metadata: Some(ResponseMetadata {
-                server_rank: self.rank,
-                server_world_size: self.size,
-                received_at_ms: received_at,
-                processed_at_ms: processed_at,
-                processing_time_ms: processed_at - received_at,
-            }),
-            status: 0,
-            result_data: vec![],
-            error_message: String::new(),
-        }))
+        // Try to deserialize the binary data as RPCData
+        match rmp_serde::from_slice::<RPCData>(&request_inner.binary_data) {
+            Ok(rpc_data) => {
+                println!(
+                    "[Server {}] Processing RPC call: func_name='{}', data={:?}",
+                    self.rank, rpc_data.func_name, rpc_data.data
+                );
+
+                // Use BulkiStore's dispatch method
+                let result_data = match self.store.dispatch(&rpc_data.func_name, &rpc_data.data) {
+                    Some(result) => {
+                        // Create result RPCData
+                        let result_rpc = RPCData {
+                            func_name: format!("{}_result", rpc_data.func_name),
+                            data: result,
+                        };
+
+                        // Serialize the result
+                        rmp_serde::to_vec(&result_rpc).map_err(|e| {
+                            Status::internal(format!("Failed to serialize response: {}", e))
+                        })?
+                    }
+                    None => {
+                        return Ok(Response::new(RpcResponse {
+                            status: 1,
+                            error_message: format!("Unknown function: {}", rpc_data.func_name),
+                            result_data: Vec::new(),
+                            metadata: None,
+                        }));
+                    }
+                };
+
+                Ok(Response::new(RpcResponse {
+                    status: 0,
+                    error_message: String::new(),
+                    result_data: result_data,
+                    metadata: Some(ResponseMetadata {
+                        server_rank: self.rank,
+                        server_world_size: self.size,
+                        received_at_ms: metadata.timestamp_ms,
+                        processed_at_ms: Self::get_timestamp_ms(),
+                        request_id: metadata.request_id,
+                    }),
+                }))
+            }
+            Err(e) => Ok(Response::new(RpcResponse {
+                status: 1,
+                error_message: format!("Failed to deserialize request data: {}", e),
+                result_data: Vec::new(),
+                metadata: None,
+            })),
+        }
     }
 }
 
@@ -146,12 +213,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Create and start the gRPC server
     let addr = format!("0.0.0.0:{}", port).parse::<SocketAddr>()?;
-    let server_context = ServerContext {
-        world,
-        rank: rank as i32,
-        size: size as i32,
-        server_addresses,
-    };
+    let mut server_context = ServerContext::new(world)?;
+    server_context.server_addresses = server_addresses;
 
     println!("BulkiStore server {} listening on {}", rank, addr);
 

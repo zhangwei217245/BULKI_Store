@@ -1,5 +1,5 @@
 pub mod bulki_store {
-    use crate::common::RPCData;
+    use bulkistore_commons::common::RPCData;
 
     #[derive(Default)]
     pub struct BulkiStore {
