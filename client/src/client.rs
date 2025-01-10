@@ -332,7 +332,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             "times_two"
         }
         .to_string(),
-        data: vec![1, 2, 3],
+        data: vec![1; 1024],
     };
 
     println!(
