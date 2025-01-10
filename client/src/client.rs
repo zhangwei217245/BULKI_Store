@@ -342,11 +342,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         rpc_data.data
     );
 
+    let target_rank = context.get_rank() % context.get_server_addresses().len() as i32;
     // Send RPC request
-    match context.send_rpc(0, rpc_data.clone()).await {
+    match context
+        .send_rpc(target_rank as usize, rpc_data.clone())
+        .await
+    {
         Ok(result) => {
             println!(
-                "[Client {}] Received response: func_name='{}', data={:?}",
+                "[Client {}] Received response : func_name='{}', data={:?}",
                 context.get_rank(),
                 result.func_name,
                 result.data
@@ -360,7 +364,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Run benchmark with 1000 requests
     let num_requests = 1000;
     context
-        .benchmark_rpc(0, num_requests, rpc_data.clone())
+        .benchmark_rpc(target_rank as usize, num_requests, rpc_data.clone())
         .await;
 
     Ok(())
