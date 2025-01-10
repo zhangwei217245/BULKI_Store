@@ -1,0 +1,16 @@
+[package]
+name = "server"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "bulkistore-server"
+path = "src/server.rs"
+
+[dependencies]
+bulkistore-commons = { path = "../commons" }
+tonic = "0.12.3"
+prost = "0.13.4"
+tokio = { version = "1", features = ["full"] }
+mpi = "0.8.0"
+hostname = "0.4.0"
