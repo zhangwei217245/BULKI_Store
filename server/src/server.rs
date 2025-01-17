@@ -1,5 +1,4 @@
 use std::{
-    env,
     fs::{self, File},
     io::Write,
     net::{SocketAddr, TcpListener},
@@ -10,10 +9,11 @@ use std::{
 use bulkistore_commons::common::RPCData;
 use bulkistore_commons::proto::grpc_bulkistore_server::{GrpcBulkistore, GrpcBulkistoreServer};
 use bulkistore_commons::proto::{ResponseMetadata, RpcRequest, RpcResponse};
-use hostname::get as get_hostname;
+use hostname;
 use mpi::traits::*;
 use rmp_serde;
 use tonic::{transport::Server, Request, Response, Status};
+use tokio::signal;
 
 mod datastore;
 use datastore::bulki_store::{BulkiStore, Dispatchable};
@@ -39,7 +39,7 @@ impl ServerContext {
     ) -> Result<Self, Box<dyn std::error::Error>> {
         let rank = world.rank();
         let size = world.size();
-        let hostname = get_hostname()?.into_string().unwrap();
+        let hostname = hostname::get()?.into_string().unwrap();
 
         Ok(Self {
             rank,
@@ -64,7 +64,7 @@ impl ServerContext {
     }
 
     fn get_pdc_tmp_dir() -> PathBuf {
-        env::var("PDC_TMP")
+        std::env::var("PDC_TMP")
             .map(PathBuf::from)
             .unwrap_or_else(|_| PathBuf::from(".pdc_tmp"))
     }
@@ -155,7 +155,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("[Rank {}] Found available port: {}", rank, port);
 
     // Get hostname
-    let hostname = get_hostname().expect("Failed to get hostname");
+    let hostname = hostname::get().expect("Failed to get hostname");
 
     // Create server info string
     let server_info = format!("{}|{}:{}", rank, hostname.into_string().unwrap(), port);
@@ -220,10 +220,55 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     println!("BulkiStore server {} listening on {}", rank, addr);
 
-    Server::builder()
+    // Create a ready file to signal that this server is up
+    let ready_file = std::env::var("SERVER_READY_FILE")
+        .unwrap_or_else(|_| format!("/tmp/bulki_server_{}_ready", rank));
+    std::fs::write(&ready_file, format!("Server {} ready on {}", rank, addr))
+        .expect("Failed to create ready file");
+
+    // Create a signal handler for graceful shutdown
+    let (_tx, rx) = tokio::sync::oneshot::channel::<()>();
+    let server = Server::builder()
         .add_service(GrpcBulkistoreServer::new(server_context))
-        .serve(addr)
-        .await?;
+        .serve_with_shutdown(addr, async move {
+            // Wait for either SIGTERM or SIGINT
+            let ctrl_c = async {
+                signal::ctrl_c().await.expect("Failed to listen for ctrl+c");
+            };
+            
+            #[cfg(unix)]
+            let terminate = async {
+                signal::unix::signal(signal::unix::SignalKind::terminate())
+                    .expect("Failed to listen for SIGTERM")
+                    .recv()
+                    .await;
+            };
+
+            #[cfg(not(unix))]
+            let terminate = std::future::pending::<()>();
+
+            let rx = async {
+                rx.await.ok();
+            };
+
+            // Wait for any signal
+            tokio::select! {
+                _ = ctrl_c => println!("Received Ctrl+C signal"),
+                _ = terminate => println!("Received SIGTERM signal"),
+                _ = rx => println!("Received internal shutdown signal"),
+            }
+            println!("Starting graceful shutdown...");
+            
+            // Clean up ready file on shutdown
+            if let Err(e) = std::fs::remove_file(&ready_file) {
+                eprintln!("Failed to remove ready file: {}", e);
+            }
+        });
+
+    // Run the server and wait for it to complete
+    if let Err(e) = server.await {
+        eprintln!("Server error: {}", e);
+    }
 
     Ok(())
 }

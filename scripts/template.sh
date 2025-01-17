@@ -60,38 +60,28 @@ echo "- Clients: $NCLIENT total ($NUM_CLIENT_PROC_PER_NODE per node with $NUM_TH
 
 module load PrgEnv-llvm/1.0
 
-# Generate CPU binding lists
-# For servers: use CPU 1 (cores 64-127)
-SERVER_CPU_LIST=""
-CORES_PER_SERVER=$((LOGICAL_CORES_PER_CPU / NUM_SERVER_PROC_PER_NODE))
-for ((i=0; i<NUM_SERVER_PROC_PER_NODE; i++)); do
-    START_CORE=$((64 + i * CORES_PER_SERVER))
-    if [ ! -z "$SERVER_CPU_LIST" ]; then
-        SERVER_CPU_LIST="${SERVER_CPU_LIST},"
-    fi
-    SERVER_CPU_LIST="${SERVER_CPU_LIST}${START_CORE}"
-done
+# Clean up any existing ready files
+rm -f /tmp/bulki_server_*_ready
 
-# For clients: use CPU 0 (cores 0-63)
-CLIENT_CPU_LIST=""
-CORES_PER_CLIENT=$((LOGICAL_CORES_PER_CPU / NUM_CLIENT_PROC_PER_NODE))
-for ((i=0; i<NUM_CLIENT_PROC_PER_NODE; i++)); do
-    START_CORE=$((i * CORES_PER_CLIENT))
-    if [ ! -z "$CLIENT_CPU_LIST" ]; then
-        CLIENT_CPU_LIST="${CLIENT_CPU_LIST},"
-    fi
-    CLIENT_CPU_LIST="${CLIENT_CPU_LIST}${START_CORE}"
-done
-
-# Start servers on CPU 1
+# Start servers using the second half of cores on each node
+export SERVER_READY_FILE="/tmp/bulki_server_ready"
 srun -N $N_NODE -n $NSERVER --ntasks-per-node=$NUM_SERVER_PROC_PER_NODE \
-     -c $NUM_THREAD_PER_SERVER_PROC --cpu-bind=map_cpu:$SERVER_CPU_LIST $SERVER &
+     -c $NUM_THREAD_PER_SERVER_PROC --cpu-bind=cores \
+     $SERVER &
 
-# Wait a bit for servers to start
-sleep 5
+# Wait for all servers to be ready
+echo "Waiting for servers to start..."
+while [ ! -f "$SERVER_READY_FILE" ]; do
+    sleep 0.1
+done
+echo "All servers are ready"
 
-# Start clients on CPU 0
+# Additional 2 second wait as requested
+sleep 2
+
+# Start clients using the first half of cores on each node
 srun -N $N_NODE -n $NCLIENT --ntasks-per-node=$NUM_CLIENT_PROC_PER_NODE \
-     -c $NUM_THREAD_PER_CLIENT_PROC --cpu-bind=map_cpu:$CLIENT_CPU_LIST $CLIENT
+     -c $NUM_THREAD_PER_CLIENT_PROC --cpu-bind=cores \
+     $CLIENT
 
 date
