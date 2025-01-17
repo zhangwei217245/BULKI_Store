@@ -1,6 +1,6 @@
 #!/bin/bash
 
-set -x  # Print commands as they execute
+# set -x  # Print commands as they execute
 set -e  # Exit on error
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
