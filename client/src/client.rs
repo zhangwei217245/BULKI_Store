@@ -318,15 +318,15 @@ impl ClientContext {
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // read command line arguments
-    let args: Vec<String> = env::args().collect();
+    // let args: Vec<String> = env::args().collect();
 
-    if args.len() < 3 {
-        println!("Usage: client num_req data_size");
-        return Ok(());
-    }
+    // if args.len() < 3 {
+    //     println!("Usage: client num_req data_size");
+    //     return Ok(());
+    // }
 
-    let num_requests = args[1].parse::<usize>().unwrap();
-    let data_size = args[2].parse::<usize>().unwrap();
+    // let num_requests = args[1].parse::<usize>().unwrap();
+    // let data_size = args[2].parse::<usize>().unwrap();
 
     // Initialize MPI
     let universe = mpi::initialize().unwrap();
@@ -338,6 +338,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Run benchmark with 1000 requests
     for i in 1..13 {
+        let num_requests = 100;
         let data_size = 2_i32.pow(i as u32) as usize;
         let rpc_data = RPCData {
             func_name: if context.get_rank() % 2 == 0 {
