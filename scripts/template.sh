@@ -1,8 +1,8 @@
 #!/bin/bash -l
 
-#SBATCH -q regular
+#SBATCH -q debug
 #SBATCH -N 8  # Fixed 8 nodes for all tests
-#SBATCH -t 1:00:00
+#SBATCH -t 0:30:00
 #SBATCH -C cpu
 #SBATCH -J bulki_test
 #SBATCH -A m2621
@@ -60,13 +60,38 @@ echo "- Clients: $NCLIENT total ($NUM_CLIENT_PROC_PER_NODE per node with $NUM_TH
 
 module load PrgEnv-llvm/1.0
 
+# Generate CPU binding lists
+# For servers: use CPU 1 (cores 64-127)
+SERVER_CPU_LIST=""
+CORES_PER_SERVER=$((LOGICAL_CORES_PER_CPU / NUM_SERVER_PROC_PER_NODE))
+for ((i=0; i<NUM_SERVER_PROC_PER_NODE; i++)); do
+    START_CORE=$((64 + i * CORES_PER_SERVER))
+    if [ ! -z "$SERVER_CPU_LIST" ]; then
+        SERVER_CPU_LIST="${SERVER_CPU_LIST},"
+    fi
+    SERVER_CPU_LIST="${SERVER_CPU_LIST}${START_CORE}"
+done
+
+# For clients: use CPU 0 (cores 0-63)
+CLIENT_CPU_LIST=""
+CORES_PER_CLIENT=$((LOGICAL_CORES_PER_CPU / NUM_CLIENT_PROC_PER_NODE))
+for ((i=0; i<NUM_CLIENT_PROC_PER_NODE; i++)); do
+    START_CORE=$((i * CORES_PER_CLIENT))
+    if [ ! -z "$CLIENT_CPU_LIST" ]; then
+        CLIENT_CPU_LIST="${CLIENT_CPU_LIST},"
+    fi
+    CLIENT_CPU_LIST="${CLIENT_CPU_LIST}${START_CORE}"
+done
+
 # Start servers on CPU 1
 srun -N $N_NODE -n $NSERVER --ntasks-per-node=$NUM_SERVER_PROC_PER_NODE \
-     -c $NUM_THREAD_PER_SERVER_PROC --cpu_bind=map_cpu:64-127 $SERVER &
+     -c $NUM_THREAD_PER_SERVER_PROC --cpu-bind=map_cpu:$SERVER_CPU_LIST $SERVER &
+
+# Wait a bit for servers to start
 sleep 5
 
 # Start clients on CPU 0
 srun -N $N_NODE -n $NCLIENT --ntasks-per-node=$NUM_CLIENT_PROC_PER_NODE \
-     -c $NUM_THREAD_PER_CLIENT_PROC --cpu_bind=map_cpu:0-63 $CLIENT
+     -c $NUM_THREAD_PER_CLIENT_PROC --cpu-bind=map_cpu:$CLIENT_CPU_LIST $CLIENT
 
 date
