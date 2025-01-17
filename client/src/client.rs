@@ -298,16 +298,16 @@ impl ClientContext {
         stats.total_duration_ms = benchmark_start.elapsed().unwrap().as_millis();
         stats.avg_latency_ms = total_latency as f64 / stats.successful_requests as f64;
 
-        println!("\nBenchmark Results for Client {}:", self.get_rank());
-        println!("Total Requests: {}", stats.total_requests);
-        println!("Successful Requests: {}", stats.successful_requests);
-        println!("Failed Requests: {}", stats.failed_requests);
-        println!("Total Duration: {}ms", stats.total_duration_ms);
-        println!("Average Latency: {:.2}ms", stats.avg_latency_ms);
-        println!("Min Latency: {}ms", stats.min_latency_ms);
-        println!("Max Latency: {}ms", stats.max_latency_ms);
         println!(
-            "Requests/second: {:.2}",
+            "Benchmark Result [Client {}]: reqs={} (success={}, fail={}), duration={}ms, lat_avg={:.2}ms, lat_min={}ms, lat_max={}ms, throughput={:.2} req/s",
+            self.get_rank(),
+            stats.total_requests,
+            stats.successful_requests,
+            stats.failed_requests,
+            stats.total_duration_ms,
+            stats.avg_latency_ms,
+            stats.min_latency_ms,
+            stats.max_latency_ms,
             (stats.successful_requests as f64 * 1000.0) / stats.total_duration_ms as f64
         );
 
