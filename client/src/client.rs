@@ -317,6 +317,17 @@ impl ClientContext {
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // read command line arguments
+    let args: Vec<String> = env::args().collect();
+
+    if args.len() < 3 {
+        println!("Usage: client num_req data_size");
+        return Ok(());
+    }
+
+    let num_requests = args[1].parse::<usize>().unwrap();
+    let data_size = args[2].parse::<usize>().unwrap();
+
     // Initialize MPI
     let universe = mpi::initialize().unwrap();
     let world = universe.world();
@@ -332,14 +343,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             "times_two"
         }
         .to_string(),
-        data: vec![1; 1024],
+        data: vec![1; data_size],
     };
 
     println!(
-        "[Client {}] Sending RPC: func_name='{}', data={:?}",
+        "[Client {}] Sending RPC: func_name='{}', data.len={}",
         context.get_rank(),
         rpc_data.func_name,
-        rpc_data.data
+        rpc_data.data.len()
     );
 
     let target_rank = context.get_rank() % context.get_server_addresses().len() as i32;
@@ -350,10 +361,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     {
         Ok(result) => {
             println!(
-                "[Client {}] Received response : func_name='{}', data={:?}",
+                "[Client {}] Received response : func_name='{}', data.len={}",
                 context.get_rank(),
                 result.func_name,
-                result.data
+                result.data.len()
             );
         }
         Err(e) => {
@@ -362,7 +373,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     // Run benchmark with 1000 requests
-    let num_requests = 1000;
     context
         .benchmark_rpc(target_rank as usize, num_requests, rpc_data.clone())
         .await;

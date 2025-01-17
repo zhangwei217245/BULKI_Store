@@ -89,8 +89,8 @@ impl GrpcBulkistore for ServerContext {
         match rmp_serde::from_slice::<RPCData>(&request_inner.binary_data) {
             Ok(rpc_data) => {
                 println!(
-                    "[Server {}] Processing RPC call: func_name='{}', data={:?}",
-                    self.rank, rpc_data.func_name, rpc_data.data
+                    "[Server {}] Processing RPC call: func_name='{}', data.len={}",
+                    self.rank, rpc_data.func_name, rpc_data.data.len()
                 );
 
                 // Use BulkiStore's dispatch method
