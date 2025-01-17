@@ -222,6 +222,36 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     println!("BulkiStore server {} listening on {}", rank, addr);
 
+
+
+
+
+
+
+
+
+
+
+
+// use bulkistore_commons::proto::grpc_bulkistore_server::GrpcBulkistoreServer;
+// use std::net::SocketAddr;
+// use tonic::transport::Server;
+
+// mod datastore;
+// mod srvctx;
+// use srvctx::srvctx::ServerContext;
+
+// #[tokio::main]
+// async fn main() -> Result<(), Box<dyn std::error::Error>> {
+//     // Initialize server context and get server address
+//     let (server_context, server_addr) = ServerContext::initialize()?;
+//     let addr = server_addr.parse::<SocketAddr>()?;
+
+//     println!(
+//         "BulkiStore server {} listening on {}",
+//         server_context.rank, addr
+//     );
+
     // Create a ready file to signal that this server is up
     let ready_file = std::env::var("SERVER_READY_FILE")
         .unwrap_or_else(|_| format!("/tmp/bulki_server_{}_ready", rank));

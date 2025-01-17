@@ -2,13 +2,10 @@ pub mod bulki_store {
 
     use rayon::prelude::*;
 
+    use bulkistore_commons::dispatch::Dispatchable;
     #[derive(Default)]
     pub struct BulkiStore {
         // Add any store-specific fields here
-    }
-
-    pub trait Dispatchable {
-        fn dispatch(&self, func_name: &str, data: &Vec<u8>) -> Option<Vec<u8>>;
     }
 
     impl BulkiStore {

@@ -1,3 +1,4 @@
+pub mod dispatch;
 pub mod common {
     use serde::{Deserialize, Serialize};
 
