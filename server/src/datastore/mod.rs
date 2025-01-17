@@ -1,5 +1,7 @@
 pub mod bulki_store {
 
+    use rayon::prelude::*;
+
     #[derive(Default)]
     pub struct BulkiStore {
         // Add any store-specific fields here
@@ -15,11 +17,11 @@ pub mod bulki_store {
         }
 
         pub fn times_two(&self, data: &Vec<u8>) -> Vec<u8> {
-            data.iter().map(|x| x * 2).collect()
+            data.par_iter().map(|x| x * 2).collect()
         }
 
         pub fn times_three(&self, data: &Vec<u8>) -> Vec<u8> {
-            data.iter().map(|x| x * 3).collect()
+            data.par_iter().map(|x| x * 3).collect()
         }
     }
 

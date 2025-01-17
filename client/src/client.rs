@@ -336,46 +336,49 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let context = ClientContext::new(world)?;
     println!("Client running on MPI process {}", context.get_rank());
 
-    let rpc_data = RPCData {
-        func_name: if context.get_rank() % 2 == 0 {
-            "times_three"
-        } else {
-            "times_two"
-        }
-        .to_string(),
-        data: vec![1; data_size],
-    };
-
-    println!(
-        "[Client {}] Sending RPC: func_name='{}', data.len={}",
-        context.get_rank(),
-        rpc_data.func_name,
-        rpc_data.data.len()
-    );
-
-    let target_rank = context.get_rank() % context.get_server_addresses().len() as i32;
-    // Send RPC request
-    match context
-        .send_rpc(target_rank as usize, rpc_data.clone())
-        .await
-    {
-        Ok(result) => {
-            println!(
-                "[Client {}] Received response : func_name='{}', data.len={}",
-                context.get_rank(),
-                result.func_name,
-                result.data.len()
-            );
-        }
-        Err(e) => {
-            eprintln!("[Client {}] Request failed: {}", context.get_rank(), e);
-        }
-    }
-
     // Run benchmark with 1000 requests
-    context
-        .benchmark_rpc(target_rank as usize, num_requests, rpc_data.clone())
-        .await;
+    for i in 1..13 {
+        let data_size = 2_i32.pow(i as u32) as usize;
+        let rpc_data = RPCData {
+            func_name: if context.get_rank() % 2 == 0 {
+                "times_three"
+            } else {
+                "times_two"
+            }
+            .to_string(),
+            data: vec![1; data_size],
+        };
+    
+        println!(
+            "[Client {}] Sending RPC: func_name='{}', data.len={}",
+            context.get_rank(),
+            rpc_data.func_name,
+            rpc_data.data.len()
+        );
+    
+        let target_rank = context.get_rank() % context.get_server_addresses().len() as i32;
+        // Send RPC request
+        match context
+            .send_rpc(target_rank as usize, rpc_data.clone())
+            .await
+        {
+            Ok(result) => {
+                println!(
+                    "[Client {}] Received response : func_name='{}', data.len={}",
+                    context.get_rank(),
+                    result.func_name,
+                    result.data.len()
+                );
+            }
+            Err(e) => {
+                eprintln!("[Client {}] Request failed: {}", context.get_rank(), e);
+            }
+        }
+
+        context
+            .benchmark_rpc(target_rank as usize, num_requests, rpc_data.clone())
+            .await;
+    }
 
     Ok(())
 }
