@@ -1,33 +1,50 @@
 #!/bin/bash
 
+set -e  # Exit on error
 SCRIPT_DIR="$(dirname "$0")"
+cd "$SCRIPT_DIR"
 
 # First generate all test scripts
 echo "Generating test scripts..."
-$SCRIPT_DIR/gen_script.sh
+./gen_script.sh
+
+# Verify scripts were generated
+echo -e "\nVerifying generated scripts:"
+ls -l server_scale_*.sh client_scale_*.sh || {
+    echo "Error: No test scripts were generated!"
+    exit 1
+}
+
+# Make sure all scripts are executable
+chmod +x server_scale_*.sh client_scale_*.sh
 
 # Function to submit a batch of tests
 submit_batch() {
     local test_type=$1
     local pattern=$2
-    echo "Submitting $test_type tests..."
+    echo -e "\nSubmitting $test_type tests..."
     
-    for script in $SCRIPT_DIR/${pattern}*.sh; do
+    for script in ${pattern}*.sh; do
         if [ -f "$script" ]; then
             echo "Submitting $script..."
             sbatch "$script"
-            # Small delay to avoid overwhelming the scheduler
-            sleep 1
+            # Show the queue after each submission
+            sleep 2
+            squeue -u $USER
+            echo "---"
         fi
     done
-    echo ""
 }
 
 # Build the project first
-echo "Building project..."
-cd $SCRIPT_DIR/..
-cargo build
-echo ""
+echo -e "\nBuilding project..."
+cd ..
+cargo build || {
+    echo "Error: Build failed!"
+    exit 1
+}
+
+cd "$SCRIPT_DIR"
 
 # Submit server scaling tests
 submit_batch "server scaling" "server_scale_"
@@ -35,5 +52,10 @@ submit_batch "server scaling" "server_scale_"
 # Submit client scaling tests
 submit_batch "client scaling" "client_scale_"
 
-echo "All jobs submitted. Use 'squeue -u $USER' to check status."
-echo "Results will be in the PDC_TMPDIR directory and slurm output files."
+echo -e "\nFinal queue status:"
+squeue -u $USER
+
+echo -e "\nAll jobs submitted. Check status with 'squeue -u $USER'"
+echo "Results will be in:"
+echo "- PDC_TMPDIR: $SCRATCH/data/bulki_store/conf/"
+echo "- Slurm outputs: $SCRIPT_DIR/o*.bulki_test.out"
