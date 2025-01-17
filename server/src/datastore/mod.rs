@@ -21,7 +21,6 @@ use std::sync::{Arc, RwLock};
     pub struct BulkiStore {
         // Add any store-specific fields here
     }
-}
 
     impl BulkiStore {
         pub fn new() -> Self {
