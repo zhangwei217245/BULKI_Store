@@ -1,7 +1,20 @@
 #!/bin/bash
 
+set -x  # Print commands as they execute
+set -e  # Exit on error
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+echo "Script directory: $SCRIPT_DIR"
+cd "$SCRIPT_DIR"
+
 TEMPLATE="template.sh"
-SCRIPT_DIR="$(dirname "$0")"
+
+# Check if template exists
+if [ ! -f "$TEMPLATE" ]; then
+    echo "Error: Template file $TEMPLATE not found!"
+    ls -l
+    exit 1
+fi
 
 # Perlmutter configuration
 PHYSICAL_CORES_PER_CPU=64
@@ -17,14 +30,20 @@ generate_script() {
     local servers_per_node=$2
     local clients_per_node=$3
     
-    cp "$SCRIPT_DIR/$TEMPLATE" "$output_file"
+    echo "Generating $output_file with $servers_per_node servers/node and $clients_per_node clients/node"
+    cp "$TEMPLATE" "$output_file"
     
     # Replace placeholders
     sed -i "s/NSERVER_PER_NODE/$servers_per_node/" "$output_file"
     sed -i "s/NCLIENT_PER_NODE/$clients_per_node/" "$output_file"
     
     chmod +x "$output_file"
+    echo "Generated $output_file:"
+    ls -l "$output_file"
 }
+
+# Clean up any existing test scripts
+rm -f server_scale_*.sh client_scale_*.sh
 
 echo "Generating test scripts..."
 echo "Note: Thread counts will be calculated automatically:"
@@ -40,7 +59,7 @@ for servers_per_node in 1 2 4 8; do
     if [ $client_threads -lt 4 ]; then
         client_threads=4  # Ensure minimum 2 physical cores
     fi
-    output_file="$SCRIPT_DIR/server_scale_${servers_per_node}x${CLIENTS_PER_NODE}.sh"
+    output_file="server_scale_${servers_per_node}x${CLIENTS_PER_NODE}.sh"
     generate_script "$output_file" $servers_per_node $CLIENTS_PER_NODE
     echo "- ${servers_per_node} servers/node ($server_threads logical cores each)"
     echo "  ${CLIENTS_PER_NODE} clients/node ($client_threads logical cores each)"
@@ -55,8 +74,11 @@ for clients_per_node in 8 16 32 64; do
     if [ $client_threads -lt 4 ]; then
         client_threads=4
     fi
-    output_file="$SCRIPT_DIR/client_scale_8x${clients_per_node}.sh"
+    output_file="client_scale_8x${clients_per_node}.sh"
     generate_script "$output_file" 8 $clients_per_node
     echo "- 8 servers/node ($server_threads logical cores each)"
     echo "  ${clients_per_node} clients/node ($client_threads logical cores each)"
 done
+
+echo "Generated scripts:"
+ls -l server_scale_*.sh client_scale_*.sh

@@ -58,6 +58,8 @@ echo "Configuration:"
 echo "- Servers: $NSERVER total ($NUM_SERVER_PROC_PER_NODE per node with $NUM_THREAD_PER_SERVER_PROC logical cores each)"
 echo "- Clients: $NCLIENT total ($NUM_CLIENT_PROC_PER_NODE per node with $NUM_THREAD_PER_CLIENT_PROC logical cores each)"
 
+module load PrgEnv-llvm/1.0
+
 # Start servers on CPU 1
 srun -N $N_NODE -n $NSERVER --ntasks-per-node=$NUM_SERVER_PROC_PER_NODE \
      -c $NUM_THREAD_PER_SERVER_PROC --cpu_bind=map_cpu:64-127 $SERVER &

@@ -1,22 +1,21 @@
 #!/bin/bash
 
+set -x  # Print commands as they execute
 set -e  # Exit on error
-SCRIPT_DIR="$(dirname "$0")"
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+echo "Script directory: $SCRIPT_DIR"
 cd "$SCRIPT_DIR"
 
 # First generate all test scripts
 echo "Generating test scripts..."
 ./gen_script.sh
 
-# Verify scripts were generated
-echo -e "\nVerifying generated scripts:"
-ls -l server_scale_*.sh client_scale_*.sh || {
-    echo "Error: No test scripts were generated!"
-    exit 1
-}
+echo "Listing current directory:"
+ls -la
 
-# Make sure all scripts are executable
-chmod +x server_scale_*.sh client_scale_*.sh
+echo "Looking for generated scripts:"
+find . -name "server_scale_*.sh" -o -name "client_scale_*.sh"
 
 # Function to submit a batch of tests
 submit_batch() {
@@ -24,21 +23,21 @@ submit_batch() {
     local pattern=$2
     echo -e "\nSubmitting $test_type tests..."
     
-    for script in ${pattern}*.sh; do
-        if [ -f "$script" ]; then
-            echo "Submitting $script..."
-            sbatch "$script"
-            # Show the queue after each submission
-            sleep 2
-            squeue -u $USER
-            echo "---"
-        fi
+    # Use find to get exact filenames
+    find . -name "${pattern}_*.sh" | while read script; do
+        echo "Found script: $script"
+        echo "Submitting $script..."
+        sbatch "$script"
+        sleep 2
+        squeue -u $USER
+        echo "---"
     done
 }
 
 # Build the project first
 echo -e "\nBuilding project..."
 cd ..
+pwd
 cargo build || {
     echo "Error: Build failed!"
     exit 1
@@ -46,11 +45,11 @@ cargo build || {
 
 cd "$SCRIPT_DIR"
 
-# Submit server scaling tests
-submit_batch "server scaling" "server_scale_"
+echo "Submitting server scaling tests..."
+submit_batch "server scaling" "server_scale"
 
-# Submit client scaling tests
-submit_batch "client scaling" "client_scale_"
+echo "Submitting client scaling tests..."
+submit_batch "client scaling" "client_scale"
 
 echo -e "\nFinal queue status:"
 squeue -u $USER
