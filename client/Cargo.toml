@@ -3,58 +3,21 @@ name = "client"
 version = "0.1.0"
 edition = "2021"
 
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 [lib]
-name = "bkstore_client"
+name = "bulkistore_client"
 crate-type = ["cdylib"]
 
-
 [dependencies]
-
-commons = { path = "../commons" }
-tonic = { workspace = true }
-prost = { workspace = true }
-tokio = { workspace = true }
-hostname = { workspace = true }
-uuid = { workspace = true }
-rmp-serde = { workspace = true }
-once_cell = { workspace = true }
-rand = { workspace = true }
-log = { workspace = true }
-anyhow = { workspace = true }
-ndarray = { workspace = true }
-mpi = { workspace = true, optional = true }
-msgpack-numpy = { workspace = true }
-env_logger = { workspace = true }
-pyo3 = { version = "0.23.4", features = [
-    "extension-module",
-    "abi3-py37",
-    "abi3",
-    "generate-import-lib",
-] }
-thread_local = "1.1.4"
-numpy = "0.23.0"
-ordered-float = "4.6.0" # Specific for this example
-serde = { workspace = true, features = ["derive"] }
-lazy_static = { workspace = true }
-fnv = { workspace = true }
-
-[features]
-default = ["mpi"]
-mpi = ["dep:mpi", "commons/mpi"]
-
-# [target.aarch64-apple-darwin]
-# rustflags = [
-#     "-C",
-#     "link-arg=-undefined",
-#     "-C",
-#     "link-arg=dynamic_lookup",
-#     "-C",
-#     "link-arg=-Wl,-rpath,/opt/homebrew/Caskroom/miniconda/base/lib",
-# ]
-
-# [build]
-# rustflags = ["-C", "link-args=-Wl,-undefined,dynamic_lookup"]
+bulkistore-commons = { path = "../commons" }
+tonic = "0.12.3"
+prost = "0.13.4"
+tokio = { version = "1", features = ["full"] }
+mpi = "0.8.0"
+hostname = "0.4.0"
+uuid = { version = "1.4.1", features = ["v4", "fast-rng", "macro-diagnostics"] }
+rmp-serde = "1.1"
+rand = "0.8"
+pyo3 = { version = "0.23.4", features = ["extension-module"] }
 
 [[bin]]
 name = "bulkistore-client"

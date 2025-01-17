@@ -16,43 +16,17 @@ use rmp_serde;
 use std::sync::atomic::{AtomicU32, AtomicU64};
 use std::sync::{Arc, RwLock};
 
-// Global DataStore instance using the standard RwLock.
-lazy_static! {
-    pub static ref GLOBAL_STORE: Arc<RwLock<DataStore>> = Arc::new(RwLock::new(DataStore::new()));
-    static ref SEQUENCE_COUNTER: AtomicU32 = AtomicU32::new(0);
-    static ref LAST_TIMESTAMP: AtomicU64 = AtomicU64::new(0);
-}
-
-/// Initialize the global DataStore.
-/// Synchronous version: no async/await.
-pub fn init_datastore() -> HandlerResult {
-    // Reset or initialize the store if needed.
-    // Acquire a write lock and replace the store.
-    *GLOBAL_STORE.write().unwrap() = DataStore::new();
-    HandlerResult {
-        status_code: StatusCode::Ok as u8,
-        message: None,
+    use bulkistore_commons::dispatch::Dispatchable;
+    #[derive(Default)]
+    pub struct BulkiStore {
+        // Add any store-specific fields here
     }
 }
 
-fn create_object_internal(param: CreateObjectParams) -> Result<Option<u128>> {
-    let obj = DataObject::new(param);
-    let obj_id = obj.id;
-    // Insert into store
-    GLOBAL_STORE.write().unwrap().insert(obj);
-    Ok(Some(obj_id))
-}
-
-/// Create a new DataObject with server-generated ID
-pub fn create_objects(data: &mut RPCData) -> HandlerResult {
-    debug!("Received request to create objects");
-    // Deserialize the creation parameters
-    let params: Vec<CreateObjectParams> = rmp_serde::from_slice(&data.data.as_ref().unwrap())
-        .map_err(|e| HandlerResult {
-            status_code: StatusCode::Internal as u8,
-            message: Some(format!("Failed to deserialize params: {}", e)),
-        })
-        .unwrap();
+    impl BulkiStore {
+        pub fn new() -> Self {
+            Self::default()
+        }
 
     let mut obj_ids: Vec<u128> = Vec::with_capacity(params.len());
     for param in params {
