@@ -8,6 +8,9 @@ PHYSICAL_CORES_PER_CPU=64
 THREADS_PER_CORE=2
 LOGICAL_CORES_PER_CPU=$((PHYSICAL_CORES_PER_CPU * THREADS_PER_CORE))
 
+# Fixed number of clients per node for server scaling test
+CLIENTS_PER_NODE=64
+
 # Function to generate a test script
 generate_script() {
     local output_file=$1
@@ -29,15 +32,18 @@ echo "- Server threads = $LOGICAL_CORES_PER_CPU/server_processes_per_node (using
 echo "- Client threads = max($LOGICAL_CORES_PER_CPU/client_processes_per_node, 4) (minimum 2 physical cores)"
 echo ""
 
-# Generate server scaling test scripts (fixed 8 clients per node = 64 total clients)
-echo "Server scaling tests (fixed 64 total clients):"
+# Generate server scaling test scripts (fixed 64 clients per node = 512 total clients)
+echo "Server scaling tests (fixed 512 total clients):"
 for servers_per_node in 1 2 4 8; do
     server_threads=$((LOGICAL_CORES_PER_CPU / servers_per_node))
-    client_threads=$((LOGICAL_CORES_PER_CPU / 8))  # 8 clients per node
-    output_file="$SCRIPT_DIR/server_scale_${servers_per_node}x8.sh"
-    generate_script "$output_file" $servers_per_node 8
+    client_threads=$((LOGICAL_CORES_PER_CPU / CLIENTS_PER_NODE))  # 64 clients per node
+    if [ $client_threads -lt 4 ]; then
+        client_threads=4  # Ensure minimum 2 physical cores
+    fi
+    output_file="$SCRIPT_DIR/server_scale_${servers_per_node}x${CLIENTS_PER_NODE}.sh"
+    generate_script "$output_file" $servers_per_node $CLIENTS_PER_NODE
     echo "- ${servers_per_node} servers/node ($server_threads logical cores each)"
-    echo "  8 clients/node ($client_threads logical cores each)"
+    echo "  ${CLIENTS_PER_NODE} clients/node ($client_threads logical cores each)"
 done
 
 # Generate client scaling test scripts (fixed 8 servers per node = 64 total servers)

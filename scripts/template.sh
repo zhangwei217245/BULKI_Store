@@ -2,7 +2,7 @@
 
 #SBATCH -q regular
 #SBATCH -N 8  # Fixed 8 nodes for all tests
-#SBATCH -t 3:00:00
+#SBATCH -t 1:00:00
 #SBATCH -C cpu
 #SBATCH -J bulki_test
 #SBATCH -A m2621
