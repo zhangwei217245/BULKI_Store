@@ -199,13 +199,13 @@ impl ClientContext {
 
         // Log response metadata if present
         if let Some(metadata) = response.metadata {
-            println!(
-                "[Client {}] Response for request {}: processed by server {} in {}ms",
-                self.rank,
-                metadata.request_id,
-                metadata.server_rank,
-                metadata.processed_at_ms - metadata.received_at_ms
-            );
+            // println!(
+            //     "[Client {}] Response for request {}: processed by server {} in {}ms",
+            //     self.rank,
+            //     metadata.request_id,
+            //     metadata.server_rank,
+            //     metadata.processed_at_ms - metadata.received_at_ms
+            // );
         }
 
         Ok(response.result_data)
