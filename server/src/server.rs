@@ -142,9 +142,11 @@ impl GrpcBulkistore for ServerContext {
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    // Initialize MPI
-    let universe = mpi::initialize().unwrap();
+    // Initialize MPI with thread support
+    let (universe, _) = mpi::initialize_with_threading(mpi::Threading::Multiple)
+        .ok_or("Failed to initialize MPI with threading support")?;
     let world = universe.world();
+    
     let rank = world.rank();
     let size = world.size();
 
@@ -270,5 +272,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         eprintln!("Server error: {}", e);
     }
 
+    // Make sure MPI is properly finalized
+    // drop(world);
+    // drop(universe);
     Ok(())
 }

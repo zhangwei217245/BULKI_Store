@@ -30,12 +30,16 @@ generate_script() {
     local servers_per_node=$2
     local clients_per_node=$3
     
+    # Extract the base name without .sh for job name
+    local job_name=$(basename "$output_file" .sh)
+    
     echo "Generating $output_file with $servers_per_node servers/node and $clients_per_node clients/node"
     cp "$TEMPLATE" "$output_file"
     
     # Replace placeholders
     sed -i "s/NSERVER_PER_NODE/$servers_per_node/" "$output_file"
     sed -i "s/NCLIENT_PER_NODE/$clients_per_node/" "$output_file"
+    sed -i "s/|JOB_NAME|/$job_name/" "$output_file"
     
     chmod +x "$output_file"
     echo "Generated $output_file:"

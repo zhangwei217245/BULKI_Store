@@ -34,11 +34,27 @@ submit_batch() {
     done
 }
 
-# Build the project first
+# Load required modules
+module load PrgEnv-llvm/1.0
+
+# Find libclang using clang location
+CLANG_PATH=$(which clang)
+CLANG_DIR=$(dirname "$CLANG_PATH")
+export LIBCLANG_PATH="$CLANG_DIR/../lib"
+echo "Setting LIBCLANG_PATH to: $LIBCLANG_PATH"
+
+# Verify libclang.so exists
+if [ -f "$LIBCLANG_PATH/libclang.so" ]; then
+    echo "Found libclang.so"
+else
+    echo "Warning: libclang.so not found in $LIBCLANG_PATH"
+fi
+
 echo -e "\nBuilding project..."
 cd ..
 pwd
-cargo build || {
+cargo clean
+cargo build --release || {
     echo "Error: Build failed!"
     exit 1
 }

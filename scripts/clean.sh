@@ -21,6 +21,6 @@ rm -rf $SCRATCH/data/bulki_store/conf/*
 
 # Remove slurm output files
 echo "Cleaning slurm output files..."
-rm -f $SCRIPT_DIR/o*.bulki_test.out
+rm -f $SCRIPT_DIR/o*.*_scale*.out
 
 echo "Cleanup complete!"

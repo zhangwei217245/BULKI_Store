@@ -318,21 +318,13 @@ impl ClientContext {
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    // read command line arguments
-    // let args: Vec<String> = env::args().collect();
-
-    // if args.len() < 3 {
-    //     println!("Usage: client num_req data_size");
-    //     return Ok(());
-    // }
-
-    // let num_requests = args[1].parse::<usize>().unwrap();
-    // let data_size = args[2].parse::<usize>().unwrap();
-
-    // Initialize MPI
-    let universe = mpi::initialize().unwrap();
+    // Initialize MPI with thread support
+    let (universe, thread_level) = mpi::initialize_with_threading(mpi::Threading::Multiple)
+        .ok_or("Failed to initialize MPI with threading support")?;
+    println!("MPI thread level: {:?}", thread_level);
+    
     let world = universe.world();
-
+    
     // Create client context
     let context = ClientContext::new(world)?;
     println!("Client running on MPI process {}", context.get_rank());
@@ -382,5 +374,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             .await;
     }
 
+    // Make sure MPI is properly finalized
+    // drop(context);
+    // drop(world);
+    // drop(universe);
     Ok(())
 }
