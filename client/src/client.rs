@@ -299,7 +299,8 @@ impl ClientContext {
         stats.avg_latency_ms = total_latency as f64 / stats.successful_requests as f64;
 
         println!(
-            "Benchmark Result [Client {}]: reqs={} (success={}, fail={}), duration={}ms, lat_avg={:.2}ms, lat_min={}ms, lat_max={}ms, throughput={:.2} req/s",
+            "Benchmark Result ({}) [Client {}]: reqs={} (success={}, fail={}), duration={}ms, lat_avg={:.2}ms, lat_min={}ms, lat_max={}ms, throughput={:.2} req/s",
+            rpc_data.data.len(),
             self.get_rank(),
             stats.total_requests,
             stats.successful_requests,
