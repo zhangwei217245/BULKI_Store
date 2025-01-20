@@ -1,14 +1,5 @@
 pub mod dispatch;
-pub mod common {
-    use serde::{Deserialize, Serialize};
-
-    #[derive(Serialize, Clone, Deserialize, Debug)]
-    pub struct RPCData {
-        pub func_name: String,
-        pub data: Vec<u8>,
-    }
-}
-
+pub mod rpc;
 // Include the generated protobuf code
 
 pub mod handler;
