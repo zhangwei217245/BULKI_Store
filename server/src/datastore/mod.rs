@@ -16,7 +16,7 @@ use rmp_serde;
 use std::sync::atomic::{AtomicU32, AtomicU64};
 use std::sync::{Arc, RwLock};
 
-    use bulkistore_commons::dispatch::Dispatchable;
+    use commons::dispatch::Dispatchable;
     #[derive(Default)]
     pub struct BulkiStore {
         // Add any store-specific fields here

@@ -4,32 +4,21 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-commons-macros = { path = "../commons-macros" }
-async-trait = { workspace = true }
-tonic = { workspace = true }
-prost = { workspace = true }
-http = { workspace = true }
-dashmap = { workspace = true }
-tokio = { workspace = true }
-hostname = { workspace = true }
+tonic = "0.12.3"
+prost = "0.13.4"
+tokio = { version = "1", features = ["full"] }
+hostname = "0.4.0"
 mpi = { workspace = true, optional = true }
 log = { workspace = true }
 anyhow = { workspace = true }
+bincode = { workspace = true }
 rmp-serde = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
 rand = { workspace = true }
-ndarray = { workspace = true, features = ["serde"] }
-inventory = { workspace = true }
-lazy_static = { workspace = true }
-msgpack-numpy = { workspace = true }
-tokio-stream = { version = "0.1.17", features = ["net"] }
-env_logger = { workspace = true }
-uuid = { workspace = true }
-num-traits = { version = "0.2.19" }
-fnv = { workspace = true }
+
 [build-dependencies]
-tonic-build = { workspace = true }
+tonic-build = "0.12.3"
 
 [features]
-default = ["mpi"]
+default = []
 mpi = ["dep:mpi"]

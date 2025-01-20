@@ -1,13 +1,11 @@
-use log::{debug, error, info, warn};
 use anyhow::Result;
-use bulkistore_commons::rpc::{RxEndpoint, RPCImpl};
-use bulkistore_commons::rpc::grpc::{GRPC_RX, RXTXUtils};
+use commons::rpc::grpc::{RXTXUtils, GRPC_RX};
+use commons::rpc::{RPCImpl, RxEndpoint};
+use log::{debug, error, info, warn};
 use mpi::topology::SimpleCommunicator;
-use tokio::sync::{broadcast, oneshot};
-use tokio::signal;
-use std::str::FromStr;
 use std::path::PathBuf;
-use hostname;
+use tokio::signal;
+use tokio::sync::oneshot;
 
 pub mod srvctx {
     use super::*;
@@ -16,7 +14,10 @@ pub mod srvctx {
     pub struct ServerContext {
         pub rank: usize,
         pub size: usize,
+        #[cfg(feature = "mpi")]
         pub world: Option<SimpleCommunicator>,
+        #[cfg(not(feature = "mpi"))]
+        pub world: Option<()>,
         // RxEndpoint for client-server communication
         pub c2s_endpoint: Option<GRPC_RX>,
         // RxEndpoint for server-server communication
@@ -44,7 +45,7 @@ pub mod srvctx {
             let ctrl_c = async {
                 signal::ctrl_c().await.expect("Failed to listen for ctrl+c");
             };
-            
+
             #[cfg(unix)]
             let terminate = async {
                 signal::unix::signal(signal::unix::SignalKind::terminate())
@@ -52,14 +53,14 @@ pub mod srvctx {
                     .recv()
                     .await;
             };
-        
+
             #[cfg(not(unix))]
             let terminate = std::future::pending::<()>();
-        
+
             let rx = async {
                 rx.await.ok();
             };
-        
+
             // Wait for any signal
             tokio::select! {
                 _ = ctrl_c => println!("Received Ctrl+C signal"),
@@ -67,33 +68,40 @@ pub mod srvctx {
                 _ = rx => println!("Received internal shutdown signal"),
             }
             println!("Starting graceful shutdown...");
-            
+
             // Clean up ready file on shutdown
             if let Err(e) = std::fs::remove_file(&ready_file) {
                 eprintln!("Failed to remove ready file: {}", e);
             }
         }
 
-        pub async fn initialize(&mut self, world: Option<SimpleCommunicator>) -> Result<()> {
-            self.world = world;
-
+        pub async fn initialize(&mut self) -> Result<()> {
             // Initialize rank and size based on MPI world
             #[cfg(feature = "mpi")]
-            if let Some(ref world) = self.world {
+            {
+                let (_universe, threading) =
+                    mpi::initialize_with_threading(Threading::Multiple).unwrap();
+                self.world = Some(_universe.world());
                 self.rank = world.unwrap().rank();
                 self.size = world.unwrap().size();
             }
-
             // Initialize client-server endpoint
-            let mut c2s = GRPC_RX::new("c2s".to_string());
-            c2s.initialize(self.world.clone())?;
+            #[cfg(not(feature = "mpi"))]
+            {
+                self.world = Some(());
+                self.rank = 0;
+                self.size = 1;
+            }
+            // Initialize client-server endpoint
+            let mut c2s = GRPC_RX::new("c2s".to_string(), self.world);
+            c2s.initialize()?;
             c2s.exchange_addresses()?;
             c2s.write_addresses()?;
             self.c2s_endpoint = Some(c2s);
 
             // Initialize server-server endpoint
-            let mut s2s = GRPC_RX::new("s2s".to_string());
-            s2s.initialize(self.world.clone())?;
+            let mut s2s = GRPC_RX::new("s2s".to_string(), self.world);
+            s2s.initialize()?;
             s2s.exchange_addresses()?;
             s2s.write_addresses()?;
             self.s2s_endpoint = Some(s2s);
@@ -108,10 +116,12 @@ pub mod srvctx {
                 self.c2s_shutdown = Some(tx1);
                 let ready_file = RXTXUtils::get_pdc_tmp_dir().join("rx_c2s_ready.txt");
                 tokio::spawn(async move {
-                    let _ = c2s.listen(async move {
-                        Self::handle_shutdown(rx1, ready_file).await;
-                        Ok(())
-                    }).await;
+                    let _ = c2s
+                        .listen(async move {
+                            Self::handle_shutdown(rx1, ready_file).await;
+                            Ok(())
+                        })
+                        .await;
                 });
             }
 
@@ -121,10 +131,12 @@ pub mod srvctx {
                 self.s2s_shutdown = Some(tx2);
                 let ready_file = RXTXUtils::get_pdc_tmp_dir().join("rx_s2s_ready.txt");
                 tokio::spawn(async move {
-                    let _ = s2s.listen(async move {
-                        Self::handle_shutdown(rx2, ready_file).await;
-                        Ok(())
-                    }).await;
+                    let _ = s2s
+                        .listen(async move {
+                            Self::handle_shutdown(rx2, ready_file).await;
+                            Ok(())
+                        })
+                        .await;
                 });
             }
 
