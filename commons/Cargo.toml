@@ -1,5 +1,5 @@
 [package]
-name = "bulkistore-commons"
+name = "commons"
 version = "0.1.0"
 edition = "2021"
 
@@ -7,11 +7,18 @@ edition = "2021"
 tonic = "0.12.3"
 prost = "0.13.4"
 tokio = { version = "1", features = ["full"] }
-mpi = "0.8.0"
 hostname = "0.4.0"
-rmp-serde = "1.1"
-serde = { version = "1.0", features = ["derive"] }
-uuid = { version = "1.4.1", features = ["v4", "fast-rng", "macro-diagnostics"] }
+mpi = { workspace = true, optional = true }
+log = { workspace = true }
+anyhow = { workspace = true }
+bincode = { workspace = true }
+rmp-serde = { workspace = true }
+serde = { workspace = true, features = ["derive"] }
+rand = { workspace = true }
 
 [build-dependencies]
 tonic-build = "0.12.3"
+
+[features]
+default = []
+mpi = ["dep:mpi"]

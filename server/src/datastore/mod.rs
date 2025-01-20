@@ -2,7 +2,7 @@ pub mod bulki_store {
 
     use rayon::prelude::*;
 
-    use bulkistore_commons::dispatch::Dispatchable;
+    use commons::dispatch::Dispatchable;
     #[derive(Default)]
     pub struct BulkiStore {
         // Add any store-specific fields here

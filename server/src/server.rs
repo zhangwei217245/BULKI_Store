@@ -15,16 +15,9 @@ use srvctx::srvctx::ServerContext;
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
-    let world = None;
-    #[cfg(feature = "mpi")]
-    {
-        let (_universe, threading) = mpi::initialize_with_threading(Threading::Multiple).unwrap();
-        let world = Some(_universe.world());
-    }
-
     // Create and initialize server context
     let mut server_context = ServerContext::new();
-    server_context.initialize(world).await?;
+    server_context.initialize().await?;
 
     info!(
         "BulkiStore server {} starting...",
