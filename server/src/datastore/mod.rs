@@ -9,6 +9,7 @@ pub mod bulki_store {
     }
 
     impl BulkiStore {
+        #[allow(dead_code)]
         pub fn new() -> Self {
             Self::default()
         }

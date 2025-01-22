@@ -1,56 +1,31 @@
-use bulkistore_commons::common::RPCData;
-use bulkistore_commons::proto::grpc_bulkistore_client::GrpcBulkistoreClient;
-use bulkistore_commons::proto::{RequestMetadata, RpcRequest};
-use mpi::topology::SimpleCommunicator;
-use mpi::traits::*;
-use rand::Rng;
-use rmp_serde;
-use std::env;
-use std::fs;
-use std::io::Write;
-use std::time::{SystemTime, UNIX_EPOCH};
-use tonic::transport::Channel;
-
-use crate::cltctx::{BenchmarkStats, ClientContext};
+mod cltctx;
+use cltctx::ClientContext;
+use commons::rpc::{MessageType, RPCData, RPCMetadata};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    // Initialize MPI with thread support
-    let (universe, thread_level) = mpi::initialize_with_threading(mpi::Threading::Multiple)
-        .ok_or("Failed to initialize MPI with threading support")?;
-    println!("MPI thread level: {:?}", thread_level);
-    
-    let world = universe.world();
-    
-    // Create client context
-    let context = ClientContext::new(world)?;
+    let mut context = ClientContext::new();
+    context.initialize().await?;
     println!("Client running on MPI process {}", context.get_rank());
 
     // Run benchmark with 1000 requests
     for i in 1..13 {
         let num_requests = 100;
         let data_size = 2_i32.pow(i as u32) as usize;
-        let rpc_data = RPCData {
-            func_name: if context.get_rank() % 2 == 0 {
-                "times_three"
-            } else {
-                "times_two"
-            }
-            .to_string(),
-            data: vec![1; data_size],
-        };
-    
-        println!(
-            "[Client {}] Sending RPC: func_name='{}', data.len={}",
-            context.get_rank(),
-            rpc_data.func_name,
-            rpc_data.data.len()
-        );
-    
-        let target_rank = context.get_rank() % context.get_server_addresses().len() as i32;
+
+        let handler_name = if context.get_rank() % 2 == 0 {
+            "times_three"
+        } else {
+            "times_two"
+        }
+        .to_string();
+
+        let data = vec![1; data_size];
+
+        let target_rank = context.get_rank() % context.get_server_count();
         // Send RPC request
         match context
-            .send_rpc(target_rank as usize, rpc_data.clone())
+            .send_message(target_rank as usize, handler_name.clone(), data.as_slice())
             .await
         {
             Ok(result) => {

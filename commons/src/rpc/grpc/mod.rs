@@ -1,5 +1,6 @@
-pub mod proto {
-    tonic::include_proto!("bulkistore"); // assuming your proto package is named "bulkistore"
+// Include the generated protobuf code
+pub mod bulkistore {
+    tonic::include_proto!("bulkistore");
 }
 
 use crate::rpc::{
@@ -7,45 +8,47 @@ use crate::rpc::{
     RxEndpoint, TxContext, TxEndpoint,
 };
 use anyhow::{anyhow, Result};
-use bincode;
+use async_trait::async_trait;
+use bulkistore::grpc_bulkistore_client::GrpcBulkistoreClient;
+use bulkistore::grpc_bulkistore_server::{GrpcBulkistore, GrpcBulkistoreServer};
+use bulkistore::RpcMessage;
 use hostname;
-use log::{debug, error, info, warn};
+use log::{debug, info};
+#[cfg(feature = "mpi")]
 use mpi::topology::SimpleCommunicator;
-use mpi::traits::CommunicatorCollectives;
+#[cfg(feature = "mpi")]
+use mpi::traits::{Communicator, CommunicatorCollectives};
 use rand::Rng;
 use std::collections::HashMap;
-use std::env;
 use std::fs::{self, File};
-use std::future::Future;
 use std::io::Write;
-use std::os::unix::net::SocketAddr;
-
-use bulkistore::grpc_bulkistore_client::GrpcBulkistoreClient;
-use bulkistore::RpcMessage;
 use std::net::TcpListener;
-use std::path::PathBuf;
 use std::sync::Arc;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::Duration;
 use tokio::sync::Mutex;
-use tonic::transport::Channel;
+use tonic::transport::{Channel, Server};
 use tonic::Request;
 
 const MAX_SERVER_ADDR_LEN: usize = 256;
 const DEFAULT_BASE_PORT: u16 = 50051;
 
-pub struct GRPC_RX {
+#[derive(Default, Clone)]
+#[warn(non_camel_case_types)]
+pub struct GrpcRX {
     pub context: RxContext<String>,
     pub port: u16,
     pub hostname: String,
 }
-pub struct GRPC_TX {
+#[derive(Default, Clone)]
+#[warn(non_camel_case_types)]
+pub struct GrpcTX {
     pub context: TxContext<String>,
     // Cache connections using Arc<Mutex> for thread-safety
     connections: Arc<Mutex<HashMap<usize, GrpcBulkistoreClient<Channel>>>>,
 }
 
-impl GRPC_RX {
-    fn new(rpc_id: String, world: Option<SimpleCommunicator>) -> Self {
+impl GrpcRX {
+    pub fn new(rpc_id: String, world: Option<Arc<SimpleCommunicator>>) -> Self {
         Self {
             context: RxContext::new(rpc_id, world),
             port: 0,
@@ -54,20 +57,40 @@ impl GRPC_RX {
     }
 }
 
-impl GRPC_TX {
+impl GrpcTX {
     const CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
     const KEEPALIVE_INTERVAL: Duration = Duration::from_secs(300 * 3); // 15 minutes
+    #[allow(dead_code)]
     const KEEPALIVE_TIMEOUT: Duration = Duration::from_secs(10);
     const MAX_CONCURRENT_REQUESTS: usize = 1000;
 
-    fn new(rpc_id: String, world: Option<SimpleCommunicator>) -> Self {
+    pub fn new(rpc_id: String, world: Option<Arc<SimpleCommunicator>>) -> Self {
         Self {
             context: TxContext::new(rpc_id, world),
             connections: Arc::new(Mutex::new(HashMap::new())),
         }
     }
     async fn check_connection_health(&self, client: &GrpcBulkistoreClient<Channel>) -> bool {
-        match client.health_check(Request::new(())).await {
+        // Send an empty message just to check if connection is alive
+        let metadata = RPCMetadata {
+            client_rank: self.context.rank as u32,
+            server_rank: 0,
+            request_id: rand::thread_rng().gen::<u64>(),
+            request_issued_time: RXTXUtils::get_timestamp_ms(),
+            request_received_time: 0,
+            request_processed_time: 0,
+            message_type: MessageType::Request,
+            handler_name: String::from("health::HealthCheck::check"),
+            handler_result: None,
+        };
+        let data = RPCData {
+            metadata: Some(metadata),
+            data: vec![0; 2],
+        };
+        let request = RpcMessage {
+            binary_data: rmp_serde::to_vec(&data).unwrap(),
+        };
+        match client.clone().process_request(Request::new(request)).await {
             Ok(_) => true,
             Err(e) => {
                 debug!("Connection health check failed: {}", e);
@@ -112,7 +135,6 @@ impl GRPC_TX {
             .tcp_keepalive(Some(Self::KEEPALIVE_INTERVAL))
             .tcp_nodelay(true) // Disable Nagle's algorithm for better latency
             .http2_keep_alive_interval(Self::KEEPALIVE_INTERVAL)
-            .http2_keep_alive_timeout(Self::KEEPALIVE_TIMEOUT)
             .concurrency_limit(Self::MAX_CONCURRENT_REQUESTS)
             // Remove rate limit since it's a cached connection
             // Let application layer handle throttling if needed
@@ -131,6 +153,7 @@ impl GRPC_TX {
     }
 
     // Periodic health check for all connections
+    #[allow(dead_code)]
     async fn maintain_connections(&self) {
         loop {
             tokio::time::sleep(Duration::from_secs(120)).await; // Check every minute
@@ -168,7 +191,44 @@ impl RXTXUtils {
     }
 }
 
-impl RxEndpoint for GRPC_RX {
+#[async_trait]
+impl GrpcBulkistore for GrpcRX {
+    async fn process_request(
+        &self,
+        request: tonic::Request<RpcMessage>,
+    ) -> Result<tonic::Response<RpcMessage>, tonic::Status> {
+        let request = request.into_inner();
+
+        // Deserialize the binary_data back into RPCData
+        let rpc_data: RPCData = match rmp_serde::from_slice(&request.binary_data) {
+            Ok(data) => data,
+            Err(e) => {
+                return Err(tonic::Status::internal(format!(
+                    "Failed to deserialize request: {}",
+                    e
+                )))
+            }
+        };
+
+        // Call respond and await its result
+        let response = self
+            .respond(rpc_data)
+            .await
+            .map_err(|e| tonic::Status::internal(format!("Failed to process request: {}", e)))?;
+
+        // Serialize the response back to binary format
+        let binary_response = rmp_serde::to_vec(&response)
+            .map_err(|e| tonic::Status::internal(format!("Failed to serialize response: {}", e)))?;
+
+        // Create the RpcMessage response
+        Ok(tonic::Response::new(RpcMessage {
+            binary_data: binary_response,
+        }))
+    }
+}
+
+#[async_trait]
+impl RxEndpoint for GrpcRX {
     type Address = String;
     type Handler = Box<dyn RequestHandler + Send + Sync>;
 
@@ -182,22 +242,18 @@ impl RxEndpoint for GRPC_RX {
 
         #[cfg(feature = "mpi")]
         {
-            // transform Option<Box<dyn AnyClone>> to Option<&SimpleCommunicator>
-            let world = self
-                .context
-                .world
-                .as_ref()
-                .and_then(|w| w.as_any().downcast_ref::<SimpleCommunicator>());
-            if let Some(world) = world {
-                self.context.world = Some(world);
-                self.context.rank = world.rank();
-                self.context.size = world.size();
+            if let Some(world) = &self.context.world {
+                self.context.rank = world.rank() as usize;
+                self.context.size = world.size() as usize;
+            } else {
+                self.context.rank = 0;
+                self.context.size = 1;
             }
         }
 
         // Find available port
         let port = RXTXUtils::find_available_port(DEFAULT_BASE_PORT)
-            .ok_or_else(|| anyhow::anyhow!("Could not find available port"));
+            .ok_or_else(|| anyhow::anyhow!("Could not find available port"))?;
 
         // Get hostname
         let hostname = hostname::get()?
@@ -214,11 +270,13 @@ impl RxEndpoint for GRPC_RX {
 
         Ok(())
     }
+
     fn exchange_addresses(&mut self) -> Result<()> {
         // Create server info string
         let server_info = format!(
             "{}|{}",
-            self.context.rank, self.context.server_addresses[self.context.rank]
+            self.context.rank,
+            self.context.server_addresses.as_ref().unwrap()[self.context.rank]
         );
         info!(target:"server", "[Rank {}] Server info: {}", self.context.rank, server_info);
 
@@ -274,6 +332,7 @@ impl RxEndpoint for GRPC_RX {
 
         Ok(())
     }
+
     fn write_addresses(&self) -> Result<()> {
         // Rank 0 writes the server information to a file
         if self.context.rank == 0 {
@@ -302,42 +361,47 @@ impl RxEndpoint for GRPC_RX {
         }
         Ok(())
     }
-    fn listen<F, Fut>(
-        &self,
-        shutdown_handler: F,
-    ) -> impl std::future::Future<Output = ()> + Send + 'static
+
+    async fn listen<F>(&self, shutdown_handler: F) -> Result<(), anyhow::Error>
     where
-        F: FnOnce() -> Fut + Send + 'static,
-        Fut: Future<Output = ()> + Send + 'static,
+        F: std::future::Future<Output = ()> + Send + 'static,
     {
         let addr = self.context.address.clone();
-        async move {
-            let addr = match addr.expect("Address not set").parse() {
-                Ok(addr) => addr,
-                Err(e) => {
-                    eprintln!("Failed to parse address: {}", e);
-                    return;
-                }
-            };
+        let service = Arc::new(self.clone());
 
-            if let Err(e) = tonic::transport::Server::builder()
-                .add_service(/* your gRPC service */)
-                .serve_with_shutdown(addr, shutdown_handler())
-                .await
-            {
-                eprintln!("Server error: {}", e);
-            }
-        }
+        let addr = addr
+            .ok_or_else(|| anyhow::anyhow!("Address not set"))?
+            .parse()
+            .map_err(|e| anyhow::anyhow!("Failed to parse address: {}", e))?;
+
+        let incoming = Server::builder()
+            .add_service(GrpcBulkistoreServer::from_arc(service))
+            .serve_with_shutdown(addr, shutdown_handler);
+
+        incoming
+            .await
+            .map_err(|e| anyhow::anyhow!("Server error: {}", e))
     }
 
-    fn respond(&self, msg: &Self::RPCData) -> Result<()> {}
+    async fn respond(&self, msg: RPCData) -> Result<RPCData> {
+        let result = self
+            .context
+            .handler
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("Handler not initialized"))?
+            .handle_request(msg)
+            .await?;
+        Ok(result)
+    }
     fn close(&self) -> Result<()> {
         Ok(())
     }
 }
-impl TxEndpoint for GRPC_TX {
+
+#[async_trait]
+impl TxEndpoint for GrpcTX {
     type Address = String;
-    type Handler = Box<dyn RequestHandler + Send + Sync>;
+    type Handler = Box<dyn ResponseHandler + Send + Sync>;
 
     fn initialize(&mut self) -> Result<()> {
         #[cfg(not(feature = "mpi"))]
@@ -349,10 +413,12 @@ impl TxEndpoint for GRPC_TX {
 
         #[cfg(feature = "mpi")]
         {
-            let world = None;
-            if let Some(world) = world {
-                self.context.rank = world.rank();
-                self.context.size = world.size();
+            if let Some(world) = &self.context.world {
+                self.context.rank = world.rank() as usize;
+                self.context.size = world.size() as usize;
+            } else {
+                self.context.rank = 0;
+                self.context.size = 1;
             }
         }
 
@@ -406,14 +472,15 @@ impl TxEndpoint for GRPC_TX {
         );
         Ok(())
     }
-    fn send_message(
+
+    async fn send_message(
         &self,
         rx_id: usize,
         handler_name: String,
-        data: Vec<u8>,
-    ) -> impl std::future::Future<Output = Result<()>> + Send + 'static {
-        // Get cached or create new connection
-        let client = self.get_or_create_connection(rx_id);
+        mut data: RPCData,
+    ) -> Result<RPCData> {
+        // Get cached or create new connection first
+        let mut client = self.get_or_create_connection(rx_id).await?;
 
         let metadata = RPCMetadata {
             client_rank: self.context.rank as u32,
@@ -424,69 +491,62 @@ impl TxEndpoint for GRPC_TX {
             request_processed_time: 0,
             message_type: MessageType::Request,
             handler_name: handler_name,
-            error_message: None,
+            handler_result: None,
         };
 
-        async move {
-            let mut client = client?;
-            let binary_data = bincode::serialize(&RPCData {
-                metadata: Some(metadata),
-                data: data,
-            })
+        data.metadata = Some(metadata);
+
+        let binary_data = rmp_serde::to_vec(&data)
             .map_err(|e| anyhow::anyhow!("Failed to serialize message: {}", e))?;
 
-            // Create request
-            let request = tonic::Request::new(RpcMessage { binary_data });
+        // Create request
+        let request = tonic::Request::new(RpcMessage { binary_data });
 
-            // Send request
-            client
-                .send_message(request)
-                .await
-                .map_err(|e| anyhow::anyhow!("Failed to send message: {}", e))?;
-
-            // Send request and wait for response
-            match client.process_request(request).await {
-                Ok(response) => {
-                    let response = response.into_inner();
-                    // Deserialize the response binary_data to get our RPCData
-                    match bincode::deserialize::<RPCData>(&response.binary_data) {
-                        Ok(rpc_data) => {
-                            if let Some(metadata) = rpc_data.metadata {
-                                if metadata.message_type == MessageType::Error {
-                                    Err(anyhow::anyhow!(
-                                        "Request failed: {}",
-                                        metadata.error_message.unwrap_or_default()
-                                    ))
-                                } else {
-                                    debug!("Successfully sent message to RX {}", rx_id);
-                                    handler.handle_response(metadata, rpc_data.data).await?;
-                                    Ok(())
-                                }
-                            } else {
-                                Err(anyhow::anyhow!("Response missing metadata"))
+        // Send binary request and wait for response
+        match client.process_request(request).await {
+            Ok(response) => {
+                let response = response.into_inner();
+                // Deserialize the response binary_data to get our RPCData
+                match rmp_serde::from_slice::<RPCData>(&response.binary_data) {
+                    Ok(rpc_data) => {
+                        // Extract message_type without moving the entire metadata
+                        let message_type = rpc_data.metadata.as_ref().map(|m| m.message_type);
+                        match message_type {
+                            Some(MessageType::Response) => {
+                                debug!("Received request from RX {}", rx_id);
+                                Ok(rpc_data)
                             }
+                            _ => Err(anyhow::anyhow!(
+                                "Received invalid message type {:?} from RX {}",
+                                message_type,
+                                rx_id
+                            )),
                         }
-                        Err(e) => Err(anyhow::anyhow!("Failed to deserialize response: {}", e)),
                     }
+                    Err(e) => Err(anyhow::anyhow!("Failed to deserialize response: {}", e)),
                 }
-                Err(status) => {
-                    // If connection error, remove it from cache
-                    if status.code() == tonic::Code::Unavailable {
-                        let mut connections = self.connections.lock().await;
-                        connections.remove(&rx_id);
-                        debug!("Removed failed connection to RX {}", rx_id);
-                    }
-                    Err(anyhow::anyhow!("RPC failed: {}", status))
+            }
+            Err(status) => {
+                // If connection error, remove it from cache
+                if status.code() == tonic::Code::Unavailable {
+                    let mut connections = self.connections.lock().await;
+                    connections.remove(&rx_id);
+                    debug!("Removed failed connection to RX {}", rx_id);
                 }
+                Err(anyhow::anyhow!("RPC failed: {}", status))
             }
         }
     }
-    fn close(&self) -> Result<()> {
-        // Clear all cached connections
-        let mut connections = self.connections.lock();
-        connections.clear();
-        debug!("Cleared {} cached gRPC TX connections", connections.len());
 
+    async fn close(&self) -> Result<()> {
+        // Clear all cached connections
+        let conn_count = {
+            let mut connections = self.connections.lock().await;
+            let count = connections.len();
+            connections.clear();
+            count
+        };
+        debug!("Cleared {} cached gRPC TX connections", conn_count);
         debug!("gRPC TX shutdown complete");
         Ok(())
     }
