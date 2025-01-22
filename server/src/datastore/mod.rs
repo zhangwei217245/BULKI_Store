@@ -23,6 +23,7 @@ use std::sync::{Arc, RwLock};
     }
 
     impl BulkiStore {
+        #[allow(dead_code)]
         pub fn new() -> Self {
             Self::default()
         }

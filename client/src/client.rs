@@ -1,18 +1,45 @@
 mod cltctx;
-use std::sync::Arc;
-
-use crate::cltctx::{BenchmarkStats, ClientContext};
+use cltctx::ClientContext;
+use commons::rpc::{MessageType, RPCData, RPCMetadata};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    #[cfg(feature = "mpi")]
-    let universe = {
-        let (universe, _) = mpi::initialize_with_threading(mpi::Threading::Multiple).unwrap();
-        Some(Arc::new(universe))
-    };
+    let mut context = ClientContext::new();
+    context.initialize().await?;
+    println!("Client running on MPI process {}", context.get_rank());
 
-    #[cfg(not(feature = "mpi"))]
-    let universe = None;
+    // Run benchmark with 1000 requests
+    for i in 1..13 {
+        let num_requests = 100;
+        let data_size = 2_i32.pow(i as u32) as usize;
+
+        let handler_name = if context.get_rank() % 2 == 0 {
+            "times_three"
+        } else {
+            "times_two"
+        }
+        .to_string();
+
+        let data = vec![1; data_size];
+
+        let target_rank = context.get_rank() % context.get_server_count();
+        // Send RPC request
+        match context
+            .send_message(target_rank as usize, handler_name.clone(), data.as_slice())
+            .await
+        {
+            Ok(result) => {
+                println!(
+                    "[Client {}] Received response : func_name='{}', data.len={}",
+                    context.get_rank(),
+                    result.func_name,
+                    result.data.len()
+                );
+            }
+            Err(e) => {
+                eprintln!("[Client {}] Request failed: {}", context.get_rank(), e);
+            }
+        }
 
         let stats = context
             .benchmark_rpc(target_rank as usize, num_requests, rpc_data.clone())
