@@ -79,7 +79,7 @@ fn sum_as_string(a: usize, b: usize) -> PyResult<String> {
 
 /// A Python module implemented in Rust. The name of this function must match
 /// the `lib.name` setting in the `Cargo.toml`, else Python will not be able to
-/// import the module.
+/// import the module. https://pyo3.rs/v0.20.0/module
 #[pymodule]
 #[pyo3(name = "bkstore_client")]
 fn pyo3_example(_py: Python<'_>, m: &PyModule) -> PyResult<()> {
