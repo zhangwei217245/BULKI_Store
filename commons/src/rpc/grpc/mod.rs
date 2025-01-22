@@ -4,7 +4,7 @@ pub mod bulkistore {
 }
 
 use crate::rpc::{MessageType, RPCData, RPCMetadata, RxContext, RxEndpoint, TxContext, TxEndpoint};
-use crate::utils::Utility;
+use crate::utils::{FileUtility, NetworkUtility, TimeUtility};
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
 use bulkistore::grpc_bulkistore_client::GrpcBulkistoreClient;
@@ -24,6 +24,7 @@ use std::net::TcpListener;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::Mutex;
+use tokio::time::Instant;
 use tonic::transport::{Channel, Server};
 use tonic::Request;
 
@@ -74,9 +75,9 @@ impl GrpcTX {
             client_rank: self.context.rank as u32,
             server_rank: 0,
             request_id: rand::thread_rng().gen::<u64>(),
-            request_issued_time: Utility::get_timestamp_ms(),
+            request_issued_time: TimeUtility::get_timestamp_ms(),
             request_received_time: 0,
-            request_processed_time: 0,
+            processing_duration_us: None,
             message_type: MessageType::Request,
             handler_name: String::from("health::HealthCheck::check"),
             handler_result: None,
@@ -180,15 +181,6 @@ impl GrpcTX {
     }
 }
 
-impl Utility {
-    const MAX_PORT_ATTEMPTS: u16 = 10;
-
-    pub fn find_available_port(base_port: u16) -> Option<u16> {
-        (base_port..base_port + Self::MAX_PORT_ATTEMPTS)
-            .find(|&port| TcpListener::bind(format!("0.0.0.0:{}", port)).is_ok())
-    }
-}
-
 #[async_trait]
 impl GrpcBulkistore for GrpcRX {
     async fn process_request(
@@ -198,7 +190,7 @@ impl GrpcBulkistore for GrpcRX {
         let request = request.into_inner();
 
         // Deserialize the binary_data back into RPCData
-        let mut rpc_data: RPCData = match rmp_serde::from_slice(&request.binary_data) {
+        let rpc_data: RPCData = match rmp_serde::from_slice(&request.binary_data) {
             Ok(data) => data,
             Err(e) => {
                 return Err(tonic::Status::internal(format!(
@@ -208,14 +200,9 @@ impl GrpcBulkistore for GrpcRX {
             }
         };
 
-        // update the recevied time in the metadata
-        if let Some(metadata) = &mut rpc_data.metadata {
-            metadata.request_received_time = Utility::get_timestamp_ms();
-        }
-
         // Call respond and await its result
         let response = self
-            .respond(rpc_data)
+            .respond_request(rpc_data)
             .await
             .map_err(|e| tonic::Status::internal(format!("Failed to process request: {}", e)))?;
 
@@ -255,7 +242,7 @@ impl RxEndpoint for GrpcRX {
         }
 
         // Find available port
-        let port = Utility::find_available_port(DEFAULT_BASE_PORT)
+        let port = NetworkUtility::find_available_port(DEFAULT_BASE_PORT)
             .ok_or_else(|| anyhow::anyhow!("Could not find available port"))?;
 
         // Get hostname
@@ -339,7 +326,7 @@ impl RxEndpoint for GrpcRX {
     fn write_addresses(&self) -> Result<()> {
         // Rank 0 writes the server information to a file
         if self.context.rank == 0 {
-            let pdc_tmp_dir = Utility::get_pdc_tmp_dir();
+            let pdc_tmp_dir = FileUtility::get_pdc_tmp_dir();
             fs::create_dir_all(&pdc_tmp_dir)?;
             let server_list_path = pdc_tmp_dir.join(format!("rx_{}.txt", self.context.rpc_id));
             let mut file = File::create(server_list_path.clone())?;
@@ -386,14 +373,29 @@ impl RxEndpoint for GrpcRX {
             .map_err(|e| anyhow::anyhow!("Server error: {}", e))
     }
 
-    async fn respond_request(&self, msg: RPCData) -> Result<RPCData> {
-        let result = self
+    async fn respond_request(&self, mut msg: RPCData) -> Result<RPCData> {
+        use tokio::time::Instant;
+
+        let start_time = Instant::now();
+        // update the received time in the metadata
+        if let Some(metadata) = &mut msg.metadata {
+            metadata.request_received_time = TimeUtility::get_timestamp_ms();
+        }
+
+        let mut result = self
             .context
             .handler
             .as_ref()
             .ok_or_else(|| anyhow::anyhow!("Handler not initialized"))?
             .handle(msg)
             .await?;
+
+        // Update the request processing completion time and duration
+        if let Some(metadata) = &mut result.metadata {
+            // Store the actual processing duration in microseconds
+            metadata.processing_duration_us = Some(start_time.elapsed().as_micros() as u64);
+        }
+
         Ok(result)
     }
     fn close(&self) -> Result<()> {
@@ -428,7 +430,7 @@ impl TxEndpoint for GrpcTX {
         Ok(())
     }
     fn discover_servers(&mut self) -> Result<()> {
-        let pdc_tmp_dir = Utility::get_pdc_tmp_dir();
+        let pdc_tmp_dir = FileUtility::get_pdc_tmp_dir();
 
         // Wait for ready file to be created
         let ready_file = pdc_tmp_dir.join(format!("rx_{}_ready.txt", self.context.rpc_id));
@@ -489,9 +491,9 @@ impl TxEndpoint for GrpcTX {
             client_rank: self.context.rank as u32,
             server_rank: rx_id as u32,
             request_id: rand::thread_rng().gen::<u64>(),
-            request_issued_time: Utility::get_timestamp_ms(),
+            request_issued_time: TimeUtility::get_timestamp_ms(),
             request_received_time: 0,
-            request_processed_time: 0,
+            processing_duration_us: None,
             message_type: MessageType::Request,
             handler_name: handler_name.to_string(),
             handler_result: None,

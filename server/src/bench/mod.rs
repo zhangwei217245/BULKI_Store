@@ -1,15 +1,10 @@
-use commons::req_handler;
 use rayon::prelude::*;
+use tonic::async_trait;
+pub struct Bench {}
 
-#[derive(Default)]
-pub struct BulkiStore {
-    // Add any store-specific fields here
-}
-
-impl BulkiStore {
-    #[allow(dead_code)]
+impl Bench {
     pub fn new() -> Self {
-        Self::default()
+        Self {}
     }
 
     pub fn times_two(&self, data: &Vec<u8>) -> Vec<u8> {
