@@ -12,6 +12,8 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
+use crate::handler::{Handler, HandlerResult, RequestHandlerKind, ResponseHandlerKind};
+
 pub mod grpc; // Expose the grpc submodule
 
 pub enum RPCImpl {
@@ -115,12 +117,6 @@ impl TryFrom<u8> for StatusCode {
 }
 
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
-pub struct HandlerResult {
-    pub status_code: u8,
-    pub message: String,
-}
-
-#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
 pub struct RPCMetadata {
     pub client_rank: u32,
     pub server_rank: u32,
@@ -140,35 +136,11 @@ pub struct RPCData {
 }
 
 impl RPCData {
-    pub fn new(data: Vec<u8>) -> Self {
+    pub fn new(data: impl Into<Vec<u8>>) -> Self {
         Self {
-            data,
+            data: data.into(),
             metadata: None,
         }
-    }
-}
-
-#[async_trait]
-pub trait RequestHandler {
-    async fn handle_request(&self, request: RPCData) -> Result<RPCData>;
-}
-
-#[async_trait]
-impl RequestHandler for Box<dyn RequestHandler + Send + Sync> {
-    async fn handle_request(&self, request: RPCData) -> Result<RPCData> {
-        (**self).handle_request(request).await
-    }
-}
-
-#[async_trait]
-pub trait ResponseHandler {
-    async fn handle_response(&self, response: RPCData) -> Result<RPCData>;
-}
-
-#[async_trait]
-impl ResponseHandler for Box<dyn ResponseHandler + Send + Sync> {
-    async fn handle_response(&self, response: RPCData) -> Result<RPCData> {
-        (**self).handle_response(response).await
     }
 }
 
@@ -182,7 +154,7 @@ pub struct TxContext<A> {
     #[cfg(not(feature = "mpi"))]
     pub world: Option<()>,
     pub server_addresses: Option<Vec<A>>,
-    pub handler: Option<Arc<dyn ResponseHandler + Send + Sync + 'static>>,
+    pub handler: Option<Arc<Handler<ResponseHandlerKind>>>,
 }
 
 impl<A> TxContext<A> {
@@ -222,7 +194,7 @@ pub struct RxContext<A> {
     pub world: Option<()>,
     pub server_addresses: Option<Vec<A>>,
     pub address: Option<A>,
-    pub handler: Option<Arc<dyn RequestHandler + Send + Sync + 'static>>,
+    pub handler: Option<Arc<Handler<RequestHandlerKind>>>,
 }
 
 impl<A> RxContext<A> {
@@ -255,7 +227,7 @@ impl<A> RxContext<A> {
 #[async_trait]
 pub trait RxEndpoint {
     type Address;
-    type Handler: RequestHandler;
+    // type Handler: ResponseHandler;
 
     fn initialize(&mut self) -> Result<()>;
     fn exchange_addresses(&mut self) -> Result<()>;
@@ -269,7 +241,7 @@ pub trait RxEndpoint {
     where
         F: std::future::Future<Output = ()> + Send + 'static;
     // respond to a request using the handler
-    async fn respond(&self, msg: RPCData) -> Result<RPCData>;
+    async fn respond_request(&self, msg: RPCData) -> Result<RPCData>;
     // close the endpoint
     fn close(&self) -> Result<()>;
 }
@@ -277,31 +249,13 @@ pub trait RxEndpoint {
 #[async_trait]
 pub trait TxEndpoint {
     type Address;
-    type Handler: ResponseHandler;
+    // type Handler: ResponseHandler;
 
     fn initialize(&mut self) -> Result<()>;
     fn discover_servers(&mut self) -> Result<()>;
     // send a message to a server identified by its index
-    async fn send_message(
-        &self,
-        rx_id: usize,
-        handler_name: String,
-        msg: RPCData,
-    ) -> Result<RPCData>;
+    async fn send_message(&self, rx_id: usize, handler_name: &str, msg: RPCData)
+        -> Result<RPCData>;
+    async fn process_response(&self, response: RPCData) -> Result<RPCData>;
     async fn close(&self) -> Result<()>;
-}
-
-pub struct RXTXUtils;
-
-impl RXTXUtils {
-    pub fn get_timestamp_ms() -> u64 {
-        let now = SystemTime::now();
-        let since_epoch = now.duration_since(UNIX_EPOCH).expect("Time went backwards");
-        since_epoch.as_millis() as u64
-    }
-
-    pub fn get_pdc_tmp_dir() -> PathBuf {
-        let pdc_tmp_dir = env::var("PDC_TMP_DIR").expect("PDC_TMP_DIR not set");
-        PathBuf::from(pdc_tmp_dir)
-    }
 }

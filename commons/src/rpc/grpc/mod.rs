@@ -3,10 +3,8 @@ pub mod bulkistore {
     tonic::include_proto!("bulkistore");
 }
 
-use crate::rpc::{
-    MessageType, RPCData, RPCMetadata, RXTXUtils, RequestHandler, ResponseHandler, RxContext,
-    RxEndpoint, TxContext, TxEndpoint,
-};
+use crate::rpc::{MessageType, RPCData, RPCMetadata, RxContext, RxEndpoint, TxContext, TxEndpoint};
+use crate::utils::Utility;
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
 use bulkistore::grpc_bulkistore_client::GrpcBulkistoreClient;
@@ -76,7 +74,7 @@ impl GrpcTX {
             client_rank: self.context.rank as u32,
             server_rank: 0,
             request_id: rand::thread_rng().gen::<u64>(),
-            request_issued_time: RXTXUtils::get_timestamp_ms(),
+            request_issued_time: Utility::get_timestamp_ms(),
             request_received_time: 0,
             request_processed_time: 0,
             message_type: MessageType::Request,
@@ -182,7 +180,7 @@ impl GrpcTX {
     }
 }
 
-impl RXTXUtils {
+impl Utility {
     const MAX_PORT_ATTEMPTS: u16 = 10;
 
     pub fn find_available_port(base_port: u16) -> Option<u16> {
@@ -200,7 +198,7 @@ impl GrpcBulkistore for GrpcRX {
         let request = request.into_inner();
 
         // Deserialize the binary_data back into RPCData
-        let rpc_data: RPCData = match rmp_serde::from_slice(&request.binary_data) {
+        let mut rpc_data: RPCData = match rmp_serde::from_slice(&request.binary_data) {
             Ok(data) => data,
             Err(e) => {
                 return Err(tonic::Status::internal(format!(
@@ -209,6 +207,11 @@ impl GrpcBulkistore for GrpcRX {
                 )))
             }
         };
+
+        // update the recevied time in the metadata
+        if let Some(metadata) = &mut rpc_data.metadata {
+            metadata.request_received_time = Utility::get_timestamp_ms();
+        }
 
         // Call respond and await its result
         let response = self
@@ -230,7 +233,7 @@ impl GrpcBulkistore for GrpcRX {
 #[async_trait]
 impl RxEndpoint for GrpcRX {
     type Address = String;
-    type Handler = Box<dyn RequestHandler + Send + Sync>;
+    // type Handler = Box<dyn RequestHandler + Send + Sync>;
 
     fn initialize(&mut self) -> Result<()> {
         #[cfg(not(feature = "mpi"))]
@@ -252,7 +255,7 @@ impl RxEndpoint for GrpcRX {
         }
 
         // Find available port
-        let port = RXTXUtils::find_available_port(DEFAULT_BASE_PORT)
+        let port = Utility::find_available_port(DEFAULT_BASE_PORT)
             .ok_or_else(|| anyhow::anyhow!("Could not find available port"))?;
 
         // Get hostname
@@ -336,7 +339,7 @@ impl RxEndpoint for GrpcRX {
     fn write_addresses(&self) -> Result<()> {
         // Rank 0 writes the server information to a file
         if self.context.rank == 0 {
-            let pdc_tmp_dir = RXTXUtils::get_pdc_tmp_dir();
+            let pdc_tmp_dir = Utility::get_pdc_tmp_dir();
             fs::create_dir_all(&pdc_tmp_dir)?;
             let server_list_path = pdc_tmp_dir.join(format!("rx_{}.txt", self.context.rpc_id));
             let mut file = File::create(server_list_path.clone())?;
@@ -383,13 +386,13 @@ impl RxEndpoint for GrpcRX {
             .map_err(|e| anyhow::anyhow!("Server error: {}", e))
     }
 
-    async fn respond(&self, msg: RPCData) -> Result<RPCData> {
+    async fn respond_request(&self, msg: RPCData) -> Result<RPCData> {
         let result = self
             .context
             .handler
             .as_ref()
             .ok_or_else(|| anyhow::anyhow!("Handler not initialized"))?
-            .handle_request(msg)
+            .handle(msg)
             .await?;
         Ok(result)
     }
@@ -401,7 +404,7 @@ impl RxEndpoint for GrpcRX {
 #[async_trait]
 impl TxEndpoint for GrpcTX {
     type Address = String;
-    type Handler = Box<dyn ResponseHandler + Send + Sync>;
+    // type Handler = Box<dyn ResponseHandler + Send + Sync>;
 
     fn initialize(&mut self) -> Result<()> {
         #[cfg(not(feature = "mpi"))]
@@ -425,7 +428,7 @@ impl TxEndpoint for GrpcTX {
         Ok(())
     }
     fn discover_servers(&mut self) -> Result<()> {
-        let pdc_tmp_dir = RXTXUtils::get_pdc_tmp_dir();
+        let pdc_tmp_dir = Utility::get_pdc_tmp_dir();
 
         // Wait for ready file to be created
         let ready_file = pdc_tmp_dir.join(format!("rx_{}_ready.txt", self.context.rpc_id));
@@ -476,7 +479,7 @@ impl TxEndpoint for GrpcTX {
     async fn send_message(
         &self,
         rx_id: usize,
-        handler_name: String,
+        handler_name: &str,
         mut data: RPCData,
     ) -> Result<RPCData> {
         // Get cached or create new connection first
@@ -486,11 +489,11 @@ impl TxEndpoint for GrpcTX {
             client_rank: self.context.rank as u32,
             server_rank: rx_id as u32,
             request_id: rand::thread_rng().gen::<u64>(),
-            request_issued_time: RXTXUtils::get_timestamp_ms(),
+            request_issued_time: Utility::get_timestamp_ms(),
             request_received_time: 0,
             request_processed_time: 0,
             message_type: MessageType::Request,
-            handler_name: handler_name,
+            handler_name: handler_name.to_string(),
             handler_result: None,
         };
 
@@ -501,6 +504,7 @@ impl TxEndpoint for GrpcTX {
 
         // Create request
         let request = tonic::Request::new(RpcMessage { binary_data });
+        debug!("Sending request to RX {}", rx_id);
 
         // Send binary request and wait for response
         match client.process_request(request).await {
@@ -508,21 +512,7 @@ impl TxEndpoint for GrpcTX {
                 let response = response.into_inner();
                 // Deserialize the response binary_data to get our RPCData
                 match rmp_serde::from_slice::<RPCData>(&response.binary_data) {
-                    Ok(rpc_data) => {
-                        // Extract message_type without moving the entire metadata
-                        let message_type = rpc_data.metadata.as_ref().map(|m| m.message_type);
-                        match message_type {
-                            Some(MessageType::Response) => {
-                                debug!("Received request from RX {}", rx_id);
-                                Ok(rpc_data)
-                            }
-                            _ => Err(anyhow::anyhow!(
-                                "Received invalid message type {:?} from RX {}",
-                                message_type,
-                                rx_id
-                            )),
-                        }
-                    }
+                    Ok(rpc_data) => self.process_response(rpc_data).await,
                     Err(e) => Err(anyhow::anyhow!("Failed to deserialize response: {}", e)),
                 }
             }
@@ -535,6 +525,28 @@ impl TxEndpoint for GrpcTX {
                 }
                 Err(anyhow::anyhow!("RPC failed: {}", status))
             }
+        }
+    }
+
+    async fn process_response(&self, response: RPCData) -> Result<RPCData> {
+        // Extract message_type without moving the entire metadata
+        let message_type = response.metadata.as_ref().map(|m| m.message_type);
+        // extract rx_id from metadata
+        let rx_id = response.metadata.as_ref().map(|m| m.server_rank as usize);
+        match message_type {
+            Some(MessageType::Response) => {
+                debug!("Received response from RX {}", rx_id.unwrap());
+                if let Some(handler) = &self.context.handler {
+                    handler.handle(response).await
+                } else {
+                    debug!("No response handler registered, returning raw response");
+                    Ok(response)
+                }
+            }
+            _ => Err(anyhow::anyhow!(
+                "Unexpected message type in response: {:?}",
+                message_type
+            )),
         }
     }
 
