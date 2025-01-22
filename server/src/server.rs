@@ -1,5 +1,7 @@
 use log::{debug, info};
+mod bench;
 mod datastore;
+mod health;
 mod srvctx;
 use srvctx::srvctx::ServerContext;
 

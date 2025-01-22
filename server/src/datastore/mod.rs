@@ -1,49 +1,32 @@
-use anyhow::Result;
-use commons::handler::HandlerResult;
-use commons::object::params::{GetObjectSliceParams, GetObjectSliceResponse};
-use commons::object::types::SerializableSliceInfoElem;
-use commons::object::{
-    params::CreateObjectParams,
-    types::{MetadataValue, SupportedRustArrayD},
-    DataObject, DataStore,
-};
-use commons::region::{SerializableNDArray, SerializableSlice};
-use commons::rpc::{RPCData, StatusCode};
-use lazy_static::lazy_static;
-use log::debug;
-use ndarray::{Slice, SliceInfoElem};
-use rmp_serde;
-use std::sync::atomic::{AtomicU32, AtomicU64};
-use std::sync::{Arc, RwLock};
+use rayon::prelude::*;
 
-    use commons::dispatch::Dispatchable;
-    #[derive(Default)]
-    pub struct BulkiStore {
-        // Add any store-specific fields here
+use commons::dispatch::Dispatchable;
+#[derive(Default)]
+pub struct BulkiStore {
+    // Add any store-specific fields here
+}
+
+impl BulkiStore {
+    #[allow(dead_code)]
+    pub fn new() -> Self {
+        Self::default()
     }
 
-    impl BulkiStore {
-        #[allow(dead_code)]
-        pub fn new() -> Self {
-            Self::default()
-        }
+    pub fn times_two(&self, data: &Vec<u8>) -> Vec<u8> {
+        data.par_iter().map(|x| x * 2).collect()
+    }
 
-    let mut obj_ids: Vec<u128> = Vec::with_capacity(params.len());
-    for param in params {
-        match create_object_internal(param) {
-            Ok(Some(obj_id)) => obj_ids.push(obj_id),
-            Ok(None) => {
-                return HandlerResult {
-                    status_code: StatusCode::Internal as u8,
-                    message: Some("Failed to create object: returned None".to_string()),
-                }
-            }
-            Err(e) => {
-                return HandlerResult {
-                    status_code: StatusCode::Internal as u8,
-                    message: Some(format!("Failed to create object: {}", e)),
-                }
-            }
+    pub fn times_three(&self, data: &Vec<u8>) -> Vec<u8> {
+        data.par_iter().map(|x| x * 3).collect()
+    }
+}
+
+impl Dispatchable for BulkiStore {
+    fn dispatch(&self, func_name: &str, data: &Vec<u8>) -> Option<Vec<u8>> {
+        match func_name {
+            "times_two" => Some(self.times_two(data)),
+            "times_three" => Some(self.times_three(data)),
+            _ => None,
         }
     }
 

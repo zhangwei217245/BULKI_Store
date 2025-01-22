@@ -81,9 +81,9 @@ impl ClientContext {
     pub async fn send_message(
         &self,
         server_rank: usize,
-        handler_name: String,
-        data: &[u8],
-    ) -> Result<()> {
+        handler_name: &str,
+        data: RPCData,
+    ) -> Result<RPCData> {
         if let Some(client) = &self.c2s_client {
             client.send_message(server_rank, handler_name, data).await
         } else {
@@ -91,13 +91,7 @@ impl ClientContext {
         }
     }
 
-    pub async fn benchmark_rpc(
-        &self,
-        server_rank: usize,
-        num_requests: usize,
-        handler_name: String,
-        data: Vec<u8>,
-    ) -> BenchmarkStats {
+    pub async fn benchmark_rpc(&self, num_requests: usize, data_len: usize) -> BenchmarkStats {
         let mut stats = BenchmarkStats {
             total_requests: num_requests,
             successful_requests: 0,
@@ -108,12 +102,36 @@ impl ClientContext {
             avg_latency_ms: 0.0,
         };
 
+        // prepare data
+        let data = vec![1; data_len];
+
+        // calculate the number of requests each client rank should send
+        let size = self.get_size();
+        let rank = self.get_rank();
+        let base_requests = num_requests / size;
+        let remainder = num_requests % size;
+        let num_requests = if rank < remainder {
+            base_requests + 1
+        } else {
+            base_requests
+        };
+
+        debug!(
+            "Rank {} will send {} requests (base={}, remainder={})",
+            rank, num_requests, base_requests, remainder
+        );
+
         let start_time = std::time::SystemTime::now();
 
-        for _ in 0..num_requests {
+        for i in 0..base_requests {
             let request_start = std::time::SystemTime::now();
+            let server_rank = i % self.get_server_count();
             match self
-                .send_message(server_rank, handler_name.clone(), &data)
+                .send_message(
+                    server_rank,
+                    "health::HealthCheck::check",
+                    RPCData::new(data.clone()),
+                )
                 .await
             {
                 Ok(_) => {
@@ -134,6 +152,11 @@ impl ClientContext {
         if stats.successful_requests > 0 {
             stats.avg_latency_ms =
                 stats.total_duration_ms as f64 / stats.successful_requests as f64;
+        }
+        // we should call a MPI barrier if mpi is enabled here
+        #[cfg(feature = "mpi")]
+        {
+            self.world.as_ref().unwrap().barrier();
         }
 
         if let Ok(total_duration) = start_time.elapsed() {
