@@ -12,7 +12,7 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
-use crate::handler::{Handler, HandlerResult, RequestHandlerKind, ResponseHandlerKind};
+use crate::handler::{HandlerDispatcher, HandlerResult, RequestHandlerKind, ResponseHandlerKind};
 
 pub mod grpc; // Expose the grpc submodule
 
@@ -123,7 +123,7 @@ pub struct RPCMetadata {
     pub request_id: u64,
     pub request_issued_time: u64,
     pub request_received_time: u64,
-    pub request_processed_time: u64,
+    pub processing_duration_us: Option<u64>, // Duration in microseconds
     pub message_type: MessageType,
     pub handler_name: String,
     pub handler_result: Option<HandlerResult>,
@@ -154,7 +154,7 @@ pub struct TxContext<A> {
     #[cfg(not(feature = "mpi"))]
     pub world: Option<()>,
     pub server_addresses: Option<Vec<A>>,
-    pub handler: Option<Arc<Handler<ResponseHandlerKind>>>,
+    pub handler: Option<Arc<HandlerDispatcher<ResponseHandlerKind>>>,
 }
 
 impl<A> TxContext<A> {
@@ -194,7 +194,7 @@ pub struct RxContext<A> {
     pub world: Option<()>,
     pub server_addresses: Option<Vec<A>>,
     pub address: Option<A>,
-    pub handler: Option<Arc<Handler<RequestHandlerKind>>>,
+    pub handler: Option<Arc<HandlerDispatcher<RequestHandlerKind>>>,
 }
 
 impl<A> RxContext<A> {

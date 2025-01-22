@@ -1,7 +1,7 @@
 use anyhow::Result;
-use commons::handler::Dispatcher;
 use commons::rpc::grpc::{GrpcRX, GrpcTX};
-use commons::rpc::{RXTXUtils, RxEndpoint, TxEndpoint};
+use commons::rpc::{RxEndpoint, TxEndpoint};
+use commons::utils::FileUtility;
 use log::error;
 #[cfg(feature = "mpi")]
 use mpi::topology::{Communicator, SimpleCommunicator};
@@ -122,7 +122,7 @@ impl ServerContext {
         if let Some(c2s) = self.c2s_endpoint.take() {
             let (tx1, rx1) = oneshot::channel();
             self.c2s_shutdown = Some(tx1);
-            let ready_file = RXTXUtils::get_pdc_tmp_dir().join("rx_c2s_ready.txt");
+            let ready_file = FileUtility::get_pdc_tmp_dir().join("rx_c2s_ready.txt");
             tokio::spawn(async move {
                 if let Err(e) = c2s
                     .listen(async move {
@@ -139,7 +139,7 @@ impl ServerContext {
         if let Some(s2s) = self.s2s_endpoint.take() {
             let (tx2, rx2) = oneshot::channel();
             self.s2s_shutdown = Some(tx2);
-            let ready_file = RXTXUtils::get_pdc_tmp_dir().join("rx_s2s_ready.txt");
+            let ready_file = FileUtility::get_pdc_tmp_dir().join("rx_s2s_ready.txt");
             tokio::spawn(async move {
                 if let Err(e) = s2s
                     .listen(async move {

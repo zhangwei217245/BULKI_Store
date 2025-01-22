@@ -6,7 +6,6 @@ use log::{debug, info};
 use mpi::topology::SimpleCommunicator;
 #[cfg(feature = "mpi")]
 use mpi::traits::*;
-use rand::Rng;
 use std::sync::Arc;
 
 pub struct ClientContext {

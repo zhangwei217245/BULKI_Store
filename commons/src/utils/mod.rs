@@ -18,8 +18,7 @@ impl TimeUtility {
 impl NetworkUtility {
     const MAX_PORT_ATTEMPTS: u16 = 10;
 
-    pub fn find_available_port(base_port: u16, rank: u16) -> Option<u16> {
-        let base_port = base_port + rank;
+    pub fn find_available_port(base_port: u16) -> Option<u16> {
         (base_port..base_port + Self::MAX_PORT_ATTEMPTS)
             .find(|&port| TcpListener::bind(format!("0.0.0.0:{}", port)).is_ok())
     }
@@ -27,8 +26,7 @@ impl NetworkUtility {
 
 impl FileUtility {
     pub fn get_pdc_tmp_dir() -> PathBuf {
-        env::var_os("PDC_TMP")
-            .map(PathBuf::from)
-            .unwrap_or_else(|| PathBuf::from("./.pdc_tmp"))
+        let pdc_tmp_dir = env::var("PDC_TMP_DIR").expect("PDC_TMP_DIR not set");
+        PathBuf::from(pdc_tmp_dir)
     }
 }

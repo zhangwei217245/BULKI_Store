@@ -1,13 +1,12 @@
 use std::collections::HashMap;
-use std::sync::Mutex;
 
-use crate::rpc::RPCData;
+use crate::rpc::{RPCData, StatusCode};
+use crate::utils::TimeUtility;
 use anyhow::Result;
 use inventory;
 use serde::{Deserialize, Serialize};
-use std::time::Instant;
 
-pub enum HandlerType {
+enum HandlerType {
     Request,
     Response,
 }
@@ -15,7 +14,7 @@ pub enum HandlerType {
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
 pub struct HandlerResult {
     pub status_code: u8,
-    pub message: Option<String>,
+    pub message: String,
 }
 
 pub trait HandlerKind {
@@ -50,20 +49,6 @@ impl HandlerType {
     }
 }
 
-pub trait Handler {
-    fn handle(&self, data: &mut RPCData) -> HandlerResult;
-}
-
-// Implement Handler for standalone functions
-impl<F> Handler for F
-where
-    F: Fn(&mut RPCData) -> HandlerResult,
-{
-    fn handle(&self, data: &mut RPCData) -> HandlerResult {
-        self(data)
-    }
-}
-
 pub trait RequestHandlerRegistration {
     fn register_handlers(&self, dispatcher: &mut HandlerDispatcher<RequestHandlerKind>);
 }
@@ -92,7 +77,7 @@ inventory::collect!(RequestHandlerRegistrationImpl);
 inventory::collect!(ResponseHandlerRegistrationImpl);
 
 pub struct HandlerDispatcher<H: HandlerKind> {
-    functions: HashMap<String, Mutex<Box<dyn Handler + Send + Sync>>>,
+    functions: HashMap<String, fn(&Vec<u8>) -> Result<Vec<u8>, HandlerResult>>,
     _phantom: std::marker::PhantomData<H>,
 }
 
@@ -104,15 +89,13 @@ impl<H: HandlerKind> HandlerDispatcher<H> {
         }
     }
 
-    pub fn register<T>(&mut self, name: &str, handler: T) -> &mut Self
-    where
-        T: Handler + Send + Sync + 'static,
-    {
-        self.functions.insert(
-            H::handler_type().prefix_name(name),
-            Mutex::new(Box::new(handler)),
-        );
-        self
+    pub fn register(
+        &mut self,
+        name: &str,
+        handler: fn(&Vec<u8>) -> Result<Vec<u8>, HandlerResult>,
+    ) {
+        self.functions
+            .insert(H::handler_type().prefix_name(name), handler);
     }
 
     pub fn register_all(&mut self)
@@ -145,34 +128,35 @@ impl<H: HandlerKind> HandlerDispatcher<H> {
     }
 
     pub async fn handle(&self, mut message: RPCData) -> Result<RPCData> {
-        // Get handler name before borrowing message
-        let handler_name = message
+        // Ensure we have metadata
+        let metadata = message
             .metadata
-            .as_ref()
-            .ok_or_else(|| anyhow::anyhow!("Message metadata is missing"))?
-            .handler_name
-            .clone();
+            .as_mut()
+            .ok_or_else(|| anyhow::anyhow!("Message missing metadata"))?;
 
-        let handler_name = H::handler_type().prefix_name(&handler_name);
-
+        // Get the handler name and try to find the function
+        let handler_name = H::handler_type().prefix_name(&metadata.handler_name);
         let handler = self
             .functions
             .get(&handler_name)
-            .ok_or_else(|| anyhow::anyhow!("No handler found for {}", handler_name))?;
+            .ok_or_else(|| anyhow::anyhow!("Handler not found: {}", handler_name))?;
 
-        let start_time = Instant::now();
-
-        // Call the handler with mutable reference to message
-        let handler_result = handler
-            .lock()
-            .map_err(|_| anyhow::anyhow!("Handler mutex poisoned"))?
-            .handle(&mut message);
-
-        // Update the metadata with handler result and timing information
-        if let Some(metadata) = &mut message.metadata {
-            metadata.handler_result = Some(handler_result);
-            metadata.processing_duration_us = Some(start_time.elapsed().as_micros() as u64);
-        }
+        // Execute the handler and capture any errors
+        let result = match handler(&message.data) {
+            Ok(data) => {
+                metadata.handler_result = Some(HandlerResult {
+                    status_code: StatusCode::Ok as u8,
+                    message: "Success".to_string(),
+                });
+                data
+            }
+            Err(e) => {
+                metadata.handler_result = Some(e.clone());
+                return Err(anyhow::anyhow!("Handler error: {:?}", e));
+            }
+        };
+        // Update the response data
+        message.data = result;
 
         Ok(message)
     }
