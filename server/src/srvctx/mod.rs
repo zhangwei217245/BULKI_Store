@@ -3,6 +3,7 @@ use commons::rpc::grpc::{GrpcRX, GrpcTX};
 use commons::rpc::{RxEndpoint, TxEndpoint};
 use commons::utils::FileUtility;
 use log::error;
+use mpi::environment::Universe;
 #[cfg(feature = "mpi")]
 use mpi::topology::{Communicator, SimpleCommunicator};
 #[cfg(feature = "mpi")]
@@ -15,6 +16,8 @@ use tokio::sync::oneshot;
 pub struct ServerContext {
     pub rank: usize,
     pub size: usize,
+    #[cfg(feature = "mpi")]
+    pub universe: Option<Arc<Universe>>,
     #[cfg(feature = "mpi")]
     pub world: Option<Arc<SimpleCommunicator>>,
     #[cfg(not(feature = "mpi"))]
@@ -35,6 +38,7 @@ impl ServerContext {
             rank: 0,
             size: 1,
             world: None,
+            universe: None,
             c2s_endpoint: None,
             s2s_endpoint: None,
             s2s_client: None,
@@ -78,22 +82,32 @@ impl ServerContext {
         }
     }
 
-    pub async fn initialize(&mut self) -> Result<()> {
-        // Initialize rank and size based on MPI world
+    pub async fn initialize(&mut self, universe: Option<Arc<Universe>>) -> Result<()> {
         #[cfg(feature = "mpi")]
         {
-            let (_universe, _) = mpi::initialize_with_threading(Threading::Multiple).unwrap();
-            self.world = Some(Arc::new(_universe.world()));
-            self.rank = self.world.as_ref().map(|w| w.rank()).unwrap_or(0) as usize;
-            self.size = self.world.as_ref().map(|w| w.size()).unwrap_or(1) as usize;
+            if let Some(universe) = universe {
+                // Store the universe first
+                self.universe = Some(universe.clone());
+                // Then get the world communicator
+                let world = self.universe.as_ref().unwrap().world();
+                self.world = Some(Arc::new(world));
+                // Initialize MPI-related fields
+                if let Some(world) = &self.world {
+                    self.rank = world.rank() as usize;
+                    self.size = world.size() as usize;
+                }
+            } else {
+                self.rank = 0;
+                self.size = 1;
+            }
         }
-        // Initialize client-server endpoint
+
         #[cfg(not(feature = "mpi"))]
         {
-            self.world = Some(());
             self.rank = 0;
             self.size = 1;
         }
+
         // Initialize client-server endpoint
         let mut c2s = GrpcRX::new("c2s".to_string(), self.world.clone());
         c2s.initialize()?;

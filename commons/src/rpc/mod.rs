@@ -202,14 +202,15 @@ impl<A> RxContext<A> {
     pub fn new(rpc_id: String, world: Option<Arc<SimpleCommunicator>>) -> Self {
         Self {
             rpc_id,
-            rank: world.as_ref().map(|w| w.rank()).unwrap_or(0) as usize,
-            size: world.as_ref().map(|w| w.size()).unwrap_or(1) as usize,
+            rank: 0,
+            size: 1,
             world,
             server_addresses: None,
             address: None,
             handler: None,
         }
     }
+
     #[cfg(not(feature = "mpi"))]
     pub fn new(rpc_id: String, world: Option<()>) -> Self {
         Self {
@@ -220,6 +221,14 @@ impl<A> RxContext<A> {
             server_addresses: None,
             address: None,
             handler: None,
+        }
+    }
+
+    #[cfg(feature = "mpi")]
+    pub fn initialize_mpi(&mut self) {
+        if let Some(world) = &self.world {
+            self.rank = world.rank() as usize;
+            self.size = world.size() as usize;
         }
     }
 }

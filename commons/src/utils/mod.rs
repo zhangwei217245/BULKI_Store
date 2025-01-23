@@ -26,7 +26,8 @@ impl NetworkUtility {
 
 impl FileUtility {
     pub fn get_pdc_tmp_dir() -> PathBuf {
-        let pdc_tmp_dir = env::var("PDC_TMP_DIR").expect("PDC_TMP_DIR not set");
-        PathBuf::from(pdc_tmp_dir)
+        env::var_os("PDC_TMP")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| PathBuf::from("./pdc_tmp"))
     }
 }
