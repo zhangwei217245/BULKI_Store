@@ -32,14 +32,12 @@ const MAX_SERVER_ADDR_LEN: usize = 256;
 const DEFAULT_BASE_PORT: u16 = 50051;
 
 #[derive(Default, Clone)]
-#[warn(non_camel_case_types)]
 pub struct GrpcRX {
     pub context: RxContext<String>,
     pub port: u16,
     pub hostname: String,
 }
 #[derive(Default, Clone)]
-#[warn(non_camel_case_types)]
 pub struct GrpcTX {
     pub context: TxContext<String>,
     // Cache connections using Arc<Mutex> for thread-safety

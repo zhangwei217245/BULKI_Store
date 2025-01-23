@@ -5,7 +5,14 @@ mod bench;
 mod datastore;
 mod health;
 mod srvctx;
+use anyhow::Result;
 use srvctx::ServerContext;
+
+fn close_resources() -> Result<()> {
+    // TODO: calling resource close functions
+    println!("Closing resources");
+    Ok(())
+}
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -37,13 +44,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             _ = tokio::signal::ctrl_c() => {
                 info!("Received Ctrl+C signal");
                 // Shutdown all endpoints
-                server_context.shutdown().await?;
+                server_context.shutdown(|| async { close_resources() }).await?;
                 debug!("Server shutdown complete");
             }
             _ = terminate.recv() => {
                 info!("Received SIGTERM signal");
                 // Shutdown all endpoints
-                server_context.shutdown().await?;
+                server_context.shutdown(|| async { close_resources() }).await?;
                 debug!("Server shutdown complete");
             }
         }
@@ -54,7 +61,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         tokio::signal::ctrl_c().await?;
         info!("Received Ctrl+C signal");
         // Shutdown all endpoints
-        server_context.shutdown().await?;
+        server_context
+            .shutdown(|| async { close_resources() })
+            .await?;
         debug!("Server shutdown complete");
     }
 
