@@ -20,8 +20,36 @@ CLANG_DIR=$(dirname "$CLANG_PATH")
 export LIBCLANG_PATH="$CLANG_DIR/../lib"
 ```
 
-Finally, you can compile the project by running:
+## Install maturin and python related dependencies
+
+
+### For conda users:
+If you are using conda, it's better if you create a new environment:
+```bash
+conda create --name bulkistore python=3.12
+conda activate bulkistore
+```
+And then you can install maturin:
+```bash
+conda install conda-forge::maturin
+```
+
+### For pyenv or virtualenv users:
+Please create a new virtual environment and install maturin:
+```bash
+python3 -m venv ~/.venv/bulkistore
+source ~/.venv/bulkistore/bin/activate
+pip install maturin
+```
+
+## Building commons and server
 
 ```bash
-cargo build --(debug|release)
+cargo build -p commons -p server --(debug|release)
+```
+
+## Building the client
+
+```bash
+maturin develop
 ```

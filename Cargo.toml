@@ -1,6 +1,7 @@
 [workspace]
 members = ["commons-macros", "commons", "server", "client"]
 resolver = "2"
+build = "build/build.rs"
 
 [workspace.dependencies]
 mpi = { version = "0.8.0" }
@@ -17,7 +18,7 @@ inventory = "0.3"
 
 [workspace.features]
 default = ["mpi"]
-mpi = []
+mpi = ["dep:mpi"]
 
 [profile.release]
 lto = true
