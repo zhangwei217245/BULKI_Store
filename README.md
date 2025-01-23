@@ -51,41 +51,5 @@ cargo build -p commons -p server --(debug|release)
 ## Building the client
 
 ```bash
-maturin develop --manifest-path client/Cargo.toml
-```
-
-
-## Running the server
-
-```bash
-mpirun -np 4 ./target/debug/bulkistore_server
-```
-
-
-## Running the client
-
-```python
-
-import bkstore_client as bkc
-bkc.init()
-import numpy as np
-import time
-
-
-
-arr1=np.array([1.5, 2.5, 3.5], dtype=np.float64)
-arr2=np.array([1, 2, 3], dtype=np.int64)
-# client side function for you to perform add
-arr3=bkc.polymorphic_add(arr1,arr2)
-# calling remote function and perform calculation remotely.
-bkc.times_two(arr3)
-
-stime = time.time()
-for i in range(1000):
-    bkc.times_two(arr3)
-
-etime = time.time()
-
-print("throughput: {} OPS/s".format( 1000/(etime-stime)))
-
+maturin develop
 ```
