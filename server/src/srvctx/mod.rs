@@ -2,16 +2,17 @@ use anyhow::Result;
 use commons::rpc::grpc::{GrpcRX, GrpcTX};
 use commons::rpc::{RxEndpoint, TxEndpoint};
 use commons::utils::FileUtility;
-use log::error;
-use mpi::environment::Universe;
+use log::{error, info, warn};
 #[cfg(feature = "mpi")]
-use mpi::topology::{Communicator, SimpleCommunicator};
-#[cfg(feature = "mpi")]
-use mpi::Threading;
+use mpi::{
+    environment::Universe,
+    topology::{Communicator, SimpleCommunicator},
+};
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
-use tokio::signal;
-use tokio::sync::oneshot;
+
+use tokio::sync::{mpsc, oneshot};
 
 pub struct ServerContext {
     pub rank: usize,
@@ -27,9 +28,14 @@ pub struct ServerContext {
     // RxEndpoint for server-server communication
     pub s2s_endpoint: Option<GrpcRX>,
     pub s2s_client: Option<GrpcTX>,
-    // Shutdown senders for each endpoint
-    c2s_shutdown: Option<oneshot::Sender<()>>,
-    s2s_shutdown: Option<oneshot::Sender<()>>,
+    endpoints: HashMap<String, Arc<GrpcRX>>,
+    endpoint_shutdowns: HashMap<String, oneshot::Sender<()>>,
+}
+
+#[derive(Debug)]
+pub enum PersistenceEvent {
+    SaveData { endpoint_id: String, data: Vec<u8> },
+    Shutdown,
 }
 
 impl ServerContext {
@@ -42,44 +48,49 @@ impl ServerContext {
             c2s_endpoint: None,
             s2s_endpoint: None,
             s2s_client: None,
-            c2s_shutdown: None,
-            s2s_shutdown: None,
+            endpoints: HashMap::new(),
+            endpoint_shutdowns: HashMap::new(),
         }
     }
 
-    async fn handle_shutdown(rx: oneshot::Receiver<()>, ready_file: PathBuf) {
-        // Wait for either SIGTERM or SIGINT
-        let ctrl_c = async {
-            signal::ctrl_c().await.expect("Failed to listen for ctrl+c");
-        };
+    async fn handle_shutdown(endpoint_id: String, rx: oneshot::Receiver<()>, ready_file: PathBuf) {
+        // Wait for shutdown signal
+        let _ = rx.await;
 
-        #[cfg(unix)]
-        let terminate = async {
-            signal::unix::signal(signal::unix::SignalKind::terminate())
-                .expect("Failed to listen for SIGTERM")
-                .recv()
-                .await;
-        };
-
-        #[cfg(not(unix))]
-        let terminate = std::future::pending::<()>();
-
-        let rx = async {
-            rx.await.ok();
-        };
-
-        // Wait for any signal
-        tokio::select! {
-            _ = ctrl_c => println!("Received Ctrl+C signal"),
-            _ = terminate => println!("Received SIGTERM signal"),
-            _ = rx => println!("Received internal shutdown signal"),
-        }
-        println!("Starting graceful shutdown...");
+        info!("Starting graceful shutdown for endpoint: {}", endpoint_id);
 
         // Clean up ready file on shutdown
         if let Err(e) = std::fs::remove_file(&ready_file) {
-            eprintln!("Failed to remove ready file: {}", e);
+            eprintln!(
+                "Failed to remove ready file for endpoint {}: {}",
+                endpoint_id, e
+            );
         }
+    }
+
+    pub async fn register_endpoint(&mut self, id: &str, endpoint: GrpcRX) -> Result<()> {
+        let (tx, rx) = oneshot::channel();
+        let ready_file = FileUtility::get_pdc_tmp_dir().join(format!("rx_{}_ready.txt", id));
+
+        let endpoint_id = id.to_string();
+        let id_owned = id.to_string(); // Clone the id before moving
+        let endpoint = Arc::new(endpoint);
+        let endpoint_clone = endpoint.clone();
+
+        tokio::spawn(async move {
+            if let Err(e) = endpoint_clone
+                .listen(async move {
+                    Self::handle_shutdown(endpoint_id, rx, ready_file).await;
+                })
+                .await
+            {
+                error!("Endpoint {:?} error: {}", id_owned, e);
+            }
+        });
+
+        self.endpoints.insert(id.to_string(), endpoint);
+        self.endpoint_shutdowns.insert(id.to_string(), tx);
+        Ok(())
     }
 
     pub async fn initialize(&mut self, universe: Option<Arc<Universe>>) -> Result<()> {
@@ -132,59 +143,44 @@ impl ServerContext {
     }
 
     pub async fn start_endpoints(&mut self) -> Result<()> {
-        // Start c2s endpoint
+        // Register c2s endpoint
         if let Some(c2s) = self.c2s_endpoint.take() {
-            let (tx1, rx1) = oneshot::channel();
-            self.c2s_shutdown = Some(tx1);
-            let ready_file = FileUtility::get_pdc_tmp_dir().join("rx_c2s_ready.txt");
-            tokio::spawn(async move {
-                if let Err(e) = c2s
-                    .listen(async move {
-                        Self::handle_shutdown(rx1, ready_file).await;
-                    })
-                    .await
-                {
-                    error!("C2S endpoint error: {}", e);
-                }
-            });
+            self.register_endpoint("c2s", c2s).await?;
         }
 
-        // Start s2s endpoint
+        // Register s2s endpoint
         if let Some(s2s) = self.s2s_endpoint.take() {
-            let (tx2, rx2) = oneshot::channel();
-            self.s2s_shutdown = Some(tx2);
-            let ready_file = FileUtility::get_pdc_tmp_dir().join("rx_s2s_ready.txt");
-            tokio::spawn(async move {
-                if let Err(e) = s2s
-                    .listen(async move {
-                        Self::handle_shutdown(rx2, ready_file).await;
-                    })
-                    .await
-                {
-                    error!("S2S endpoint error: {}", e);
-                }
-            });
+            self.register_endpoint("s2s", s2s).await?;
         }
-
         Ok(())
     }
 
-    pub async fn shutdown(&mut self) -> Result<()> {
-        // Send shutdown signals
-        if let Some(tx) = self.c2s_shutdown.take() {
-            let _ = tx.send(());
-        }
-        if let Some(tx) = self.s2s_shutdown.take() {
-            let _ = tx.send(());
+    pub async fn shutdown<F, Fut>(&mut self, pre_shutdown: F) -> Result<()>
+    where
+        F: FnOnce() -> Fut,
+        Fut: std::future::Future<Output = Result<()>>,
+    {
+        // Execute pre-shutdown tasks
+        pre_shutdown().await?;
+
+        // Send shutdown signals to all endpoints
+        for (id, tx) in self.endpoint_shutdowns.drain() {
+            if let Err(_) = tx.send(()) {
+                warn!("Failed to send shutdown signal to endpoint: {}", id);
+            }
         }
 
-        // Close endpoints
-        if let Some(c2s) = &self.c2s_endpoint {
-            c2s.close()?;
+        // Close all endpoints
+        for (id, endpoint) in &self.endpoints {
+            // Handle any final persistence here if needed
+            if let Err(e) = endpoint.close() {
+                warn!("Failed to close endpoint {}: {}", id, e);
+            }
         }
-        if let Some(s2s) = &self.s2s_endpoint {
-            s2s.close()?;
-        }
+
+        // Clear endpoints
+        self.endpoints.clear();
+
         Ok(())
     }
 }
