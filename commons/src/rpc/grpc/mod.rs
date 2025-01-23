@@ -223,22 +223,15 @@ impl RxEndpoint for GrpcRX {
     // type Handler = Box<dyn RequestHandler + Send + Sync>;
 
     fn initialize(&mut self) -> Result<()> {
-        #[cfg(not(feature = "mpi"))]
-        {
-            self.context.world = None;
-            self.context.rank = 0;
-            self.context.size = 1;
-        }
-
         #[cfg(feature = "mpi")]
         {
-            if let Some(world) = &self.context.world {
-                self.context.rank = world.rank() as usize;
-                self.context.size = world.size() as usize;
-            } else {
-                self.context.rank = 0;
-                self.context.size = 1;
-            }
+            self.context.initialize_mpi();
+        }
+
+        #[cfg(not(feature = "mpi"))]
+        {
+            self.context.rank = 0;
+            self.context.size = 1;
         }
 
         // Find available port
