@@ -13,6 +13,8 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use tokio::sync::{mpsc, oneshot};
+mod reqhandler;
+mod resphandler;
 
 pub struct ServerContext {
     pub rank: usize,
@@ -121,21 +123,21 @@ impl ServerContext {
 
         // Initialize client-server endpoint
         let mut c2s = GrpcRX::new("c2s".to_string(), self.world.clone());
-        c2s.initialize()?;
+        c2s.initialize(reqhandler::register_handlers)?;
         c2s.exchange_addresses()?;
         c2s.write_addresses()?;
         self.c2s_endpoint = Some(c2s);
 
         // Initialize server-server endpoint
         let mut s2s = GrpcRX::new("s2s".to_string(), self.world.clone());
-        s2s.initialize()?;
+        s2s.initialize(reqhandler::register_handlers)?;
         s2s.exchange_addresses()?;
         s2s.write_addresses()?;
         self.s2s_endpoint = Some(s2s);
 
         // Initialize s2s client
         let mut s2s_client = GrpcTX::new("s2s".to_string(), self.world.clone());
-        s2s_client.initialize()?;
+        s2s_client.initialize(resphandler::register_handlers)?;
         s2s_client.discover_servers()?;
         self.s2s_client = Some(s2s_client);
 

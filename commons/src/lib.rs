@@ -1,6 +1,7 @@
 // Include the generated protobuf code
 
 pub mod handler;
+pub mod region;
 pub mod rpc;
 pub mod utils;
 

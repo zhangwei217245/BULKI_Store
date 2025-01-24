@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::sync::Mutex;
 
 use crate::rpc::{RPCData, StatusCode};
 use crate::utils::TimeUtility;
@@ -49,6 +50,20 @@ impl HandlerType {
     }
 }
 
+pub trait Handler {
+    fn handle(&self, data: &Vec<u8>) -> Result<Vec<u8>>;
+}
+
+// Implement Handler for standalone functions
+impl<F> Handler for F
+where
+    F: Fn(&Vec<u8>) -> Result<Vec<u8>>,
+{
+    fn handle(&self, data: &Vec<u8>) -> Result<Vec<u8>> {
+        self(data)
+    }
+}
+
 pub trait RequestHandlerRegistration {
     fn register_handlers(&self, dispatcher: &mut HandlerDispatcher<RequestHandlerKind>);
 }
@@ -77,7 +92,7 @@ inventory::collect!(RequestHandlerRegistrationImpl);
 inventory::collect!(ResponseHandlerRegistrationImpl);
 
 pub struct HandlerDispatcher<H: HandlerKind> {
-    functions: HashMap<String, fn(&Vec<u8>) -> Result<Vec<u8>, HandlerResult>>,
+    functions: HashMap<String, Mutex<Box<dyn Handler + Send + Sync>>>,
     _phantom: std::marker::PhantomData<H>,
 }
 
@@ -89,13 +104,15 @@ impl<H: HandlerKind> HandlerDispatcher<H> {
         }
     }
 
-    pub fn register(
-        &mut self,
-        name: &str,
-        handler: fn(&Vec<u8>) -> Result<Vec<u8>, HandlerResult>,
-    ) {
-        self.functions
-            .insert(H::handler_type().prefix_name(name), handler);
+    pub fn register<T>(&mut self, name: &str, handler: T) -> &mut Self
+    where
+        T: Handler + Send + Sync + 'static,
+    {
+        self.functions.insert(
+            H::handler_type().prefix_name(name),
+            Mutex::new(Box::new(handler)),
+        );
+        self
     }
 
     pub fn register_all(&mut self)
@@ -142,19 +159,17 @@ impl<H: HandlerKind> HandlerDispatcher<H> {
             .ok_or_else(|| anyhow::anyhow!("Handler not found: {}", handler_name))?;
 
         // Execute the handler and capture any errors
-        let result = match handler(&message.data) {
-            Ok(data) => {
+        let result = handler
+            .lock()
+            .map_err(|_| anyhow::anyhow!("Handler mutex poisoned"))?
+            .handle(&message.data)
+            .map_err(|e| {
                 metadata.handler_result = Some(HandlerResult {
-                    status_code: StatusCode::Ok as u8,
-                    message: "Success".to_string(),
+                    status_code: StatusCode::Internal as u8,
+                    message: format!("Handler error: {:?}", e),
                 });
-                data
-            }
-            Err(e) => {
-                metadata.handler_result = Some(e.clone());
-                return Err(anyhow::anyhow!("Handler error: {:?}", e));
-            }
-        };
+                e
+            })?;
         // Update the response data
         message.data = result;
 

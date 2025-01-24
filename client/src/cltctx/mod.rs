@@ -2,17 +2,21 @@ use anyhow::{anyhow, Result};
 use commons::rpc::grpc::GrpcTX;
 use commons::rpc::{MessageType, RPCData, RPCMetadata, TxEndpoint};
 use log::{debug, info};
+use mpi::environment::Universe;
 #[cfg(feature = "mpi")]
 use mpi::topology::SimpleCommunicator;
 #[cfg(feature = "mpi")]
 use mpi::traits::*;
 use std::sync::Arc;
+mod resphandler;
 
 pub struct ClientContext {
     #[cfg(feature = "mpi")]
-    world: Option<Arc<SimpleCommunicator>>,
+    pub universe: Option<Arc<Universe>>,
+    #[cfg(feature = "mpi")]
+    pub world: Option<Arc<SimpleCommunicator>>,
     #[cfg(not(feature = "mpi"))]
-    world: Option<()>,
+    pub world: Option<()>,
     rank: usize,
     size: usize,
     pub c2s_client: Option<GrpcTX>,
@@ -32,6 +36,7 @@ pub struct BenchmarkStats {
 impl ClientContext {
     pub fn new() -> Self {
         Self {
+            universe: None,
             world: None,
             rank: 0,
             size: 1,
@@ -39,13 +44,24 @@ impl ClientContext {
         }
     }
 
-    pub async fn initialize(&mut self) -> Result<()> {
+    pub async fn initialize(&mut self, universe: Option<Arc<Universe>>) -> Result<()> {
         #[cfg(feature = "mpi")]
         {
-            let (_universe, _) = mpi::initialize_with_threading(mpi::Threading::Multiple).unwrap();
-            self.world = Some(Arc::new(_universe.world()));
-            self.rank = self.world.as_ref().map(|w| w.rank()).unwrap_or(0) as usize;
-            self.size = self.world.as_ref().map(|w| w.size()).unwrap_or(1) as usize;
+            if let Some(universe) = universe {
+                // Store the universe first
+                self.universe = Some(universe.clone());
+                // Then get the world communicator
+                let world = self.universe.as_ref().unwrap().world();
+                self.world = Some(Arc::new(world));
+                // Initialize MPI-related fields
+                if let Some(world) = &self.world {
+                    self.rank = world.rank() as usize;
+                    self.size = world.size() as usize;
+                }
+            } else {
+                self.rank = 0;
+                self.size = 1;
+            }
         }
         #[cfg(not(feature = "mpi"))]
         {
@@ -53,12 +69,24 @@ impl ClientContext {
             self.rank = 0;
             self.size = 1;
         }
-        // Initialize client-server endpoint
-        let mut c2s_client = GrpcTX::new("c2s".to_string(), self.world.clone());
-        c2s_client.initialize()?;
-        c2s_client.discover_servers()?;
-        self.c2s_client = Some(c2s_client);
         Ok(())
+    }
+
+    pub async fn ensure_client_initialized(&mut self) -> Result<()> {
+        if self.c2s_client.is_none() {
+            // Initialize client-server endpoint
+            let mut c2s_client = GrpcTX::new("c2s".to_string(), self.world.clone());
+            c2s_client.initialize(resphandler::register_handlers)?;
+            c2s_client.discover_servers()?;
+            self.c2s_client = Some(c2s_client);
+        }
+        Ok(())
+    }
+
+    pub fn initialize_blocking(&mut self, universe: Option<Arc<Universe>>) -> Result<()> {
+        tokio::runtime::Runtime::new()
+            .unwrap()
+            .block_on(self.initialize(universe))
     }
 
     pub fn get_server_count(&self) -> usize {
@@ -90,7 +118,11 @@ impl ClientContext {
         }
     }
 
-    pub async fn benchmark_rpc(&self, num_requests: usize, data_len: usize) -> BenchmarkStats {
+    pub async fn benchmark_rpc(
+        &self,
+        num_requests: usize,
+        data_len: usize,
+    ) -> Result<BenchmarkStats> {
         let mut stats = BenchmarkStats {
             total_requests: num_requests,
             successful_requests: 0,
@@ -162,7 +194,7 @@ impl ClientContext {
             stats.total_duration_ms = total_duration.as_millis();
         }
 
-        stats
+        Ok(stats)
     }
 }
 
