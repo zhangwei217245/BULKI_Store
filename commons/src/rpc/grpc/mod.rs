@@ -3,6 +3,7 @@ pub mod bulkistore {
     tonic::include_proto!("bulkistore");
 }
 
+use crate::handler::HandlerDispatcher;
 use crate::rpc::{MessageType, RPCData, RPCMetadata, RxContext, RxEndpoint, TxContext, TxEndpoint};
 use crate::utils::{FileUtility, NetworkUtility, TimeUtility};
 use anyhow::{anyhow, Result};
@@ -218,9 +219,11 @@ impl GrpcBulkistore for GrpcRX {
 #[async_trait]
 impl RxEndpoint for GrpcRX {
     type Address = String;
-    // type Handler = Box<dyn RequestHandler + Send + Sync>;
 
-    fn initialize(&mut self) -> Result<()> {
+    fn initialize<F>(&mut self, handler_register: F) -> Result<()>
+    where
+        F: FnOnce(&mut Self) -> Result<()>,
+    {
         #[cfg(feature = "mpi")]
         {
             self.context.initialize_mpi();
@@ -248,6 +251,10 @@ impl RxEndpoint for GrpcRX {
         let mut server_addresses = vec![String::new(); self.context.size as usize];
         server_addresses[self.context.rank] = format!("{}:{}", self.hostname, self.port);
         self.context.server_addresses = Some(server_addresses);
+
+        // Register handlers
+        self.context.handler = Some(Arc::new(HandlerDispatcher::new()));
+        handler_register(self)?;
 
         Ok(())
     }
@@ -397,9 +404,11 @@ impl RxEndpoint for GrpcRX {
 #[async_trait]
 impl TxEndpoint for GrpcTX {
     type Address = String;
-    // type Handler = Box<dyn ResponseHandler + Send + Sync>;
 
-    fn initialize(&mut self) -> Result<()> {
+    fn initialize<F>(&mut self, handler_register: F) -> Result<()>
+    where
+        F: FnOnce(&mut Self) -> Result<()>,
+    {
         #[cfg(not(feature = "mpi"))]
         {
             self.context.world = None;
@@ -418,6 +427,9 @@ impl TxEndpoint for GrpcTX {
             }
         }
 
+        // Register handlers
+        self.context.handler = Some(Arc::new(HandlerDispatcher::new()));
+        handler_register(self)?;
         Ok(())
     }
     fn discover_servers(&mut self) -> Result<()> {

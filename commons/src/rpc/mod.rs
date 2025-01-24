@@ -8,7 +8,7 @@ use std::{
     default::Default,
     env,
     path::PathBuf,
-    sync::Arc,
+    sync::{Arc, Mutex},
     time::{SystemTime, UNIX_EPOCH},
 };
 
@@ -236,9 +236,11 @@ impl<A> RxContext<A> {
 #[async_trait]
 pub trait RxEndpoint {
     type Address;
-    // type Handler: ResponseHandler;
 
-    fn initialize(&mut self) -> Result<()>;
+    fn initialize<F>(&mut self, handler_register: F) -> Result<()>
+    where
+        F: FnOnce(&mut Self) -> Result<()>;
+
     fn exchange_addresses(&mut self) -> Result<()>;
     // write the RxEndpoint addresses to a file named with rx_{rpc_id}.txt
     fn write_addresses(&self) -> Result<()>;
@@ -258,9 +260,11 @@ pub trait RxEndpoint {
 #[async_trait]
 pub trait TxEndpoint {
     type Address;
-    // type Handler: ResponseHandler;
 
-    fn initialize(&mut self) -> Result<()>;
+    fn initialize<F>(&mut self, handler_register: F) -> Result<()>
+    where
+        F: FnOnce(&mut Self) -> Result<()>;
+
     fn discover_servers(&mut self) -> Result<()>;
     // send a message to a server identified by its index
     async fn send_message(&self, rx_id: usize, handler_name: &str, msg: RPCData)

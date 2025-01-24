@@ -37,10 +37,7 @@
 
 //     fn initialize(&mut self) -> PyResult<()> {
 //         let mut context = ClientContext::new();
-//         let rt = Runtime::new().unwrap();
-//         rt.block_on(context.initialize())
-//             .map_err(BulkiError::from)
-//             .map_err(PyErr::from)?;
+//         context.initialize_blocking().expect("Failed to initialize client context");
 //         self.context = Some(context);
 //         Ok(())
 //     }
@@ -71,10 +68,19 @@
 // }
 
 mod bk_ndarr;
+mod cltctx;
 use crate::bk_ndarr::*;
+use std::cell::RefCell;
 use std::ops::Add;
+use std::sync::Arc;
 
+use bincode;
+use cltctx::ClientContext;
+use commons::region::SerializableNDArray;
+use commons::rpc::RPCData;
+use log::debug;
 use numpy::ndarray::{Array1, ArrayD, ArrayView1, ArrayViewD, ArrayViewMutD, Zip};
+use numpy::PyArray;
 use numpy::{
     datetime::{units, Timedelta},
     Complex64, Element, IntoPyArray, PyArray1, PyArrayDyn, PyArrayMethods, PyReadonlyArray1,
@@ -87,11 +93,175 @@ use pyo3::{
     types::{PyAnyMethods, PyDict, PyDictMethods, PyModule},
     Bound, FromPyObject, PyAny, PyObject, PyResult, Python,
 };
-use pyo3::{IntoPy, IntoPyObject, IntoPyObjectExt};
+use pyo3::{IntoPy, IntoPyObject, IntoPyObjectExt, PyErr};
+
+thread_local! {
+    static RUNTIME: RefCell<Option<tokio::runtime::Runtime>> = RefCell::new(None);
+    static CONTEXT: RefCell<Option<ClientContext>> = RefCell::new(None);
+}
 
 #[pymodule]
 #[pyo3(name = "bkstore_client")]
 fn rust_ext<'py>(m: &Bound<'py, PyModule>) -> PyResult<()> {
+    // Default to non-MPI mode for safety in interactive sessions
+    let universe = None;
+
+    let mut context = ClientContext::new();
+
+    // Get or create the runtime from thread-local storage
+    RUNTIME.with(|rt_cell| {
+        let mut rt = rt_cell.borrow_mut();
+        if rt.is_none() {
+            *rt = Some(tokio::runtime::Runtime::new().map_err(|e| {
+                PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!(
+                    "Failed to create Tokio runtime: {}",
+                    e
+                ))
+            })?);
+        }
+
+        // Use the runtime to run the async initialization
+        rt.as_ref()
+            .unwrap()
+            .block_on(context.initialize(universe))
+            .map_err(|e| {
+                PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!(
+                    "Failed to initialize client context: {}",
+                    e
+                ))
+            })?;
+
+        Ok::<_, PyErr>(())
+    })?;
+
+    debug!("Client running in non-MPI mode");
+
+    // Store the context in thread-local storage
+    CONTEXT.with(|ctx| {
+        *ctx.borrow_mut() = Some(context);
+    });
+
+    #[pyfn(m)]
+    #[pyo3(name = "init")]
+    fn init_py(py: Python<'_>) -> PyResult<()> {
+        // First check if MPI should be initialized
+        let universe = {
+            #[cfg(feature = "mpi")]
+            {
+                // Try to import mpi4py
+                if let Ok(_mpi4py) = py.import("mpi4py.MPI") {
+                    // MPI is available, initialize it
+                    match mpi::initialize_with_threading(mpi::Threading::Multiple) {
+                        Some((universe, _)) => Some(Arc::new(universe)),
+                        None => {
+                            debug!("MPI initialization failed");
+                            None
+                        }
+                    }
+                } else {
+                    debug!("mpi4py not found, running without MPI");
+                    None
+                }
+            }
+            #[cfg(not(feature = "mpi"))]
+            {
+                None
+            }
+        };
+
+        // Initialize or reinitialize context with the determined MPI state
+        let mut context = ClientContext::new();
+
+        RUNTIME.with(|rt_cell| {
+            let mut rt = rt_cell.borrow_mut();
+            if rt.is_none() {
+                *rt = Some(tokio::runtime::Runtime::new().map_err(|e| {
+                    PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!(
+                        "Failed to create Tokio runtime: {}",
+                        e
+                    ))
+                })?);
+            }
+
+            // Initialize context with MPI if available
+            rt.as_ref()
+                .unwrap()
+                .block_on(context.initialize(universe))
+                .map_err(|e| {
+                    PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!(
+                        "Failed to initialize context: {}",
+                        e
+                    ))
+                })?;
+
+            // Initialize network client
+            rt.as_ref()
+                .unwrap()
+                .block_on(context.ensure_client_initialized())
+                .map_err(|e| {
+                    PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!(
+                        "Failed to initialize client: {}",
+                        e
+                    ))
+                })?;
+
+            Ok::<_, PyErr>(())
+        })?;
+
+        // Store the context
+        CONTEXT.with(|ctx| {
+            *ctx.borrow_mut() = Some(context);
+        });
+
+        Ok(())
+    }
+
+    #[pyfn(m)]
+    #[pyo3(name = "times_two")]
+    fn times_two<'py>(py: Python<'py>, x: PyReadonlyArrayDyn<'py, f64>) -> PyResult<PyObject> {
+        // Convert numpy array to rust ndarray
+        let x_array: ndarray::ArrayBase<ndarray::OwnedRepr<f64>, ndarray::Dim<ndarray::IxDynImpl>> =
+            x.as_array().to_owned();
+
+        // Serialize the ndarray using messagepack
+        let serialized = SerializableNDArray::serialize(x_array)
+            .map_err(|e| PyErr::new::<PyValueError, _>(format!("Serialization error: {}", e)))?;
+
+        // Send message to server 0 and get response
+        let response = CONTEXT
+            .with(|ctx| {
+                let ctx = ctx.borrow();
+                let ctx_ref = ctx.as_ref().expect("Context not initialized");
+                RUNTIME.with(|rt_cell| {
+                    let rt = rt_cell.borrow();
+                    let rt_ref = rt.as_ref().expect("Runtime not initialized");
+                    rt_ref.block_on(ctx_ref.send_message(
+                        0,
+                        "datastore::times_two",
+                        RPCData {
+                            metadata: None,
+                            data: serialized,
+                        },
+                    ))
+                })
+            })
+            .map_err(|e| PyErr::new::<PyValueError, _>(format!("RPC error: {}", e)))?;
+
+        // Get binary data from response
+        let response_data = match response {
+            data => data.data,
+            _ => return Err(PyErr::new::<PyValueError, _>("Unexpected response type")),
+        };
+
+        // Deserialize back into rust ndarray
+        let result: ArrayD<f64> = SerializableNDArray::deserialize(&response_data)
+            .map_err(|e| PyErr::new::<PyValueError, _>(format!("Deserialization error: {}", e)))?;
+
+        // Convert back to numpy array
+        let py_array = PyArray::from_array(py, &result);
+        Ok(py_array.into_py(py))
+    }
+
     // example using generic PyObject
     fn head(py: Python<'_>, x: ArrayViewD<'_, PyObject>) -> PyResult<PyObject> {
         x.get(0)
