@@ -76,8 +76,12 @@ impl ClientContext {
         if self.c2s_client.is_none() {
             // Initialize client-server endpoint
             let mut c2s_client = GrpcTX::new("c2s".to_string(), self.world.clone());
+            println!("Initializing client-server endpoint");
             c2s_client.initialize(resphandler::register_handlers)?;
+            println!("Client-server endpoint initialized");
+            println!("Discovering servers");
             c2s_client.discover_servers()?;
+            println!("Servers discovered");
             self.c2s_client = Some(c2s_client);
         }
         Ok(())

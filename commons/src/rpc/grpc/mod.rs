@@ -78,7 +78,7 @@ impl GrpcTX {
             request_received_time: 0,
             processing_duration_us: None,
             message_type: MessageType::Request,
-            handler_name: String::from("health::HealthCheck::check"),
+            handler_name: String::from("health::check"),
             handler_result: None,
         };
         let data = RPCData {
@@ -127,6 +127,8 @@ impl GrpcTX {
         let server_addr = &server_addresses[rx_id];
         let endpoint = format!("http://{}", server_addr);
 
+        println!("[TX Rank {}] got endpoint", self.context.rank);
+
         // Use Tonic's advanced channel features
         let channel = Channel::from_shared(endpoint)?
             .connect_timeout(Self::CONNECT_TIMEOUT)
@@ -138,6 +140,8 @@ impl GrpcTX {
             // Let application layer handle throttling if needed
             .connect()
             .await?;
+
+        println!("[TX Rank {}] Connected to RX {}", self.context.rank, rx_id);
 
         let client = GrpcBulkistoreClient::new(channel);
 
@@ -434,12 +438,15 @@ impl TxEndpoint for GrpcTX {
     }
     fn discover_servers(&mut self) -> Result<()> {
         let pdc_tmp_dir = FileUtility::get_pdc_tmp_dir();
+        println!("Getting PDC tmp dir: {}", pdc_tmp_dir.display());
 
         // Wait for ready file to be created
         let ready_file = pdc_tmp_dir.join(format!("rx_{}_ready.txt", self.context.rpc_id));
+        println!("Waiting for ready file: {}", ready_file.display());
         while !ready_file.exists() {
             std::thread::sleep(std::time::Duration::from_millis(100));
         }
+        println!("Ready file found: {}", ready_file.display());
         // read the ready file and check if the content is "ready"
         let contents = fs::read_to_string(&ready_file).expect("Failed to read ready file");
         if contents != "ready" {
@@ -447,6 +454,7 @@ impl TxEndpoint for GrpcTX {
         }
 
         let file_path = pdc_tmp_dir.join(format!("rx_{}.txt", self.context.rpc_id));
+        println!("Reading server list from: {}", file_path.display());
         // Convert PathBuf to &Path for read_to_string
         let contents = fs::read_to_string(&file_path)?;
 
@@ -490,6 +498,11 @@ impl TxEndpoint for GrpcTX {
         // Get cached or create new connection first
         let mut client = self.get_or_create_connection(rx_id).await?;
 
+        println!(
+            "[TX Rank {}] Sending message to RX Rank {}",
+            self.context.rank, rx_id
+        );
+
         let metadata = RPCMetadata {
             client_rank: self.context.rank as u32,
             server_rank: rx_id as u32,
@@ -507,9 +520,18 @@ impl TxEndpoint for GrpcTX {
         let binary_data = rmp_serde::to_vec(&data)
             .map_err(|e| anyhow::anyhow!("Failed to serialize message: {}", e))?;
 
+        println!(
+            "[TX Rank {}] Serialized message: {:?}",
+            self.context.rank, binary_data
+        );
         // Create request
         let request = tonic::Request::new(RpcMessage { binary_data });
         debug!("Sending request to RX {}", rx_id);
+
+        println!(
+            "[TX Rank {}] Sending request: {:?}",
+            self.context.rank, request
+        );
 
         // Send binary request and wait for response
         match client.process_request(request).await {
