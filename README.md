@@ -51,5 +51,27 @@ cargo build -p commons -p server --(debug|release)
 ## Building the client
 
 ```bash
-maturin develop
+maturin develop --manifest-path client/Cargo.toml
+```
+
+
+## Running the server
+
+```bash
+mpirun -np 4 ./target/debug/bulkistore_server
+```
+
+
+## Running the client
+
+```bash
+python
+
+import bulkistore_client as bkc
+bkc.init()
+
+import numpy as np
+arr1 = np.array([1, 2, 3], dtype=np.float64)
+bkc.times_two(arr1)
+
 ```
