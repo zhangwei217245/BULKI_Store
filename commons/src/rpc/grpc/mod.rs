@@ -5,12 +5,13 @@ pub mod bulkistore {
 
 use crate::handler::HandlerDispatcher;
 use crate::rpc::{MessageType, RPCData, RPCMetadata, RxContext, RxEndpoint, TxContext, TxEndpoint};
-use crate::utils::{FileUtility, NetworkUtility, TimeUtility};
+use crate::utils::{FileUtility, TimeUtility};
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
 use bulkistore::grpc_bulkistore_client::GrpcBulkistoreClient;
 use bulkistore::grpc_bulkistore_server::{GrpcBulkistore, GrpcBulkistoreServer};
 use bulkistore::RpcMessage;
+use dashmap::DashMap;
 use hostname;
 use log::{debug, info};
 #[cfg(feature = "mpi")]
@@ -18,14 +19,13 @@ use mpi::topology::SimpleCommunicator;
 #[cfg(feature = "mpi")]
 use mpi::traits::{Communicator, CommunicatorCollectives};
 use rand::Rng;
-use std::collections::HashMap;
 use std::fs::{self, File};
 use std::io::Write;
-use std::net::TcpListener;
+use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
-use tokio::sync::Mutex;
-use tokio::time::Instant;
+use tokio::sync::oneshot;
+use tokio::sync::Barrier;
 use tonic::transport::{Channel, Server};
 use tonic::Request;
 
@@ -37,12 +37,12 @@ pub struct GrpcRX {
     pub context: RxContext<String>,
     pub port: u16,
     pub hostname: String,
+    pub rx_id: u16,
 }
 #[derive(Default, Clone)]
 pub struct GrpcTX {
     pub context: TxContext<String>,
-    // Cache connections using Arc<Mutex> for thread-safety
-    connections: Arc<Mutex<HashMap<usize, GrpcBulkistoreClient<Channel>>>>,
+    connections: DashMap<usize, Channel>,
 }
 
 impl GrpcRX {
@@ -51,13 +51,14 @@ impl GrpcRX {
             context: RxContext::new(rpc_id, world),
             port: 0,
             hostname: String::new(),
+            rx_id: 0,
         }
     }
 }
 
 impl GrpcTX {
-    const CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
-    const KEEPALIVE_INTERVAL: Duration = Duration::from_secs(300 * 3); // 15 minutes
+    const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
+    const KEEPALIVE_INTERVAL: Duration = Duration::from_secs(120); // 2 minutes
     #[allow(dead_code)]
     const KEEPALIVE_TIMEOUT: Duration = Duration::from_secs(10);
     const MAX_CONCURRENT_REQUESTS: usize = 1000;
@@ -65,10 +66,10 @@ impl GrpcTX {
     pub fn new(rpc_id: String, world: Option<Arc<SimpleCommunicator>>) -> Self {
         Self {
             context: TxContext::new(rpc_id, world),
-            connections: Arc::new(Mutex::new(HashMap::new())),
+            connections: DashMap::new(),
         }
     }
-    async fn check_connection_health(&self, client: &GrpcBulkistoreClient<Channel>) -> bool {
+    async fn check_connection_health(&self, channel: &Channel) -> bool {
         // Send an empty message just to check if connection is alive
         let metadata = RPCMetadata {
             client_rank: self.context.rank as u32,
@@ -88,7 +89,8 @@ impl GrpcTX {
         let request = RpcMessage {
             binary_data: rmp_serde::to_vec(&data).unwrap(),
         };
-        match client.clone().process_request(Request::new(request)).await {
+        let mut client = GrpcBulkistoreClient::new(channel.clone());
+        match client.process_request(Request::new(request)).await {
             Ok(_) => true,
             Err(e) => {
                 debug!("Connection health check failed: {}", e);
@@ -102,12 +104,10 @@ impl GrpcTX {
     ) -> Result<GrpcBulkistoreClient<Channel>> {
         // Try existing connection
         {
-            // Lock acquired
-            let connections = self.connections.lock().await;
-            if let Some(client) = connections.get(&rx_id) {
+            if let Some(channel) = self.connections.get(&rx_id) {
                 // Check if connection is healthy
-                if self.check_connection_health(client).await {
-                    return Ok(client.clone());
+                if self.check_connection_health(&channel).await {
+                    return Ok(GrpcBulkistoreClient::new(channel.clone()));
                 }
                 // Connection unhealthy, will create new one
                 debug!("Existing connection unhealthy, creating new one");
@@ -124,32 +124,27 @@ impl GrpcTX {
             return Err(anyhow::anyhow!("Invalid RX id: {}", rx_id));
         }
 
-        let server_addr = &server_addresses[rx_id];
+        let server_addr = server_addresses[rx_id].as_str();
         let endpoint = format!("http://{}", server_addr);
 
-        println!("[TX Rank {}] got endpoint", self.context.rank);
+        println!("[TX Rank {}] got endpoint {}", self.context.rank, endpoint);
 
         // Use Tonic's advanced channel features
         let channel = Channel::from_shared(endpoint)?
             .connect_timeout(Self::CONNECT_TIMEOUT)
             .tcp_keepalive(Some(Self::KEEPALIVE_INTERVAL))
-            .tcp_nodelay(true) // Disable Nagle's algorithm for better latency
+            // .tcp_nodelay(true) // Disable Nagle's algorithm for better latency
             .http2_keep_alive_interval(Self::KEEPALIVE_INTERVAL)
-            .concurrency_limit(Self::MAX_CONCURRENT_REQUESTS)
-            // Remove rate limit since it's a cached connection
-            // Let application layer handle throttling if needed
+            .keep_alive_timeout(Self::KEEPALIVE_TIMEOUT)
             .connect()
-            .await?;
+            .await
+            .unwrap();
 
         println!("[TX Rank {}] Connected to RX {}", self.context.rank, rx_id);
 
-        let client = GrpcBulkistoreClient::new(channel);
+        self.connections.insert(rx_id, channel);
 
-        // Cache the new connection
-        {
-            let mut connections = self.connections.lock().await;
-            connections.insert(rx_id, client.clone());
-        }
+        let client = GrpcBulkistoreClient::new(self.connections.get(&rx_id).unwrap().clone());
 
         Ok(client)
     }
@@ -158,25 +153,24 @@ impl GrpcTX {
     #[allow(dead_code)]
     async fn maintain_connections(&self) {
         loop {
-            tokio::time::sleep(Duration::from_secs(120)).await; // Check every minute
+            tokio::time::sleep(Duration::from_secs(120)).await; // Check every two minute
 
             let mut unhealthy_connections = Vec::new();
 
             // Find unhealthy connections
-            {
-                let connections = self.connections.lock().await;
-                for (rx_id, client) in connections.iter() {
-                    if !self.check_connection_health(client).await {
-                        unhealthy_connections.push(*rx_id);
+
+            for i in 0..self.connections.len() {
+                if let Some(channel) = self.connections.get(&i).as_deref() {
+                    if !self.check_connection_health(channel).await {
+                        unhealthy_connections.push(i);
                     }
                 }
             }
 
             // Remove unhealthy connections
             if !unhealthy_connections.is_empty() {
-                let mut connections = self.connections.lock().await;
                 for rx_id in unhealthy_connections {
-                    connections.remove(&rx_id);
+                    self.connections.remove(&rx_id);
                     debug!("Removed unhealthy connection to RX {}", rx_id);
                 }
             }
@@ -224,7 +218,7 @@ impl GrpcBulkistore for GrpcRX {
 impl RxEndpoint for GrpcRX {
     type Address = String;
 
-    fn initialize<F>(&mut self, handler_register: F) -> Result<()>
+    fn initialize<F>(&mut self, rx_id: u16, handler_register: F) -> Result<()>
     where
         F: FnOnce(&mut Self) -> Result<()>,
     {
@@ -238,29 +232,76 @@ impl RxEndpoint for GrpcRX {
             self.context.rank = 0;
             self.context.size = 1;
         }
-
-        // Find available port
-        let port = NetworkUtility::find_available_port(DEFAULT_BASE_PORT)
-            .ok_or_else(|| anyhow::anyhow!("Could not find available port"))?;
-
-        // Get hostname
-        let hostname = hostname::get()?
-            .into_string()
-            .map_err(|_| anyhow::anyhow!("Invalid hostname"))?;
-
-        self.port = port;
-        self.hostname = hostname;
-        self.context.address = Some(format!("{}:{}", self.hostname, self.port));
-
-        let mut server_addresses = vec![String::new(); self.context.size as usize];
-        server_addresses[self.context.rank] = format!("{}:{}", self.hostname, self.port);
-        self.context.server_addresses = Some(server_addresses);
-
+        self.rx_id = rx_id;
         // Register handlers
         self.context.handler = Some(Arc::new(HandlerDispatcher::new()));
         handler_register(self)?;
 
         Ok(())
+    }
+
+    async fn listen(
+        &mut self,
+        tokio_barrier: Arc<Barrier>,
+        shutdown_rx: oneshot::Receiver<()>,
+    ) -> Result<(), anyhow::Error> {
+        let rx_rank = (self.rx_id % 10 * 100) + self.context.rank as u16;
+        let base_port = DEFAULT_BASE_PORT + rx_rank;
+        let max_attempts = 20;
+
+        let hostname = hostname::get()?
+            .into_string()
+            .map_err(|_| anyhow::anyhow!("Invalid hostname"))?;
+
+        for port in base_port..base_port + max_attempts {
+            debug!("Attempting to start server on {}:{}", hostname, port);
+
+            let addr = format!("{}:{}", hostname, port);
+            let service = Arc::new(self.clone());
+
+            match addr.parse::<SocketAddr>() {
+                Ok(socket_addr) => {
+                    // bind  with TCPListener
+                    let listener = tokio::net::TcpListener::bind(socket_addr).await?;
+                    // spawn a new task to start server
+                    tokio::spawn(async move {
+                        Server::builder()
+                            .add_service(GrpcBulkistoreServer::from_arc(service))
+                            // add as a dev-dependency the crate `tokio-stream` with feature `net` enabled
+                            .serve_with_incoming_shutdown(
+                                tokio_stream::wrappers::TcpListenerStream::new(listener),
+                                async move {
+                                    shutdown_rx.await.ok();
+                                    // TODO: any operation needed.
+                                },
+                            )
+                            .await
+                    });
+                    debug!("Successfully started server on {}:{}", hostname, port);
+
+                    self.port = port;
+                    self.hostname = hostname.clone();
+                    self.context.address = Some(addr);
+
+                    let mut server_addresses = vec![String::new(); self.context.size as usize];
+                    server_addresses[self.context.rank] = format!("{}:{}", hostname, port);
+                    self.context.server_addresses = Some(server_addresses);
+
+                    tokio_barrier.wait().await;
+                    return Ok(());
+                }
+                Err(e) => {
+                    debug!("Failed to parse address {}:{}: {}", hostname, port, e);
+                    continue;
+                }
+            }
+        }
+
+        tokio_barrier.wait().await;
+        Err(anyhow::anyhow!(
+            "Failed to find available port after {} attempts",
+            max_attempts
+        ))
     }
 
     fn exchange_addresses(&mut self) -> Result<()> {
@@ -352,27 +393,6 @@ impl RxEndpoint for GrpcRX {
             std::fs::write(&ready_file, "ready").expect("Failed to create ready file");
         }
         Ok(())
-    }
-
-    async fn listen<F>(&self, shutdown_handler: F) -> Result<(), anyhow::Error>
-    where
-        F: std::future::Future<Output = ()> + Send + 'static,
-    {
-        let addr = self.context.address.clone();
-        let service = Arc::new(self.clone());
-
-        let addr = addr
-            .ok_or_else(|| anyhow::anyhow!("Address not set"))?
-            .parse()
-            .map_err(|e| anyhow::anyhow!("Failed to parse address: {}", e))?;
-
-        let incoming = Server::builder()
-            .add_service(GrpcBulkistoreServer::from_arc(service))
-            .serve_with_shutdown(addr, shutdown_handler);
-
-        incoming
-            .await
-            .map_err(|e| anyhow::anyhow!("Server error: {}", e))
     }
 
     async fn respond_request(&self, mut msg: RPCData) -> Result<RPCData> {
@@ -546,8 +566,7 @@ impl TxEndpoint for GrpcTX {
             Err(status) => {
                 // If connection error, remove it from cache
                 if status.code() == tonic::Code::Unavailable {
-                    let mut connections = self.connections.lock().await;
-                    connections.remove(&rx_id);
+                    self.connections.remove(&rx_id);
                     debug!("Removed failed connection to RX {}", rx_id);
                 }
                 Err(anyhow::anyhow!("RPC failed: {}", status))
@@ -580,9 +599,8 @@ impl TxEndpoint for GrpcTX {
     async fn close(&self) -> Result<()> {
         // Clear all cached connections
         let conn_count = {
-            let mut connections = self.connections.lock().await;
-            let count = connections.len();
-            connections.clear();
+            let count = self.connections.len();
+            self.connections.clear();
             count
         };
         debug!("Cleared {} cached gRPC TX connections", conn_count);

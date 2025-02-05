@@ -8,6 +8,8 @@ commons-macros = { path = "../commons-macros" }
 async-trait = "0.1.77"
 tonic = "0.12.3"
 prost = "0.13.4"
+http = "1.2.0"
+dashmap = "6.1.0"
 tokio = { version = "1", features = ["full"] }
 hostname = "0.4.0"
 mpi = { workspace = true, optional = true }
@@ -19,6 +21,8 @@ rand = { workspace = true }
 ndarray = { workspace = true }
 inventory = { workspace = true }
 msgpack-numpy = { workspace = true }
+tokio-stream = { version = "0.1.17", features = ["net"] }
+env_logger = "0.11.1"
 
 [build-dependencies]
 tonic-build = "0.12.3"
