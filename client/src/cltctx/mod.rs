@@ -116,6 +116,7 @@ impl ClientContext {
         data: RPCData,
     ) -> Result<RPCData> {
         if let Some(client) = &self.c2s_client {
+            println!("Sending message to server rank {}", server_rank);
             client.send_message(server_rank, handler_name, data).await
         } else {
             Err(anyhow!("C2S client not initialized"))

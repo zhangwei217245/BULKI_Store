@@ -11,6 +11,7 @@ use std::{
     sync::{Arc, Mutex},
     time::{SystemTime, UNIX_EPOCH},
 };
+use tokio::sync::{oneshot, Barrier};
 
 use crate::handler::{HandlerDispatcher, HandlerResult, RequestHandlerKind, ResponseHandlerKind};
 
@@ -237,20 +238,22 @@ impl<A> RxContext<A> {
 pub trait RxEndpoint {
     type Address;
 
-    fn initialize<F>(&mut self, handler_register: F) -> Result<()>
+    fn initialize<F>(&mut self, rx_id: u16, handler_register: F) -> Result<()>
     where
         F: FnOnce(&mut Self) -> Result<()>;
-
-    fn exchange_addresses(&mut self) -> Result<()>;
-    // write the RxEndpoint addresses to a file named with rx_{rpc_id}.txt
-    fn write_addresses(&self) -> Result<()>;
     // start to listen for incoming requests asynchronously
     // can be used in two ways:
     // 1. await server.listen(handler) - for blocking behavior
     // 2. tokio::spawn(server.listen(handler)) - for non-blocking behavior
-    async fn listen<F>(&self, shutdown_handler: F) -> Result<(), anyhow::Error>
-    where
-        F: std::future::Future<Output = ()> + Send + 'static;
+    async fn listen(
+        &mut self,
+        tokio_barrier: Arc<Barrier>,
+        shutdown_rx: oneshot::Receiver<()>,
+    ) -> Result<(), anyhow::Error>;
+    // exchange the RxEndpoint addresses with the server
+    fn exchange_addresses(&mut self) -> Result<()>;
+    // write the RxEndpoint addresses to a file named with rx_{rpc_id}.txt
+    fn write_addresses(&self) -> Result<()>;
     // respond to a request using the handler
     async fn respond_request(&self, msg: RPCData) -> Result<RPCData>;
     // close the endpoint

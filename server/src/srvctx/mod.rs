@@ -7,12 +7,13 @@ use log::{error, info, warn};
 use mpi::{
     environment::Universe,
     topology::{Communicator, SimpleCommunicator},
+    traits::CommunicatorCollectives,
 };
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use tokio::sync::{mpsc, oneshot};
+use tokio::sync::{mpsc, oneshot, Barrier, Mutex as TokioMutex};
 mod reqhandler;
 mod resphandler;
 
@@ -30,7 +31,7 @@ pub struct ServerContext {
     // RxEndpoint for server-server communication
     pub s2s_endpoint: Option<GrpcRX>,
     pub s2s_client: Option<GrpcTX>,
-    endpoints: HashMap<String, Arc<GrpcRX>>,
+    endpoints: HashMap<String, Arc<TokioMutex<GrpcRX>>>,
     endpoint_shutdowns: HashMap<String, oneshot::Sender<()>>,
 }
 
@@ -55,41 +56,18 @@ impl ServerContext {
         }
     }
 
-    async fn handle_shutdown(endpoint_id: String, rx: oneshot::Receiver<()>, ready_file: PathBuf) {
-        // Wait for shutdown signal
-        let _ = rx.await;
-
-        info!("Starting graceful shutdown for endpoint: {}", endpoint_id);
-
-        // Clean up ready file on shutdown
-        if let Err(e) = std::fs::remove_file(&ready_file) {
-            eprintln!(
-                "Failed to remove ready file for endpoint {}: {}",
-                endpoint_id, e
-            );
-        }
-    }
-
-    pub async fn register_endpoint(&mut self, id: &str, endpoint: GrpcRX) -> Result<()> {
+    pub async fn register_endpoint(
+        &mut self,
+        id: &str,
+        mut endpoint: GrpcRX,
+        barrier: Arc<Barrier>,
+    ) -> Result<()> {
         let (tx, rx) = oneshot::channel();
+        let _ = endpoint.listen(barrier.clone(), rx).await?;
         let ready_file = FileUtility::get_pdc_tmp_dir().join(format!("rx_{}_ready.txt", id));
-
-        let endpoint_id = id.to_string();
-        let id_owned = id.to_string(); // Clone the id before moving
-        let endpoint = Arc::new(endpoint);
-        let endpoint_clone = endpoint.clone();
-
-        tokio::spawn(async move {
-            if let Err(e) = endpoint_clone
-                .listen(async move {
-                    Self::handle_shutdown(endpoint_id, rx, ready_file).await;
-                })
-                .await
-            {
-                error!("Endpoint {:?} error: {}", id_owned, e);
-            }
-        });
-
+        // write 'ready' to the ready file
+        std::fs::write(&ready_file, "ready").expect("Failed to create ready file");
+        let endpoint = Arc::new(TokioMutex::new(endpoint));
         self.endpoints.insert(id.to_string(), endpoint);
         self.endpoint_shutdowns.insert(id.to_string(), tx);
         Ok(())
@@ -123,17 +101,53 @@ impl ServerContext {
 
         // Initialize client-server endpoint
         let mut c2s = GrpcRX::new("c2s".to_string(), self.world.clone());
-        c2s.initialize(reqhandler::register_handlers)?;
-        c2s.exchange_addresses()?;
-        c2s.write_addresses()?;
+        c2s.initialize(0u16, reqhandler::register_handlers)?;
         self.c2s_endpoint = Some(c2s);
 
         // Initialize server-server endpoint
         let mut s2s = GrpcRX::new("s2s".to_string(), self.world.clone());
-        s2s.initialize(reqhandler::register_handlers)?;
-        s2s.exchange_addresses()?;
-        s2s.write_addresses()?;
+        s2s.initialize(1u16, reqhandler::register_handlers)?;
         self.s2s_endpoint = Some(s2s);
+
+        Ok(())
+    }
+
+    pub async fn start_endpoints(&mut self) -> Result<()> {
+        let barrier = Arc::new(tokio::sync::Barrier::new(3)); // 1 for main + 2 for endpoints
+
+        // Register c2s endpoint
+        if let Some(c2s) = self.c2s_endpoint.take() {
+            let barrier_clone = barrier.clone();
+            self.register_endpoint("c2s", c2s, barrier_clone).await?;
+        }
+
+        // Register s2s endpoint
+        if let Some(s2s) = self.s2s_endpoint.take() {
+            let barrier_clone = barrier.clone();
+            self.register_endpoint("s2s", s2s, barrier_clone).await?;
+        }
+
+        // Wait for both endpoints to be ready
+        barrier.wait().await;
+
+        // apply MPI barrier
+        #[cfg(feature = "mpi")]
+        {
+            if let Some(world) = &self.world {
+                world.barrier();
+            }
+        }
+
+        // Exchange and write addresses for registered endpoints
+        if let Some(c2s) = self.endpoints.get("c2s") {
+            c2s.lock().await.exchange_addresses()?;
+            c2s.lock().await.write_addresses()?;
+        }
+
+        if let Some(s2s) = self.endpoints.get("s2s") {
+            s2s.lock().await.exchange_addresses()?;
+            s2s.lock().await.write_addresses()?;
+        }
 
         // Initialize s2s client
         let mut s2s_client = GrpcTX::new("s2s".to_string(), self.world.clone());
@@ -141,19 +155,6 @@ impl ServerContext {
         s2s_client.discover_servers()?;
         self.s2s_client = Some(s2s_client);
 
-        Ok(())
-    }
-
-    pub async fn start_endpoints(&mut self) -> Result<()> {
-        // Register c2s endpoint
-        if let Some(c2s) = self.c2s_endpoint.take() {
-            self.register_endpoint("c2s", c2s).await?;
-        }
-
-        // Register s2s endpoint
-        if let Some(s2s) = self.s2s_endpoint.take() {
-            self.register_endpoint("s2s", s2s).await?;
-        }
         Ok(())
     }
 
@@ -170,12 +171,17 @@ impl ServerContext {
             if let Err(_) = tx.send(()) {
                 warn!("Failed to send shutdown signal to endpoint: {}", id);
             }
+            let ready_file = FileUtility::get_pdc_tmp_dir().join(format!("rx_{}_ready.txt", id));
+            // delete the ready file
+            if let Err(e) = std::fs::remove_file(&ready_file) {
+                warn!("Failed to remove ready file for endpoint {}: {}", id, e);
+            }
         }
 
         // Close all endpoints
         for (id, endpoint) in &self.endpoints {
             // Handle any final persistence here if needed
-            if let Err(e) = endpoint.close() {
+            if let Err(e) = endpoint.lock().await.close() {
                 warn!("Failed to close endpoint {}: {}", id, e);
             }
         }

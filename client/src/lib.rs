@@ -78,7 +78,7 @@ use bincode;
 use cltctx::ClientContext;
 use commons::region::SerializableNDArray;
 use commons::rpc::RPCData;
-use log::debug;
+use log::{debug, error, warn};
 use numpy::ndarray::{Array1, ArrayD, ArrayView1, ArrayViewD, ArrayViewMutD, Zip};
 use numpy::PyArray;
 use numpy::{
@@ -398,6 +398,38 @@ fn rust_ext<'py>(m: &Bound<'py, PyModule>) -> PyResult<()> {
             }
         }
     }
+
+    // async fn create_grpc_client(
+    //     address: &str,
+    // ) -> Result<GrpcBulkistoreClient<tonic::transport::Channel>, Box<dyn std::error::Error>> {
+    //     // First, validate the address
+    //     match address.to_socket_addrs() {
+    //         Ok(mut addr_iter) => {
+    //             if addr_iter.next().is_none() {
+    //                 error!("Invalid socket address: {}", address);
+    //                 return Err("Invalid socket address".into());
+    //             }
+    //         }
+    //         Err(e) => {
+    //             error!("Failed to resolve address {}: {}", address, e);
+    //             return Err(e.into());
+    //         }
+    //     }
+
+    //     // Attempt connection with more detailed error logging
+    //     match GrpcBulkistoreClient::connect(address).await {
+    //         Ok(client) => Ok(client),
+    //         Err(e) => {
+    //             error!("Transport error connecting to {}: {}", address, e);
+    //             warn!("Possible causes:");
+    //             warn!("1. Server not running");
+    //             warn!("2. Incorrect address or port");
+    //             warn!("3. Network connectivity issues");
+    //             warn!("4. Firewall blocking connection");
+    //             Err(e.into())
+    //         }
+    //     }
+    // }
 
     Ok(())
 }
