@@ -2,7 +2,7 @@ use anyhow::Result;
 use commons::rpc::grpc::{GrpcRX, GrpcTX};
 use commons::rpc::{RxEndpoint, TxEndpoint};
 use commons::utils::FileUtility;
-use log::{error, info, warn};
+use log::{debug, error, info, warn};
 #[cfg(feature = "mpi")]
 use mpi::{
     environment::Universe,
@@ -59,21 +59,25 @@ impl ServerContext {
     pub async fn register_endpoint(
         &mut self,
         id: &str,
+        start_listen_tx: oneshot::Sender<()>,
         mut endpoint: GrpcRX,
-        barrier: Arc<Barrier>,
     ) -> Result<()> {
-        let (tx, rx) = oneshot::channel();
-        let _ = endpoint.listen(barrier.clone(), rx).await?;
+        let (shutdown_tx, shutdown_rx) = oneshot::channel();
+        let _ = endpoint.listen(start_listen_tx, shutdown_rx).await?;
+        debug!("Endpoint {} is listening now", id);
         let ready_file = FileUtility::get_pdc_tmp_dir().join(format!("rx_{}_ready.txt", id));
         // write 'ready' to the ready file
-        std::fs::write(&ready_file, "ready").expect("Failed to create ready file");
+        tokio::fs::write(&ready_file, "ready")
+            .await
+            .expect("Failed to create ready file");
         let endpoint = Arc::new(TokioMutex::new(endpoint));
         self.endpoints.insert(id.to_string(), endpoint);
-        self.endpoint_shutdowns.insert(id.to_string(), tx);
+        self.endpoint_shutdowns.insert(id.to_string(), shutdown_tx);
         Ok(())
     }
 
     pub async fn initialize(&mut self, universe: Option<Arc<Universe>>) -> Result<()> {
+        debug!("ServerContext::initialize");
         #[cfg(feature = "mpi")]
         {
             if let Some(universe) = universe {
@@ -100,35 +104,45 @@ impl ServerContext {
         }
 
         // Initialize client-server endpoint
+        debug!("Initializing client-server endpoint");
         let mut c2s = GrpcRX::new("c2s".to_string(), self.world.clone());
         c2s.initialize(0u16, reqhandler::register_handlers)?;
         self.c2s_endpoint = Some(c2s);
 
         // Initialize server-server endpoint
+        debug!("Initializing server-server endpoint");
         let mut s2s = GrpcRX::new("s2s".to_string(), self.world.clone());
         s2s.initialize(1u16, reqhandler::register_handlers)?;
         self.s2s_endpoint = Some(s2s);
 
+        debug!("Server running on MPI process {}", self.rank);
         Ok(())
     }
 
     pub async fn start_endpoints(&mut self) -> Result<()> {
-        let barrier = Arc::new(tokio::sync::Barrier::new(3)); // 1 for main + 2 for endpoints
-
-        // Register c2s endpoint
-        if let Some(c2s) = self.c2s_endpoint.take() {
-            let barrier_clone = barrier.clone();
-            self.register_endpoint("c2s", c2s, barrier_clone).await?;
+        let endpoint_list = ["c2s", "s2s"];
+        for &id in endpoint_list.iter() {
+            let (start_listen_tx, start_listen_rx) = oneshot::channel();
+            match id {
+                "c2s" => {
+                    if let Some(c2s) = self.c2s_endpoint.take() {
+                        self.register_endpoint("c2s", start_listen_tx, c2s).await?;
+                    }
+                    let _ = start_listen_rx.await.ok().unwrap();
+                }
+                "s2s" => {
+                    if let Some(s2s) = self.s2s_endpoint.take() {
+                        self.register_endpoint("s2s", start_listen_tx, s2s).await?;
+                    }
+                    let _ = start_listen_rx.await.ok().unwrap();
+                }
+                _ => {
+                    return Err(anyhow::anyhow!("Invalid endpoint id"));
+                }
+            }
         }
-
-        // Register s2s endpoint
-        if let Some(s2s) = self.s2s_endpoint.take() {
-            let barrier_clone = barrier.clone();
-            self.register_endpoint("s2s", s2s, barrier_clone).await?;
-        }
-
-        // Wait for both endpoints to be ready
-        barrier.wait().await;
+        // Send start listen signal
+        debug!("c2s and s2s endpoints registered");
 
         // apply MPI barrier
         #[cfg(feature = "mpi")]
@@ -149,6 +163,20 @@ impl ServerContext {
             s2s.lock().await.write_addresses()?;
         }
 
+        // test if s2s ready file is there, if yes, let's move on, otherwise, just wait for that file to be created
+        let ready_file = FileUtility::get_pdc_tmp_dir().join(format!("rx_s2s_ready.txt"));
+
+        info!("Waiting for s2s ready file...");
+        let timeout = tokio::time::Duration::from_secs(10);
+        let start = tokio::time::Instant::now();
+        while !ready_file.exists() {
+            if start.elapsed() >= timeout {
+                anyhow::bail!("Timeout waiting for s2s ready file");
+            }
+            tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+        }
+
+        debug!("s2s ready file found: {}", ready_file.display());
         // Initialize s2s client
         let mut s2s_client = GrpcTX::new("s2s".to_string(), self.world.clone());
         s2s_client.initialize(resphandler::register_handlers)?;
@@ -173,8 +201,17 @@ impl ServerContext {
             }
             let ready_file = FileUtility::get_pdc_tmp_dir().join(format!("rx_{}_ready.txt", id));
             // delete the ready file
-            if let Err(e) = std::fs::remove_file(&ready_file) {
+            if let Err(e) = tokio::fs::remove_file(&ready_file).await {
                 warn!("Failed to remove ready file for endpoint {}: {}", id, e);
+            }
+
+            let server_list_path = FileUtility::get_pdc_tmp_dir().join(format!("rx_{}.txt", id));
+            // delete the server list file
+            if let Err(e) = tokio::fs::remove_file(&server_list_path).await {
+                warn!(
+                    "Failed to remove server list file for endpoint {}: {}",
+                    id, e
+                );
             }
         }
 

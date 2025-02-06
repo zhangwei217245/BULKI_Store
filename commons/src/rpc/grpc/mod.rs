@@ -25,7 +25,6 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::oneshot;
-use tokio::sync::Barrier;
 use tonic::transport::{Channel, Server};
 use tonic::Request;
 
@@ -224,7 +223,7 @@ impl RxEndpoint for GrpcRX {
     {
         #[cfg(feature = "mpi")]
         {
-            self.context.initialize_mpi();
+            let _ = self.context.initialize_mpi();
         }
 
         #[cfg(not(feature = "mpi"))]
@@ -235,14 +234,13 @@ impl RxEndpoint for GrpcRX {
         self.rx_id = rx_id;
         // Register handlers
         self.context.handler = Some(Arc::new(HandlerDispatcher::new()));
-        handler_register(self)?;
-
+        let _ = handler_register(self)?;
         Ok(())
     }
 
     async fn listen(
         &mut self,
-        tokio_barrier: Arc<Barrier>,
+        start_listen: oneshot::Sender<()>,
         shutdown_rx: oneshot::Receiver<()>,
     ) -> Result<(), anyhow::Error> {
         let rx_rank = (self.rx_id % 10 * 100) + self.context.rank as u16;
@@ -253,15 +251,16 @@ impl RxEndpoint for GrpcRX {
             .into_string()
             .map_err(|_| anyhow::anyhow!("Invalid hostname"))?;
 
+        // Use localhost IP for binding
         for port in base_port..base_port + max_attempts {
             debug!("Attempting to start server on {}:{}", hostname, port);
 
-            let addr = format!("{}:{}", hostname, port);
+            let addr = format!("0.0.0.0:{}", port);
             let service = Arc::new(self.clone());
 
             match addr.parse::<SocketAddr>() {
                 Ok(socket_addr) => {
-                    // bind  with TCPListener
+                    // bind with TCPListener
                     let listener = tokio::net::TcpListener::bind(socket_addr).await?;
                     // spawn a new task to start server
                     tokio::spawn(async move {
@@ -286,9 +285,12 @@ impl RxEndpoint for GrpcRX {
                     let mut server_addresses = vec![String::new(); self.context.size as usize];
                     server_addresses[self.context.rank] = format!("{}:{}", hostname, port);
                     self.context.server_addresses = Some(server_addresses);
-
-                    tokio_barrier.wait().await;
-                    return Ok(());
+                    debug!(
+                        "[Rank {}] Server addresses: {:?}",
+                        self.context.rank, self.context.server_addresses
+                    );
+                    debug!("[Rank {}] Server started", self.context.rank);
+                    break;
                 }
                 Err(e) => {
                     debug!("Failed to parse address {}:{}: {}", hostname, port, e);
@@ -296,12 +298,8 @@ impl RxEndpoint for GrpcRX {
                 }
             }
         }
-
-        tokio_barrier.wait().await;
-        Err(anyhow::anyhow!(
-            "Failed to find available port after {} attempts",
-            max_attempts
-        ))
+        let _ = start_listen.send(());
+        Ok(())
     }
 
     fn exchange_addresses(&mut self) -> Result<()> {

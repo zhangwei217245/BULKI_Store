@@ -2,7 +2,6 @@ use std::collections::HashMap;
 use std::sync::Mutex;
 
 use crate::rpc::{RPCData, StatusCode};
-use crate::utils::TimeUtility;
 use anyhow::Result;
 use inventory;
 use serde::{Deserialize, Serialize};

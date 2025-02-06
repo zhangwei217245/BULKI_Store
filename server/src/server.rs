@@ -6,6 +6,7 @@ mod datastore;
 mod health;
 mod srvctx;
 use anyhow::Result;
+use env_logger;
 use srvctx::ServerContext;
 
 fn close_resources() -> Result<()> {
@@ -16,6 +17,8 @@ fn close_resources() -> Result<()> {
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    env_logger::init();
+
     #[cfg(feature = "mpi")]
     let universe = {
         let (universe, _) = mpi::initialize_with_threading(mpi::Threading::Multiple).unwrap();
