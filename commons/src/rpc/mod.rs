@@ -4,14 +4,8 @@ use async_trait::async_trait;
 use mpi::topology::SimpleCommunicator;
 use mpi::traits::Communicator;
 use serde::{Deserialize, Serialize};
-use std::{
-    default::Default,
-    env,
-    path::PathBuf,
-    sync::{Arc, Mutex},
-    time::{SystemTime, UNIX_EPOCH},
-};
-use tokio::sync::{oneshot, Barrier};
+use std::{default::Default, sync::Arc};
+use tokio::sync::oneshot;
 
 use crate::handler::{HandlerDispatcher, HandlerResult, RequestHandlerKind, ResponseHandlerKind};
 
@@ -247,7 +241,7 @@ pub trait RxEndpoint {
     // 2. tokio::spawn(server.listen(handler)) - for non-blocking behavior
     async fn listen(
         &mut self,
-        tokio_barrier: Arc<Barrier>,
+        start_listen: oneshot::Sender<()>,
         shutdown_rx: oneshot::Receiver<()>,
     ) -> Result<(), anyhow::Error>;
     // exchange the RxEndpoint addresses with the server
