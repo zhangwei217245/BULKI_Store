@@ -76,12 +76,11 @@ impl ClientContext {
         if self.c2s_client.is_none() {
             // Initialize client-server endpoint
             let mut c2s_client = GrpcTX::new("c2s".to_string(), self.world.clone());
-            println!("Initializing client-server endpoint");
+            info!("Initializing client-server endpoint");
             c2s_client.initialize(resphandler::register_handlers)?;
-            println!("Client-server endpoint initialized");
-            println!("Discovering servers");
+            info!("Client-server endpoint initialized");
             c2s_client.discover_servers()?;
-            println!("Servers discovered");
+            info!("Servers discovered");
             self.c2s_client = Some(c2s_client);
         }
         Ok(())
@@ -116,7 +115,7 @@ impl ClientContext {
         data: RPCData,
     ) -> Result<RPCData> {
         if let Some(client) = &self.c2s_client {
-            println!("Sending message to server rank {}", server_rank);
+            debug!("Sending message to server rank {}", server_rank);
             client.send_message(server_rank, handler_name, data).await
         } else {
             Err(anyhow!("C2S client not initialized"))
