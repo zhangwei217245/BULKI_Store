@@ -4,8 +4,16 @@
 
 use anyhow::Result;
 
-pub fn process_response(data: &Vec<u8>) -> Result<Vec<u8>> {
-    Ok(data.clone())
+use commons::handler::HandlerResult;
+use commons::rpc::{RPCData, StatusCode};
+use log::{debug, error};
+
+pub fn process_response(data: &mut RPCData) -> HandlerResult {
+    debug!("Processing response: {:?}", data);
+    HandlerResult {
+        status_code: StatusCode::Ok as u8,
+        message: None,
+    }
 }
 
 // /// Convert a Python numpy array to a Rust ndarray view

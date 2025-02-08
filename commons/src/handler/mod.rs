@@ -5,6 +5,7 @@ use crate::rpc::{RPCData, StatusCode};
 use anyhow::Result;
 use inventory;
 use serde::{Deserialize, Serialize};
+use std::time::Instant;
 
 enum HandlerType {
     Request,
@@ -14,7 +15,7 @@ enum HandlerType {
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
 pub struct HandlerResult {
     pub status_code: u8,
-    pub message: String,
+    pub message: Option<String>,
 }
 
 pub trait HandlerKind {
@@ -50,15 +51,15 @@ impl HandlerType {
 }
 
 pub trait Handler {
-    fn handle(&self, data: &Vec<u8>) -> Result<Vec<u8>>;
+    fn handle(&self, data: &mut RPCData) -> HandlerResult;
 }
 
 // Implement Handler for standalone functions
 impl<F> Handler for F
 where
-    F: Fn(&Vec<u8>) -> Result<Vec<u8>>,
+    F: Fn(&mut RPCData) -> HandlerResult,
 {
-    fn handle(&self, data: &Vec<u8>) -> Result<Vec<u8>> {
+    fn handle(&self, data: &mut RPCData) -> HandlerResult {
         self(data)
     }
 }
@@ -144,33 +145,34 @@ impl<H: HandlerKind> HandlerDispatcher<H> {
     }
 
     pub async fn handle(&self, mut message: RPCData) -> Result<RPCData> {
-        // Ensure we have metadata
-        let metadata = message
+        // Get handler name before borrowing message
+        let handler_name = message
             .metadata
-            .as_mut()
-            .ok_or_else(|| anyhow::anyhow!("Message missing metadata"))?;
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("Message metadata is missing"))?
+            .handler_name
+            .clone();
 
-        // Get the handler name and try to find the function
-        let handler_name = H::handler_type().prefix_name(&metadata.handler_name);
+        let handler_name = H::handler_type().prefix_name(&handler_name);
+
         let handler = self
             .functions
             .get(&handler_name)
-            .ok_or_else(|| anyhow::anyhow!("Handler not found: {}", handler_name))?;
+            .ok_or_else(|| anyhow::anyhow!("No handler found for {}", handler_name))?;
 
-        // Execute the handler and capture any errors
-        let result = handler
+        let start_time = Instant::now();
+
+        // Call the handler with mutable reference to message
+        let handler_result = handler
             .lock()
             .map_err(|_| anyhow::anyhow!("Handler mutex poisoned"))?
-            .handle(&message.data)
-            .map_err(|e| {
-                metadata.handler_result = Some(HandlerResult {
-                    status_code: StatusCode::Internal as u8,
-                    message: format!("Handler error: {:?}", e),
-                });
-                e
-            })?;
-        // Update the response data
-        message.data = result;
+            .handle(&mut message);
+
+        // Update the metadata with handler result and timing information
+        if let Some(metadata) = &mut message.metadata {
+            metadata.handler_result = Some(handler_result);
+            metadata.processing_duration_us = Some(start_time.elapsed().as_micros() as u64);
+        }
 
         Ok(message)
     }
