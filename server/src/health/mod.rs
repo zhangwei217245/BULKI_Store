@@ -1,15 +1,19 @@
 use anyhow::Result;
-pub fn check(data: &Vec<u8>) -> Result<Vec<u8>> {
-    Ok(vec![1])
+use commons::handler::HandlerResult;
+use commons::rpc::{RPCData, StatusCode};
+use log::debug;
+
+pub fn check(data: &mut RPCData) -> HandlerResult {
+    debug!("Health check received: {:?}", data);
+    HandlerResult {
+        status_code: StatusCode::Ok as u8,
+        message: None,
+    }
 }
 pub struct HealthCheck {}
 
 impl HealthCheck {
     pub fn new() -> Self {
         Self {}
-    }
-
-    pub fn check(&self, data: &Vec<u8>) -> Result<Vec<u8>> {
-        Ok(vec![1]) // Return a simple byte vector indicating healthy status
     }
 }
