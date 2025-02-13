@@ -37,6 +37,10 @@ submit_batch() {
 # Load required modules
 module load PrgEnv-llvm/1.0
 
+# Set up C compiler for libffi-sys
+export CC=$(which clang)
+echo "Using C compiler: $CC ($(which $CC))"
+
 # Find libclang using clang location
 CLANG_PATH=$(which clang)
 CLANG_DIR=$(dirname "$CLANG_PATH")
@@ -53,7 +57,12 @@ fi
 echo -e "\nBuilding project..."
 cd ..
 pwd
+
+# test if $1 is set
+if [ -n "$1" ]; then
 cargo clean
+fi
+
 cargo build --release || {
     echo "Error: Build failed!"
     exit 1

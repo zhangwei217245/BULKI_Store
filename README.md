@@ -15,8 +15,8 @@ https://www.rust-lang.org/tools/install
 
 ```bash
 module load PrgEnv-llvm/1.0
-CLANG_PATH=$(which clang)
-CLANG_DIR=$(dirname "$CLANG_PATH")
+export CC=$(which clang)
+CLANG_DIR=$(dirname "$CC")
 export LIBCLANG_PATH="$CLANG_DIR/../lib"
 ```
 
