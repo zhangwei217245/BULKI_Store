@@ -86,6 +86,6 @@ for i in range(1000):
 
 etime = time.time()
 
-print("throughput: {}OPS/s", 1000/(etime-stime))
+print("throughput: {} OPS/s".format( 1000/(etime-stime)))
 
 ```
