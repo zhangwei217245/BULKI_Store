@@ -1,86 +1,247 @@
-pub mod objid;
-pub mod params;
-pub mod types;
 use dashmap::DashMap;
-use ndarray::{Slice, SliceInfoElem};
-
-use params::CreateObjectParams;
-use rmp_serde::encode;
+use ndarray::{ArrayD, IxDyn, Slice, SliceInfo, SliceInfoElem};
+use num_traits::Float;
+use rmp_serde::{decode, encode};
 use serde::{Deserialize, Serialize};
+use std::any::TypeId;
 use std::collections::{HashMap, HashSet};
 use std::fmt::Debug;
 use std::fs::File;
+use std::io;
 use std::path::Path;
-use types::{MetadataValue, SupportedRustArrayD};
+use uuid::Uuid; // Make sure your Cargo.toml enables the v7 feature, e.g.:
+                // uuid = { version = "1.2", features = ["v7"] }
+
+/// Represents various types of metadata values.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum MetadataValue {
+    Int(i64),
+    UInt(u64),
+    Float(f64),
+    String(String),
+    IntList(Vec<i64>),
+    UIntList(Vec<u64>),
+    FloatList(Vec<f64>),
+    StringList(Vec<String>),
+    /// For example, container-level "ranges": a list of (start, end) tuples.
+    RangeList(Vec<(usize, usize)>),
+}
+
+/// Represents the different types of arrays that can be stored
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum ArrayType {
+    // Floating point types
+    Float32(ArrayD<f32>),
+    Float64(ArrayD<f64>),
+    // Signed integer types
+    Int8(ArrayD<i8>),
+    Int16(ArrayD<i16>),
+    Int32(ArrayD<i32>),
+    Int64(ArrayD<i64>),
+    Int128(ArrayD<i128>),
+    // Unsigned integer types
+    UInt8(ArrayD<u8>),
+    UInt16(ArrayD<u16>),
+    UInt32(ArrayD<u32>),
+    UInt64(ArrayD<u64>),
+    UInt128(ArrayD<u128>),
+}
+
+impl ArrayType {
+    /// Get a slice of the array, returning the same type
+    pub fn slice(&self, region: &[Slice]) -> ArrayType {
+        // Convert slices to SliceInfoElem
+        let slice_info_elems: Vec<SliceInfoElem> =
+            region.iter().map(|s| SliceInfoElem::from(*s)).collect();
+
+        // Create SliceInfo
+        let info = SliceInfo::<_, IxDyn, IxDyn>::try_from(slice_info_elems)
+            .expect("Invalid slice pattern");
+
+        match self {
+            // Floating point types
+            ArrayType::Float32(arr) => ArrayType::Float32(arr.slice(&info).to_owned()),
+            ArrayType::Float64(arr) => ArrayType::Float64(arr.slice(&info).to_owned()),
+            // Signed integer types
+            ArrayType::Int8(arr) => ArrayType::Int8(arr.slice(&info).to_owned()),
+            ArrayType::Int16(arr) => ArrayType::Int16(arr.slice(&info).to_owned()),
+            ArrayType::Int32(arr) => ArrayType::Int32(arr.slice(&info).to_owned()),
+            ArrayType::Int64(arr) => ArrayType::Int64(arr.slice(&info).to_owned()),
+            ArrayType::Int128(arr) => ArrayType::Int128(arr.slice(&info).to_owned()),
+            // Unsigned integer types
+            ArrayType::UInt8(arr) => ArrayType::UInt8(arr.slice(&info).to_owned()),
+            ArrayType::UInt16(arr) => ArrayType::UInt16(arr.slice(&info).to_owned()),
+            ArrayType::UInt32(arr) => ArrayType::UInt32(arr.slice(&info).to_owned()),
+            ArrayType::UInt64(arr) => ArrayType::UInt64(arr.slice(&info).to_owned()),
+            ArrayType::UInt128(arr) => ArrayType::UInt128(arr.slice(&info).to_owned()),
+        }
+    }
+
+    /// Get the type name as a string
+    pub fn type_name(&self) -> &'static str {
+        match self {
+            // Floating point types
+            ArrayType::Float32(_) => "f32",
+            ArrayType::Float64(_) => "f64",
+            // Signed integer types
+            ArrayType::Int8(_) => "i8",
+            ArrayType::Int16(_) => "i16",
+            ArrayType::Int32(_) => "i32",
+            ArrayType::Int64(_) => "i64",
+            ArrayType::Int128(_) => "i128",
+            // Unsigned integer types
+            ArrayType::UInt8(_) => "u8",
+            ArrayType::UInt16(_) => "u16",
+            ArrayType::UInt32(_) => "u32",
+            ArrayType::UInt64(_) => "u64",
+            ArrayType::UInt128(_) => "u128",
+        }
+    }
+}
+
+// Floating point implementations
+impl From<ArrayD<f32>> for ArrayType {
+    fn from(array: ArrayD<f32>) -> Self {
+        ArrayType::Float32(array)
+    }
+}
+
+impl From<ArrayD<f64>> for ArrayType {
+    fn from(array: ArrayD<f64>) -> Self {
+        ArrayType::Float64(array)
+    }
+}
+
+// Signed integer implementations
+impl From<ArrayD<i8>> for ArrayType {
+    fn from(array: ArrayD<i8>) -> Self {
+        ArrayType::Int8(array)
+    }
+}
+
+impl From<ArrayD<i16>> for ArrayType {
+    fn from(array: ArrayD<i16>) -> Self {
+        ArrayType::Int16(array)
+    }
+}
+
+impl From<ArrayD<i32>> for ArrayType {
+    fn from(array: ArrayD<i32>) -> Self {
+        ArrayType::Int32(array)
+    }
+}
+
+impl From<ArrayD<i64>> for ArrayType {
+    fn from(array: ArrayD<i64>) -> Self {
+        ArrayType::Int64(array)
+    }
+}
+
+impl From<ArrayD<i128>> for ArrayType {
+    fn from(array: ArrayD<i128>) -> Self {
+        ArrayType::Int128(array)
+    }
+}
+
+// Unsigned integer implementations
+impl From<ArrayD<u8>> for ArrayType {
+    fn from(array: ArrayD<u8>) -> Self {
+        ArrayType::UInt8(array)
+    }
+}
+
+impl From<ArrayD<u16>> for ArrayType {
+    fn from(array: ArrayD<u16>) -> Self {
+        ArrayType::UInt16(array)
+    }
+}
+
+impl From<ArrayD<u32>> for ArrayType {
+    fn from(array: ArrayD<u32>) -> Self {
+        ArrayType::UInt32(array)
+    }
+}
+
+impl From<ArrayD<u64>> for ArrayType {
+    fn from(array: ArrayD<u64>) -> Self {
+        ArrayType::UInt64(array)
+    }
+}
+
+impl From<ArrayD<u128>> for ArrayType {
+    fn from(array: ArrayD<u128>) -> Self {
+        ArrayType::UInt128(array)
+    }
+}
+
+/// Helper trait to check if a type can be converted to ArrayType
+pub trait IntoArrayType {
+    fn into_array_type(self) -> ArrayType;
+}
+
+impl<T> IntoArrayType for ArrayD<T>
+where
+    T: 'static,
+    ArrayD<T>: Into<ArrayType>,
+{
+    fn into_array_type(self) -> ArrayType {
+        self.into()
+    }
+}
+
+/// Structure to hold object creation parameters sent by client
+#[derive(Debug, Serialize, Deserialize)]
+pub struct CreateObjectParams {
+    pub name: String,
+    pub initial_metadata: Option<HashMap<String, MetadataValue>>,
+    pub array_data: Option<ArrayType>,
+    pub client_rank: u32, // MPI rank of the client
+}
 
 /// A DataObject that can own an NDArray of various numeric types
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DataObject {
     /// Unique identifier (UUIDv7 as u128).
     pub id: u128,
-    /// parent id
-    pub parent_id: Option<u128>,
     /// A human-readable name.
     pub name: String,
-    /// The key of the object name in the metadata dictionary.
-    pub obj_name_key: String,
     /// Optional attached NDArray of any supported type.
-    pub array: Option<SupportedRustArrayD>,
+    pub array: Option<ArrayType>,
     /// Arbitrary metadata attributes.
     pub metadata: HashMap<String, MetadataValue>,
     /// Nested child DataObjects.
     pub children: Option<HashSet<u128>>,
-    /// The name to ID index for all children.
-    pub child_name_idx: Option<HashMap<String, u128>>,
 }
 
 impl DataObject {
     /// Create a new DataObject with the given parameters.
-    /// NOTE: The id field will be set **by the server** during object creation.
+    /// Note: The id field will be set by the server during object creation.
     pub fn new(params: CreateObjectParams) -> Self {
         DataObject {
             // Use a temporary ID that will be replaced by the server
-            id: params.obj_id,
-            parent_id: params.parent_id,
-            obj_name_key: params.obj_name_key,
-            name: params.obj_name,
+            id: 0,
+            name: params.name,
             array: params.array_data,
             metadata: params.initial_metadata.unwrap_or_default(),
             children: Some(HashSet::new()),
-            child_name_idx: Some(HashMap::new()),
         }
     }
 
     /// Attach an NDArray to this DataObject.
-    pub fn attach_array(&mut self, array: SupportedRustArrayD) {
+    pub fn attach_array(&mut self, array: ArrayType) {
         self.array = Some(array);
     }
 
     /// Add a child DataObject.
-    pub fn add_child(&mut self, obj_name: String, child_id: u128) {
+    pub fn add_child(&mut self, child_id: u128) {
         self.children.as_mut().unwrap().insert(child_id);
-        self.child_name_idx
-            .as_mut()
-            .unwrap()
-            .insert(obj_name, child_id);
     }
 
     /// add a group of children.
-    pub fn add_children(&mut self, obj_name_child_ids: Vec<(String, u128)>) {
-        for (obj_name, child_id) in obj_name_child_ids {
-            self.add_child(obj_name, child_id);
+    pub fn add_children(&mut self, child_ids: Vec<u128>) {
+        for child_id in child_ids {
+            self.add_child(child_id);
         }
-    }
-
-    pub fn get_child_id_by_name(&self, obj_name: &str) -> Option<u128> {
-        self.child_name_idx.as_ref().unwrap().get(obj_name).cloned()
-    }
-
-    pub fn get_child_ids_by_names(&self, obj_names: Vec<&str>) -> Vec<u128> {
-        obj_names
-            .iter()
-            .map(|name| self.child_name_idx.as_ref().unwrap()[*name])
-            .collect()
     }
 
     /// get all child ids.
@@ -94,15 +255,8 @@ impl DataObject {
     }
 
     /// Get a slice of the attached NDArray.
-    pub fn get_array_slice(
-        &self,
-        region: Option<Vec<SliceInfoElem>>,
-    ) -> Option<SupportedRustArrayD> {
-        match (self.array.as_ref(), region) {
-            (Some(arr), Some(region)) => Some(arr.slice(&region)),
-            (Some(arr), None) => Some(arr.clone()),
-            _ => None,
-        }
+    pub fn get_array_slice(&self, region: &[Slice]) -> Option<ArrayType> {
+        self.array.as_ref().map(|arr| arr.slice(region))
     }
 
     /// Add or update a metadata attribute.
@@ -133,14 +287,13 @@ impl DataObject {
         self.metadata.get(key).cloned()
     }
 
-    pub fn save_to_file(&self, path: &str) -> std::io::Result<()> {
+    pub fn save_to_file(&self, path: &str) -> io::Result<()> {
         // Create directory if it doesn't exist
         std::fs::create_dir_all(&path)?;
         // file name format should be {data_dir}/{id}.obj
         let filename = format!("{}/{}.obj", path, self.id);
         let mut file = File::create(filename)?;
-        encode::write(&mut file, &self)
-            .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
+        encode::write(&mut file, &self).map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
         Ok(())
     }
 
@@ -173,21 +326,9 @@ impl DataStore {
     /// Insert or update a DataObject in the store.
     pub fn insert(&self, obj: DataObject) {
         let obj_id = obj.id;
-        let parent_obj_id = obj.parent_id;
         let obj_name = obj.name.clone();
-        // save object
         self.objects.insert(obj_id, obj);
-        // add name to obj index
-        self.name_obj_idx.insert(obj_name.clone(), obj_id);
-        // add to parent child index of parent object
-        if let Some(parent_id) = parent_obj_id {
-            if parent_id == obj_id {
-                return;
-            }
-            if let Some(mut parent_obj) = self.objects.get_mut(&parent_id) {
-                parent_obj.add_child(obj_name.clone(), obj_id);
-            }
-        }
+        self.name_obj_idx.insert(obj_name, obj_id);
     }
 
     /// Retrieve a DataObject by its u128 ID.
@@ -212,11 +353,7 @@ impl DataStore {
     }
 
     /// Retrieve a slice from the NDArray attached to a DataObject identified by its u128 ID.
-    pub fn get_object_slice(
-        &self,
-        id: u128,
-        region: Option<Vec<SliceInfoElem>>,
-    ) -> Option<SupportedRustArrayD> {
+    pub fn get_object_slice(&self, id: u128, region: &[Slice]) -> Option<ArrayType> {
         self.get(id)?.get_array_slice(region)
     }
 
@@ -229,14 +366,11 @@ impl DataStore {
     /// * Vector of array slices, in the same order as the input
     pub fn get_regions_by_obj_ids(
         &self,
-        obj_regions: Vec<(u128, Option<Vec<SliceInfoElem>>)>,
-    ) -> Vec<(u128, Option<String>, Option<SupportedRustArrayD>)> {
+        obj_regions: Vec<(u128, Vec<Slice>)>,
+    ) -> Vec<Option<ArrayType>> {
         obj_regions
             .into_iter()
-            .map(|(id, region)| match self.get(id) {
-                Some(obj) => (id, Some(obj.name), self.get_object_slice(id, region)),
-                None => (id, None, None),
-            })
+            .map(|(id, region)| self.get_object_slice(id, &region))
             .collect()
     }
 
