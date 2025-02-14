@@ -3,3 +3,5 @@
 Cargo.lock
 target/
 .vscode/
+.pdc_data/
+*.tar.gz
