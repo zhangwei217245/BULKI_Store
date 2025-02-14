@@ -4,18 +4,31 @@ resolver = "2"
 build = "build/build.rs"
 
 [workspace.dependencies]
+uuid = { version = "1.13.1", features = ["v7"] }
+dashmap = { version = "6.1.0" }
 mpi = { version = "0.8.0" }
 log = { version = "0.4.25" }
 anyhow = { version = "1.0" }
 rmp-serde = { version = "1.1" }
 serde = { version = "1.0", features = ["derive"] }
-rand = { version = "0.8" }
+rand = { version = "0.9.0" }
 ndarray = { version = "0.16.1" }
 msgpack-numpy = "0.1.3"
-syn = { version = "2.0.96", features = ["full"] }
+syn = { version = "2.0.98", features = ["full"] }
 quote = "1.0"
 proc-macro2 = "1.0.93"
-inventory = "0.3"
+inventory = "0.3.19"
+lazy_static = "1.4.0"
+tokio = { version = "1", features = ["full"] }
+hostname = "0.4.0"
+tonic = { version = "0.12.3" }
+prost = { version = "0.13.5" }
+env_logger = "0.11.6"
+async-trait = "0.1.86"
+http = "1.2.0"
+tonic-build = "0.12.3"
+rayon = "1.8.0"
+once_cell = "1.20.3"
 
 [workspace.features]
 default = ["mpi"]

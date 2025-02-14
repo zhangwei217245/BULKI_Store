@@ -5,18 +5,20 @@ edition = "2021"
 
 [dependencies]
 commons = { path = "../commons", features = ["mpi"] }
-tonic = "0.12.3"
-prost = "0.13.4"
-tokio = { version = "1", features = ["full"] }
-hostname = "0.4.0"
-rmp-serde = "1.1"
-rayon = "1.10.0"
-log = { version = "0.4.25" }
-anyhow = "1.0"
+tonic = { workspace = true }
+prost = { workspace = true }
+tokio = { workspace = true }
+hostname = { workspace = true }
+rmp-serde = { workspace = true }
+rayon = { workspace = true }
+log = { workspace = true }
+anyhow = { workspace = true }
 mpi = { workspace = true, optional = true }
 ndarray = { workspace = true }
 msgpack-numpy = { workspace = true }
-env_logger = "0.11.6"
+env_logger = { workspace = true }
+lazy_static = { workspace = true }
+uuid = { workspace = true }
 
 [features]
 default = ["mpi"]
