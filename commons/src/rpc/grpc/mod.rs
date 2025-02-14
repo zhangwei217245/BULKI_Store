@@ -60,7 +60,7 @@ impl GrpcTX {
     const KEEPALIVE_INTERVAL: Duration = Duration::from_secs(120); // 2 minutes
     #[allow(dead_code)]
     const KEEPALIVE_TIMEOUT: Duration = Duration::from_secs(10);
-    const MAX_CONCURRENT_REQUESTS: usize = 1000;
+    // const MAX_CONCURRENT_REQUESTS: usize = 1000;
 
     pub fn new(rpc_id: String, world: Option<Arc<SimpleCommunicator>>) -> Self {
         Self {
@@ -73,7 +73,7 @@ impl GrpcTX {
         let metadata = RPCMetadata {
             client_rank: self.context.rank as u32,
             server_rank: 0,
-            request_id: rand::thread_rng().gen::<u64>(),
+            request_id: rand::rng().random(),
             request_issued_time: TimeUtility::get_timestamp_ms(),
             request_received_time: 0,
             processing_duration_us: None,
@@ -526,7 +526,7 @@ impl TxEndpoint for GrpcTX {
         let metadata = RPCMetadata {
             client_rank: self.context.rank as u32,
             server_rank: rx_id as u32,
-            request_id: rand::thread_rng().gen::<u64>(),
+            request_id: rand::rng().random::<u64>(),
             request_issued_time: TimeUtility::get_timestamp_ms(),
             request_received_time: 0,
             processing_duration_us: None,

@@ -2,7 +2,8 @@ use anyhow::Result;
 use commons::rpc::grpc::{GrpcRX, GrpcTX};
 use commons::rpc::{RxEndpoint, TxEndpoint};
 use commons::utils::FileUtility;
-use log::{debug, error, info, warn};
+use lazy_static::lazy_static;
+use log::{debug, info, warn};
 #[cfg(feature = "mpi")]
 use mpi::{
     environment::Universe,
@@ -10,12 +11,24 @@ use mpi::{
     traits::CommunicatorCollectives,
 };
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Arc;
-
-use tokio::sync::{mpsc, oneshot, Barrier, Mutex as TokioMutex};
+use tokio::sync::{oneshot, Mutex as TokioMutex};
 mod reqhandler;
 mod resphandler;
+
+lazy_static! {
+    static ref PROCESS_RANK: AtomicU32 = AtomicU32::new(0);
+    static ref PROCESS_SIZE: AtomicU32 = AtomicU32::new(1);
+}
+
+pub fn get_rank() -> u32 {
+    PROCESS_RANK.load(Ordering::SeqCst)
+}
+
+pub fn get_size() -> u32 {
+    PROCESS_SIZE.load(Ordering::SeqCst)
+}
 
 pub struct ServerContext {
     pub rank: usize,
@@ -95,12 +108,17 @@ impl ServerContext {
                 self.rank = 0;
                 self.size = 1;
             }
+            PROCESS_RANK.store(self.rank as u32, Ordering::SeqCst);
+            PROCESS_SIZE.store(self.size as u32, Ordering::SeqCst);
         }
 
         #[cfg(not(feature = "mpi"))]
         {
             self.rank = 0;
             self.size = 1;
+            // set env var for MPI_SIZE and MPI_RANK
+            PROCESS_RANK.store(0u32, Ordering::SeqCst);
+            PROCESS_SIZE.store(1u32, Ordering::SeqCst);
         }
 
         // Initialize client-server endpoint
@@ -115,7 +133,14 @@ impl ServerContext {
         s2s.initialize(1u16, reqhandler::register_handlers)?;
         self.s2s_endpoint = Some(s2s);
 
-        debug!("Server running on MPI process {}", self.rank);
+        // Initialize the datastore
+        debug!("Initializing datastore...");
+        crate::datastore::init_datastore();
+
+        debug!(
+            "DataStore initialized! Server running on MPI process {}",
+            self.rank
+        );
         Ok(())
     }
 

@@ -1,7 +1,6 @@
 use anyhow::Result;
-use commons::handler::{HandlerDispatcher, HandlerResult, RequestHandlerKind};
 use commons::rpc::grpc::GrpcRX;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 /// Register request handlers for the GrpcRX endpoint
 pub fn register_handlers(rx: &mut GrpcRX) -> Result<()> {
@@ -11,7 +10,15 @@ pub fn register_handlers(rx: &mut GrpcRX) -> Result<()> {
             .register("bench::times_two", crate::bench::times_two)
             .register("bench::times_three", crate::bench::times_three)
             .register("datastore::times_two", crate::datastore::times_two)
-            .register("datastore::times_three", crate::datastore::times_three);
+            .register("datastore::times_three", crate::datastore::times_three)
+            .register("datastore::create_object", crate::datastore::create_object)
+            .register("datastore::get_object", crate::datastore::get_object)
+            .register(
+                "datastore::update_metadata",
+                crate::datastore::update_metadata,
+            )
+            .register("datastore::update_array", crate::datastore::update_array)
+            .register("datastore::delete_object", crate::datastore::delete_object);
         Ok(())
     } else {
         Err(anyhow::anyhow!("Handler dispatcher not initialized"))

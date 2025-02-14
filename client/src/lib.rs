@@ -74,7 +74,6 @@ use std::cell::RefCell;
 use std::ops::Add;
 use std::sync::Arc;
 
-use bincode;
 use cltctx::ClientContext;
 use commons::region::SerializableNDArray;
 use commons::rpc::RPCData;
