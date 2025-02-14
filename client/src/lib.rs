@@ -1,74 +1,6 @@
-// mod cltctx;
-// mod bk_ndarr;
-// use anyhow;
-
-// use ndarray::ArrayD;
-// use pyo3::prelude::*;
-// use tokio::runtime::Runtime;
-
-// // Wrapper type for our error conversions
-// struct BulkiError(anyhow::Error);
-
-// impl From<anyhow::Error> for BulkiError {
-//     fn from(err: anyhow::Error) -> Self {
-//         BulkiError(err)
-//     }
-// }
-
-// impl From<BulkiError> for PyErr {
-//     fn from(err: BulkiError) -> PyErr {
-//         PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(err.0.to_string())
-//     }
-// }
-
-// use cltctx::ClientContext;
-
-// #[pyclass]
-// struct BulkiStoreClient {
-//     context: Option<ClientContext>,
-// }
-
-// #[pymethods]
-// impl BulkiStoreClient {
-//     #[new]
-//     fn new() -> Self {
-//         BulkiStoreClient { context: None }
-//     }
-
-//     fn initialize(&mut self) -> PyResult<()> {
-//         let mut context = ClientContext::new();
-//         context.initialize_blocking().expect("Failed to initialize client context");
-//         self.context = Some(context);
-//         Ok(())
-//     }
-
-//     fn run_benchmark(&self) -> PyResult<()> {
-//         let context = self
-//             .context
-//             .as_ref()
-//             .ok_or(anyhow::anyhow!("Client not initialized"))
-//             .map_err(BulkiError::from)
-//             .map_err(PyErr::from)?;
-
-//         // Example parameters - you may want to make these configurable
-//         let num_requests = 1000;
-//         let data_len = 1000; // Size of the test data in bytes
-
-//         let stats = context.benchmark_rpc(num_requests, data_len);
-//         let stats = Runtime::new()?.block_on(stats);
-//         stats.print_stats();
-//         Ok(())
-//     }
-// }
-
-// #[pymodule]
-// fn bulkistore_client(_py: Python, m: &PyModule) -> PyResult<()> {
-//     m.add_class::<BulkiStoreClient>()?;
-//     Ok(())
-// }
-
 mod bk_ndarr;
 mod cltctx;
+mod datastore;
 use crate::bk_ndarr::*;
 use std::cell::RefCell;
 use std::ops::Add;
@@ -102,44 +34,7 @@ thread_local! {
 #[pymodule]
 #[pyo3(name = "bkstore_client")]
 fn rust_ext<'py>(m: &Bound<'py, PyModule>) -> PyResult<()> {
-    // Default to non-MPI mode for safety in interactive sessions
-    let universe = None;
-
-    let mut context = ClientContext::new();
-
-    // Get or create the runtime from thread-local storage
-    RUNTIME.with(|rt_cell| {
-        let mut rt = rt_cell.borrow_mut();
-        if rt.is_none() {
-            *rt = Some(tokio::runtime::Runtime::new().map_err(|e| {
-                PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!(
-                    "Failed to create Tokio runtime: {}",
-                    e
-                ))
-            })?);
-        }
-
-        // Use the runtime to run the async initialization
-        rt.as_ref()
-            .unwrap()
-            .block_on(context.initialize(universe))
-            .map_err(|e| {
-                PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!(
-                    "Failed to initialize client context: {}",
-                    e
-                ))
-            })?;
-
-        Ok::<_, PyErr>(())
-    })?;
-
-    debug!("Client running in non-MPI mode");
-
-    // Store the context in thread-local storage
-    CONTEXT.with(|ctx| {
-        *ctx.borrow_mut() = Some(context);
-    });
-
+    // Module initialization - just register the init function
     #[pyfn(m)]
     #[pyo3(name = "init")]
     fn init_py(py: Python<'_>) -> PyResult<()> {
@@ -168,9 +63,10 @@ fn rust_ext<'py>(m: &Bound<'py, PyModule>) -> PyResult<()> {
             }
         };
 
-        // Initialize or reinitialize context with the determined MPI state
+        // Initialize context using our new datastore function
         let mut context = ClientContext::new();
 
+        // Initialize context with proper runtime management
         RUNTIME.with(|rt_cell| {
             let mut rt = rt_cell.borrow_mut();
             if rt.is_none() {
@@ -258,7 +154,7 @@ fn rust_ext<'py>(m: &Bound<'py, PyModule>) -> PyResult<()> {
 
         // Convert back to numpy array
         let py_array = PyArray::from_array(py, &result);
-        Ok(py_array.into_py(py))
+        Ok(py_array.into_any().unbind())
     }
 
     // example using generic PyObject
@@ -398,47 +294,5 @@ fn rust_ext<'py>(m: &Bound<'py, PyModule>) -> PyResult<()> {
         }
     }
 
-    // async fn create_grpc_client(
-    //     address: &str,
-    // ) -> Result<GrpcBulkistoreClient<tonic::transport::Channel>, Box<dyn std::error::Error>> {
-    //     // First, validate the address
-    //     match address.to_socket_addrs() {
-    //         Ok(mut addr_iter) => {
-    //             if addr_iter.next().is_none() {
-    //                 error!("Invalid socket address: {}", address);
-    //                 return Err("Invalid socket address".into());
-    //             }
-    //         }
-    //         Err(e) => {
-    //             error!("Failed to resolve address {}: {}", address, e);
-    //             return Err(e.into());
-    //         }
-    //     }
-
-    //     // Attempt connection with more detailed error logging
-    //     match GrpcBulkistoreClient::connect(address).await {
-    //         Ok(client) => Ok(client),
-    //         Err(e) => {
-    //             error!("Transport error connecting to {}: {}", address, e);
-    //             warn!("Possible causes:");
-    //             warn!("1. Server not running");
-    //             warn!("2. Incorrect address or port");
-    //             warn!("3. Network connectivity issues");
-    //             warn!("4. Firewall blocking connection");
-    //             Err(e.into())
-    //         }
-    //     }
-    // }
-
     Ok(())
 }
-
-// /// A Python module implemented in Rust. The name of this function must match
-// /// the `lib.name` setting in the `Cargo.toml`, else Python will not be able to
-// /// import the module. https://pyo3.rs/v0.20.0/module
-// #[pymodule]
-// #[pyo3(name = "bkstore_client")]
-// fn pyo3_example(m: &Bound<'_, PyModule>) -> PyResult<()> {
-//     m.add_function(wrap_pyfunction!(sum_as_string, m)?);
-//     Ok(())
-// }

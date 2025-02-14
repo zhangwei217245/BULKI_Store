@@ -340,7 +340,9 @@ pub fn get_regions_by_obj_ids(data: &mut RPCData) -> HandlerResult {
 pub fn times_two(data: &mut RPCData) -> HandlerResult {
     match SerializableNDArray::deserialize(&data.data) {
         Ok(array) => {
+            println!("Received array: {:?}", array);
             let result = array.mapv(|x: f64| x * 2.0);
+            println!("Result array: {:?}", result);
             data.data = SerializableNDArray::serialize(result).unwrap();
             HandlerResult {
                 status_code: StatusCode::Ok as u8,
