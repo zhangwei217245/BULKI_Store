@@ -1,30 +1,102 @@
-pub mod converter;
-use crate::cltctx::{get_server_count, ClientContext};
-use anyhow::Result;
-use commons::object::params::{GetObjectSliceParams, GetObjectSliceResponse};
-use commons::object::types::SerializableSliceInfoElem;
-use commons::rpc::RPCData;
-use commons::{object::objid::GlobalObjectIdExt, region::SerializableNDArray};
-use converter::SupportedNumpyArray;
-use log::debug;
-use numpy::{
-    ndarray::{ArrayD, ArrayViewD, ArrayViewMutD, Axis, SliceInfoElem},
-    Complex64, Element, PyArray, PyReadonlyArrayDyn,
-};
-use pyo3::types::PyInt;
-use pyo3::Py;
-use pyo3::{
-    exceptions::PyValueError,
-    types::{PyAnyMethods, PyDict, PySlice},
-    Bound, PyErr, PyObject, PyResult, Python,
-};
 use std::{cell::RefCell, ops::Add, sync::Arc};
+
+use log::debug;
+use serde::{Deserialize, Serialize};
+
+use crate::cltctx::ClientContext;
+use commons::region::SerializableNDArray;
+use commons::rpc::RPCData;
+use numpy::{
+    datetime::{units, Timedelta},
+    ndarray::{
+        Array1, ArrayD, ArrayView1, ArrayViewD, ArrayViewMutD, Axis, Shape, SliceInfoElem, Zip,
+    },
+    Complex64, Element, IntoPyArray, PyArray, PyArray1, PyArrayDescr, PyArrayDyn, PyArrayMethods,
+    PyReadonlyArray1, PyReadonlyArrayDyn, PyReadwriteArray1, PyReadwriteArrayDyn,
+};
+use pyo3::{exceptions::PyIndexError, types::PySlice, Py};
+use pyo3::{
+    exceptions::{PyTypeError, PyValueError},
+    pymodule,
+    types::{PyAnyMethods, PyDict, PyDictMethods, PyModule},
+    Bound, FromPyObject, PyAny, PyObject, PyResult, Python,
+};
+use pyo3::{IntoPy, IntoPyObject, IntoPyObjectExt, PyErr};
 
 thread_local! {
     static RUNTIME: RefCell<Option<tokio::runtime::Runtime>> = RefCell::new(None);
     static CONTEXT: RefCell<Option<ClientContext>> = RefCell::new(None);
     // request counter:
-    static REQUEST_COUNTER: RefCell<u32> = RefCell::new(0);
+
+}
+
+#[derive(FromPyObject)]
+pub enum SupportedArray<'py> {
+    I8(Bound<'py, PyArrayDyn<i8>>),
+    I16(Bound<'py, PyArrayDyn<i16>>),
+    I32(Bound<'py, PyArrayDyn<i32>>),
+    I64(Bound<'py, PyArrayDyn<i64>>),
+    U8(Bound<'py, PyArrayDyn<u8>>),
+    U16(Bound<'py, PyArrayDyn<u16>>),
+    U32(Bound<'py, PyArrayDyn<u32>>),
+    U64(Bound<'py, PyArrayDyn<u64>>),
+    F32(Bound<'py, PyArrayDyn<f32>>),
+    F64(Bound<'py, PyArrayDyn<f64>>),
+}
+
+// Example helper implementations.
+impl<'py> SupportedArray<'py> {
+    pub fn is_f64(&self) -> bool {
+        matches!(self, SupportedArray::F64(_))
+    }
+
+    /// Attempt to cast the array to F64.
+    /// For arrays already of type F64, it returns self.
+    /// For certain types (like I64), it performs a cast.
+    pub fn cast_to_f64(self) -> PyResult<Bound<'py, PyArrayDyn<f64>>> {
+        match self {
+            SupportedArray::F64(arr) => Ok(arr),
+            SupportedArray::F32(arr) => {
+                // Assume Bound has a method `cast` that returns a new Bound of the target type.
+                let casted = arr.cast::<f64>(false)?;
+                Ok(casted)
+            }
+            SupportedArray::I64(arr) => {
+                // Assume Bound has a method `cast` that returns a new Bound of the target type.
+                let casted = arr.cast::<f64>(false)?;
+                Ok(casted)
+            }
+            // You can add additional conversions here:
+            SupportedArray::I32(arr) => {
+                let casted = arr.cast::<f64>(false)?;
+                Ok(casted)
+            }
+            SupportedArray::I16(arr) => {
+                let casted = arr.cast::<f64>(false)?;
+                Ok(casted)
+            }
+            SupportedArray::I8(arr) => {
+                let casted = arr.cast::<f64>(false)?;
+                Ok(casted)
+            }
+            SupportedArray::U64(arr) => {
+                let casted = arr.cast::<f64>(false)?;
+                Ok(casted)
+            }
+            SupportedArray::U32(arr) => {
+                let casted = arr.cast::<f64>(false)?;
+                Ok(casted)
+            }
+            SupportedArray::U16(arr) => {
+                let casted = arr.cast::<f64>(false)?;
+                Ok(casted)
+            }
+            SupportedArray::U8(arr) => {
+                let casted = arr.cast::<f64>(false)?;
+                Ok(casted)
+            }
+        }
+    }
 }
 
 pub fn init_py(py: Python<'_>) -> PyResult<()> {
@@ -101,147 +173,6 @@ pub fn init_py(py: Python<'_>) -> PyResult<()> {
     Ok(())
 }
 
-fn rpc_call(srv_id: u32, method_name: &str, data: Option<Vec<u8>>) -> Result<Vec<u8>> {
-    debug!(
-        "[RPC_CALL][TX Rank {}] Sending Data of length {} to server {}",
-        CONTEXT.with(|ctx| ctx.borrow().as_ref().unwrap().get_rank()),
-        data.as_ref().map(|d| d.len()).unwrap_or(0),
-        srv_id
-    );
-    let response = CONTEXT
-        .with(|ctx| {
-            let ctx = ctx.borrow();
-            let ctx_ref = ctx.as_ref().expect("Context not initialized");
-            RUNTIME.with(|rt_cell| {
-                let rt = rt_cell.borrow();
-                let rt_ref = rt.as_ref().expect("Runtime not initialized");
-                rt_ref.block_on(ctx_ref.send_message(
-                    srv_id as usize,
-                    method_name,
-                    RPCData {
-                        metadata: None,
-                        data,
-                    },
-                ))
-            })
-        })
-        .map_err(|e| PyErr::new::<PyValueError, _>(format!("RPC error: {}", e)))?;
-    debug!(
-        "[RPC_CALL][TX Rank {}] Received response from server {}",
-        CONTEXT.with(|ctx| ctx.borrow().as_ref().unwrap().get_rank()),
-        srv_id
-    );
-    // Increment request counter
-    REQUEST_COUNTER.with(|counter| {
-        let mut counter = counter.borrow_mut();
-        *counter += 1;
-    });
-    // Get binary data from response (assuming response.data contains the binary payload)
-    Ok(response.data.unwrap())
-}
-
-pub fn create_object_impl<'py>(
-    py: Python<'py>,
-    obj_name_key: String,
-    parent_id: Option<u128>,
-    metadata: Option<Bound<'py, PyDict>>,
-    array_meta_list: Option<Vec<Option<Bound<'py, PyDict>>>>,
-    array_data_list: Option<Vec<Option<SupportedNumpyArray<'py>>>>,
-) -> PyResult<Vec<Py<PyInt>>> {
-    let create_obj_params = crate::datastore::create_objects_req_proc(
-        obj_name_key,
-        parent_id,
-        metadata,
-        array_meta_list,
-        array_data_list,
-    );
-    match create_obj_params {
-        None => Err(PyErr::new::<PyValueError, _>(
-            "Failed to create object parameters",
-        )),
-        Some(params) => {
-            let main_obj_id = params[0].obj_id;
-            // Serialize the parameters using MessagePack
-            let serialized_params = rmp_serde::to_vec(&params).map_err(|e| {
-                PyErr::new::<PyValueError, _>(format!("Failed to serialize params: {}", e))
-            })?;
-            debug!(
-                "create_objects: params data length: {:?}",
-                serialized_params.len()
-            );
-            // Get binary data from response (assuming response.data contains the binary payload)
-            let response_data = rpc_call(
-                main_obj_id.vnode_id() % get_server_count(),
-                "datastore::create_objects",
-                Some(serialized_params),
-            );
-            debug!(
-                "create_objects: response data length: {:?}",
-                response_data.as_ref().unwrap().len()
-            );
-            let result: Vec<u128> =
-                rmp_serde::from_slice(&response_data.unwrap()).map_err(|e| {
-                    PyErr::new::<PyValueError, _>(format!("Deserialization error: {}", e))
-                })?;
-            debug!("create_objects: result vector length: {:?}", result.len());
-            debug!("create_objects: result vector: {:?}", result);
-            converter::convert_vec_u128_to_py_long(py, result)
-        }
-    }
-}
-
-pub fn get_object_metadata_impl<'py>(
-    py: Python<'py>,
-    obj_id: u128,
-    meta_keys: Option<Vec<String>>,
-    sub_object_meta_keys: Option<Vec<String>>,
-) -> PyResult<Py<PyDict>> {
-    // TODO
-    unimplemented!()
-}
-
-pub fn get_object_data_impl<'py>(
-    py: Python<'py>,
-    obj_id: u128,
-    region: Option<Vec<Bound<'py, PySlice>>>,
-    sub_obj_regions: Option<Vec<(String, Vec<Bound<'py, PySlice>>)>>,
-) -> PyResult<Py<PyDict>> {
-    let get_object_data_params =
-        super::datastore::get_object_slice_req_proc(obj_id, region, sub_obj_regions);
-    match get_object_data_params {
-        Err(_) => Err(PyErr::new::<PyValueError, _>(
-            "Failed to create object parameters",
-        )),
-        Ok(params) => {
-            let main_obj_id = params.obj_id;
-            // Serialize the parameters using MessagePack
-            let serialized_params = rmp_serde::to_vec(&params).map_err(|e| {
-                PyErr::new::<PyValueError, _>(format!("Failed to serialize params: {}", e))
-            })?;
-            debug!(
-                "get_object_data: params data length: {:?}",
-                serialized_params.len()
-            );
-            // Get binary data from response (assuming response.data contains the binary payload)
-            let response_data = rpc_call(
-                main_obj_id.vnode_id() % get_server_count(),
-                "datastore::get_object_data",
-                Some(serialized_params),
-            );
-            debug!(
-                "get_object_data: response data length: {:?}",
-                response_data.as_ref().unwrap().len()
-            );
-            let result: GetObjectSliceResponse = rmp_serde::from_slice(&response_data.unwrap())
-                .map_err(|e| {
-                    PyErr::new::<PyValueError, _>(format!("Deserialization error: {}", e))
-                })?;
-            // debug!("get_object_data: result vector: {:?}", result);
-            converter::convert_get_object_slice_response_to_pydict(py, result)
-        }
-    }
-}
-
 pub fn times_two_impl<'py, T>(py: Python<'py>, x: PyReadonlyArrayDyn<'py, T>) -> PyResult<PyObject>
 where
     T: Copy + serde::Serialize + for<'de> serde::Deserialize<'de> + Element + std::fmt::Debug,
@@ -253,20 +184,36 @@ where
     let serialized = SerializableNDArray::serialize(x_array)
         .map_err(|e| PyErr::new::<PyValueError, _>(format!("Serialization error: {}", e)))?;
 
-    let srv_id = REQUEST_COUNTER.with(|counter| (*counter.borrow() as u32) % get_server_count());
+    // Send message to server 0 and get response
+    let response = CONTEXT
+        .with(|ctx| {
+            let ctx = ctx.borrow();
+            let ctx_ref = ctx.as_ref().expect("Context not initialized");
+            RUNTIME.with(|rt_cell| {
+                let rt = rt_cell.borrow();
+                let rt_ref = rt.as_ref().expect("Runtime not initialized");
+                rt_ref.block_on(ctx_ref.send_message(
+                    0,
+                    "datastore::times_two",
+                    RPCData {
+                        metadata: None,
+                        data: serialized,
+                    },
+                ))
+            })
+        })
+        .map_err(|e| PyErr::new::<PyValueError, _>(format!("RPC error: {}", e)))?;
 
-    let response_data = rpc_call(srv_id, "datastore::times_two", Some(serialized));
+    // Get binary data from response (assuming response.data contains the binary payload)
+    let response_data = response.data;
 
-    match response_data {
-        Ok(data) => {
-            let result: ArrayD<T> = SerializableNDArray::deserialize(&data).map_err(|e| {
-                PyErr::new::<PyValueError, _>(format!("Deserialization error: {}", e))
-            })?;
-            let py_array = PyArray::from_array(py, &result);
-            Ok(py_array.into_any().into())
-        }
-        Err(e) => Err(PyErr::new::<PyValueError, _>(format!("RPC error: {}", e))),
-    }
+    // Deserialize back into a rust ndarray
+    let result: ArrayD<T> = SerializableNDArray::deserialize(&response_data)
+        .map_err(|e| PyErr::new::<PyValueError, _>(format!("Deserialization error: {}", e)))?;
+
+    // Convert the resulting ndarray back to a NumPy array
+    let py_array = PyArray::from_array(py, &result);
+    Ok(py_array.into_py(py))
 }
 
 // example using generic T
@@ -304,12 +251,40 @@ pub fn generic_add<T: Copy + Add<Output = T>>(
     &x + &y
 }
 
+/// Convert a Python slice (wrapped in Bound) into an ndarray SliceInfoElem.
+pub fn py_slice_to_ndarray_slice<'py>(slice: Bound<'py, PySlice>) -> PyResult<SliceInfoElem> {
+    let py_slice = slice.as_ref();
+    let start: Option<isize> = py_slice.getattr("start")?.extract()?;
+    let stop: Option<isize> = py_slice.getattr("stop")?.extract()?;
+    let step: Option<isize> = py_slice.getattr("step")?.extract()?;
+    Ok(SliceInfoElem::Slice {
+        start: start.unwrap_or(0),
+        end: stop,
+        step: step.unwrap_or(1),
+    })
+}
+
 pub fn array_slicing<'py, T: Copy>(
     x: ArrayViewD<'_, T>,
     indices: Vec<Bound<'py, PySlice>>,
 ) -> PyResult<ArrayD<T>> {
     // Convert all Python slices into ndarray slice elements
-    let slice_spec = converter::convert_pyslice_vec_to_rust_slice_vec(x.ndim(), Some(indices))?;
+    let mut slice_spec: Vec<SliceInfoElem> = Vec::with_capacity(x.ndim());
+
+    // Convert provided slices
+    for index in indices.iter() {
+        slice_spec.push(py_slice_to_ndarray_slice(index.to_owned())?);
+    }
+
+    // If fewer slices provided than dimensions, fill rest with full slices
+    while slice_spec.len() < x.ndim() {
+        slice_spec.push(SliceInfoElem::Slice {
+            start: 0,
+            end: None,
+            step: 1,
+        });
+    }
+
     // Apply slicing and return an owned copy
     Ok(x.slice(&slice_spec[..]).to_owned())
 }
