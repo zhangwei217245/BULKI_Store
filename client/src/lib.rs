@@ -10,14 +10,14 @@ use cltctx::ClientContext;
 use commons::region::SerializableNDArray;
 use commons::rpc::RPCData;
 use log::{debug, error, warn};
-use numpy::ndarray::{Array1, ArrayD, ArrayView1, ArrayViewD, ArrayViewMutD, Zip};
-use numpy::PyArray;
+use ndarray::{Axis, SliceInfoElem};
 use numpy::{
     datetime::{units, Timedelta},
-    Complex64, Element, IntoPyArray, PyArray1, PyArrayDyn, PyArrayMethods, PyReadonlyArray1,
-    PyReadonlyArrayDyn, PyReadwriteArray1, PyReadwriteArrayDyn,
+    ndarray::{Array1, ArrayD, ArrayView1, ArrayViewD, ArrayViewMutD, Shape, Zip},
+    Complex64, Element, IntoPyArray, PyArray, PyArray1, PyArrayDescr, PyArrayDyn, PyArrayMethods,
+    PyReadonlyArray1, PyReadonlyArrayDyn, PyReadwriteArray1, PyReadwriteArrayDyn,
 };
-use pyo3::exceptions::PyIndexError;
+use pyo3::{exceptions::PyIndexError, types::PySlice, Py};
 use pyo3::{
     exceptions::{PyTypeError, PyValueError},
     pymodule,
@@ -29,6 +29,8 @@ use pyo3::{IntoPy, IntoPyObject, IntoPyObjectExt, PyErr};
 thread_local! {
     static RUNTIME: RefCell<Option<tokio::runtime::Runtime>> = RefCell::new(None);
     static CONTEXT: RefCell<Option<ClientContext>> = RefCell::new(None);
+    // request counter:
+
 }
 
 #[pymodule]
@@ -115,8 +117,7 @@ fn rust_ext<'py>(m: &Bound<'py, PyModule>) -> PyResult<()> {
     #[pyo3(name = "times_two")]
     fn times_two<'py>(py: Python<'py>, x: PyReadonlyArrayDyn<'py, f64>) -> PyResult<PyObject> {
         // Convert numpy array to rust ndarray
-        let x_array: ndarray::ArrayBase<ndarray::OwnedRepr<f64>, ndarray::Dim<ndarray::IxDynImpl>> =
-            x.as_array().to_owned();
+        let x_array = x.as_array().to_owned();
 
         // Serialize the ndarray using messagepack
         let serialized = SerializableNDArray::serialize(x_array)
@@ -145,7 +146,6 @@ fn rust_ext<'py>(m: &Bound<'py, PyModule>) -> PyResult<()> {
         // Get binary data from response
         let response_data = match response {
             data => data.data,
-            _ => return Err(PyErr::new::<PyValueError, _>("Unexpected response type")),
         };
 
         // Deserialize back into rust ndarray
@@ -157,11 +157,16 @@ fn rust_ext<'py>(m: &Bound<'py, PyModule>) -> PyResult<()> {
         Ok(py_array.into_any().unbind())
     }
 
-    // example using generic PyObject
-    fn head(py: Python<'_>, x: ArrayViewD<'_, PyObject>) -> PyResult<PyObject> {
-        x.get(0)
-            .map(|obj| obj.clone_ref(py))
-            .ok_or_else(|| PyIndexError::new_err("array index out of range"))
+    // example using generic T
+    fn head<T: Copy + Add<Output = T>>(_py: Python<'_>, x: ArrayViewD<'_, T>) -> ArrayD<T> {
+        // Ensure the array has at least one dimension
+        assert!(x.ndim() > 0, "Input array must have at least one dimension");
+
+        // Get the first element along the first dimension.
+        let first = x.index_axis(Axis(0), 0).to_owned();
+
+        // Convert to a dynamic array (ArrayD<T>) and return.
+        first.into_dyn()
     }
 
     // example using immutable borrows producing a new array
@@ -181,17 +186,162 @@ fn rust_ext<'py>(m: &Bound<'py, PyModule>) -> PyResult<()> {
 
     // example using generics
     fn generic_add<T: Copy + Add<Output = T>>(
-        x: ArrayView1<'_, T>,
-        y: ArrayView1<'_, T>,
-    ) -> Array1<T> {
+        x: ArrayViewD<'_, T>,
+        y: ArrayViewD<'_, T>,
+    ) -> ArrayD<T> {
         &x + &y
     }
 
+    // This crate follows a strongly-typed approach to wrapping NumPy arrays
+    // while Python API are often expected to work with multiple element types.
+    //
+    // That kind of limited polymorphis can be recovered by accepting an enumerated type
+    // covering the supported element types and dispatching into a generic implementation.
+    #[derive(FromPyObject)]
+    enum SupportedArray<'py> {
+        I8(Bound<'py, PyArrayDyn<i8>>),
+        I16(Bound<'py, PyArrayDyn<i16>>),
+        I32(Bound<'py, PyArrayDyn<i32>>),
+        I64(Bound<'py, PyArrayDyn<i64>>),
+        U8(Bound<'py, PyArrayDyn<u8>>),
+        U16(Bound<'py, PyArrayDyn<u16>>),
+        U32(Bound<'py, PyArrayDyn<u32>>),
+        U64(Bound<'py, PyArrayDyn<u64>>),
+        F32(Bound<'py, PyArrayDyn<f32>>),
+        F64(Bound<'py, PyArrayDyn<f64>>),
+    }
+
+    fn py_slice_to_ndarray_slice(py_slice: Bound<'_, PySlice>) -> PyResult<SliceInfoElem> {
+        // Extract the start, stop, and step attributes.
+        let start: Option<isize> = py_slice.getattr("start")?.extract()?;
+        let stop: Option<isize> = py_slice.getattr("stop")?.extract()?;
+        let step: Option<isize> = py_slice.getattr("step")?.extract()?;
+
+        println!("start: {:?}, stop: {:?}, step: {:?}", start, stop, step);
+
+        let start = start.unwrap_or(0);
+        let step = step.unwrap_or(1);
+
+        if step == 0 {
+            return Err(PyValueError::new_err("slice step cannot be zero"));
+        }
+
+        Ok(SliceInfoElem::Slice {
+            start,
+            end: stop,
+            step,
+        })
+    }
+
+    #[pyfn(m)]
+    #[pyo3(name = "translate_slice")]
+    fn translate_slice<'py>(py: Python<'py>, py_slice: Bound<'_, PySlice>) -> PyResult<()> {
+        let _ = py_slice_to_ndarray_slice(py_slice);
+        Ok(())
+    }
     // wrapper of `head`
     #[pyfn(m)]
     #[pyo3(name = "head")]
-    fn head_py<'py>(x: PyReadonlyArrayDyn<'py, PyObject>) -> PyResult<PyObject> {
-        head(x.py(), x.as_array())
+    fn head_py<'py>(py: Python<'py>, x: SupportedArray<'py>) -> PyResult<PyObject> {
+        println!("head_py started");
+
+        match x {
+            SupportedArray::I8(x) => Ok(head(py, x.readonly().as_array())
+                .into_pyarray(py)
+                .into_any()
+                .into()),
+            SupportedArray::I16(x) => Ok(head(py, x.readonly().as_array())
+                .into_pyarray(py)
+                .into_any()
+                .into()),
+            SupportedArray::I32(x) => Ok(head(py, x.readonly().as_array())
+                .into_pyarray(py)
+                .into_any()
+                .into()),
+            SupportedArray::I64(x) => Ok(head(py, x.readonly().as_array())
+                .into_pyarray(py)
+                .into_any()
+                .into()),
+            SupportedArray::U8(x) => Ok(head(py, x.readonly().as_array())
+                .into_pyarray(py)
+                .into_any()
+                .into()),
+            SupportedArray::U16(x) => Ok(head(py, x.readonly().as_array())
+                .into_pyarray(py)
+                .into_any()
+                .into()),
+            SupportedArray::U32(x) => Ok(head(py, x.readonly().as_array())
+                .into_pyarray(py)
+                .into_any()
+                .into()),
+            SupportedArray::U64(x) => Ok(head(py, x.readonly().as_array())
+                .into_pyarray(py)
+                .into_any()
+                .into()),
+            SupportedArray::F32(x) => Ok(head(py, x.readonly().as_array())
+                .into_pyarray(py)
+                .into_any()
+                .into()),
+            SupportedArray::F64(x) => Ok(head(py, x.readonly().as_array())
+                .into_pyarray(py)
+                .into_any()
+                .into()),
+        }
+    }
+
+    // Example helper implementations.
+    impl<'py> SupportedArray<'py> {
+        pub fn is_f64(&self) -> bool {
+            matches!(self, SupportedArray::F64(_))
+        }
+
+        /// Attempt to cast the array to F64.
+        /// For arrays already of type F64, it returns self.
+        /// For certain types (like I64), it performs a cast.
+        pub fn cast_to_f64(self) -> PyResult<Bound<'py, PyArrayDyn<f64>>> {
+            match self {
+                SupportedArray::F64(arr) => Ok(arr),
+                SupportedArray::F32(arr) => {
+                    // Assume Bound has a method `cast` that returns a new Bound of the target type.
+                    let casted = arr.cast::<f64>(false)?;
+                    Ok(casted)
+                }
+                SupportedArray::I64(arr) => {
+                    // Assume Bound has a method `cast` that returns a new Bound of the target type.
+                    let casted = arr.cast::<f64>(false)?;
+                    Ok(casted)
+                }
+                // You can add additional conversions here:
+                SupportedArray::I32(arr) => {
+                    let casted = arr.cast::<f64>(false)?;
+                    Ok(casted)
+                }
+                SupportedArray::I16(arr) => {
+                    let casted = arr.cast::<f64>(false)?;
+                    Ok(casted)
+                }
+                SupportedArray::I8(arr) => {
+                    let casted = arr.cast::<f64>(false)?;
+                    Ok(casted)
+                }
+                SupportedArray::U64(arr) => {
+                    let casted = arr.cast::<f64>(false)?;
+                    Ok(casted)
+                }
+                SupportedArray::U32(arr) => {
+                    let casted = arr.cast::<f64>(false)?;
+                    Ok(casted)
+                }
+                SupportedArray::U16(arr) => {
+                    let casted = arr.cast::<f64>(false)?;
+                    Ok(casted)
+                }
+                SupportedArray::U8(arr) => {
+                    let casted = arr.cast::<f64>(false)?;
+                    Ok(casted)
+                }
+            }
+        }
     }
 
     // wrapper of `axpy`
@@ -252,44 +402,35 @@ fn rust_ext<'py>(m: &Bound<'py, PyModule>) -> PyResult<()> {
             .for_each(|x, y| *x = (i64::from(*x) + 60 * i64::from(*y)).into());
     }
 
-    // This crate follows a strongly-typed approach to wrapping NumPy arrays
-    // while Python API are often expected to work with multiple element types.
-    //
-    // That kind of limited polymorphis can be recovered by accepting an enumerated type
-    // covering the supported element types and dispatching into a generic implementation.
-    #[derive(FromPyObject)]
-    enum SupportedArray<'py> {
-        F64(Bound<'py, PyArray1<f64>>),
-        I64(Bound<'py, PyArray1<i64>>),
-    }
-
     #[pyfn(m)]
     fn polymorphic_add<'py>(
         x: SupportedArray<'py>,
         y: SupportedArray<'py>,
     ) -> PyResult<Bound<'py, PyAny>> {
-        match (x, y) {
-            (SupportedArray::F64(x), SupportedArray::F64(y)) => Ok(generic_add(
-                x.readonly().as_array(),
-                y.readonly().as_array(),
+        // Example rule: if either array is F64, convert both to F64.
+        // Otherwise, they must be the same type.
+        if x.is_f64() || y.is_f64() {
+            // Convert both to F64 and then add.
+            let x_f64 = x.cast_to_f64()?;
+            let y_f64 = y.cast_to_f64()?;
+            Ok(
+                generic_add(x_f64.readonly().as_array(), y_f64.readonly().as_array())
+                    .into_pyarray(x_f64.py())
+                    .into_any(),
             )
-            .into_pyarray(x.py())
-            .into_any()),
-            (SupportedArray::I64(x), SupportedArray::I64(y)) => Ok(generic_add(
-                x.readonly().as_array(),
-                y.readonly().as_array(),
-            )
-            .into_pyarray(x.py())
-            .into_any()),
-            (SupportedArray::F64(x), SupportedArray::I64(y))
-            | (SupportedArray::I64(y), SupportedArray::F64(x)) => {
-                let y = y.cast::<f64>(false)?;
-
-                Ok(
-                    generic_add(x.readonly().as_array(), y.readonly().as_array())
-                        .into_pyarray(x.py())
-                        .into_any(),
+        } else {
+            // Otherwise, they should be the same type.
+            match (x, y) {
+                (SupportedArray::I64(x), SupportedArray::I64(y)) => Ok(generic_add(
+                    x.readonly().as_array(),
+                    y.readonly().as_array(),
                 )
+                .into_pyarray(x.py())
+                .into_any()),
+                // Add more cases for other same-type operations.
+                _ => Err(PyValueError::new_err(
+                    "Unsupported combination of array types",
+                )),
             }
         }
     }
