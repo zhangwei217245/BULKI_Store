@@ -211,26 +211,93 @@ fn rust_ext<'py>(m: &Bound<'py, PyModule>) -> PyResult<()> {
         F64(Bound<'py, PyArrayDyn<f64>>),
     }
 
-    fn py_slice_to_ndarray_slice(py_slice: Bound<'_, PySlice>) -> PyResult<SliceInfoElem> {
-        // Extract the start, stop, and step attributes.
+    /// Convert a Python slice (wrapped in Bound) into an ndarray SliceInfoElem.
+    fn py_slice_to_ndarray_slice<'py>(slice: Bound<'py, PySlice>) -> PyResult<SliceInfoElem> {
+        let py_slice = slice.as_ref();
         let start: Option<isize> = py_slice.getattr("start")?.extract()?;
         let stop: Option<isize> = py_slice.getattr("stop")?.extract()?;
         let step: Option<isize> = py_slice.getattr("step")?.extract()?;
+        Ok(SliceInfoElem::Slice {
+            start: start.unwrap_or(0),
+            end: stop,
+            step: step.unwrap_or(1),
+        })
+    }
 
-        println!("start: {:?}, stop: {:?}, step: {:?}", start, stop, step);
+    fn array_slicing<'py, T: Copy>(
+        x: ArrayViewD<'_, T>,
+        indices: Vec<Bound<'py, PySlice>>,
+    ) -> PyResult<ArrayD<T>> {
+        // Convert all Python slices into ndarray slice elements
+        let mut slice_spec: Vec<SliceInfoElem> = Vec::with_capacity(x.ndim());
 
-        let start = start.unwrap_or(0);
-        let step = step.unwrap_or(1);
-
-        if step == 0 {
-            return Err(PyValueError::new_err("slice step cannot be zero"));
+        // Convert provided slices
+        for index in indices.iter() {
+            slice_spec.push(py_slice_to_ndarray_slice(index.to_owned())?);
         }
 
-        Ok(SliceInfoElem::Slice {
-            start,
-            end: stop,
-            step,
-        })
+        // If fewer slices provided than dimensions, fill rest with full slices
+        while slice_spec.len() < x.ndim() {
+            slice_spec.push(SliceInfoElem::Slice {
+                start: 0,
+                end: None,
+                step: 1,
+            });
+        }
+
+        // Apply slicing and return an owned copy
+        Ok(x.slice(&slice_spec[..]).to_owned())
+    }
+
+    #[pyfn(m)]
+    #[pyo3(name = "array_slicing")]
+    fn array_slicing_py<'py>(
+        x: SupportedArray<'py>,
+        indices: Vec<Bound<'py, PySlice>>,
+    ) -> PyResult<PyObject> {
+        // Convert Python objects to IndexType
+        match x {
+            SupportedArray::I8(x) => Ok(array_slicing(x.readonly().as_array(), indices)?
+                .into_pyarray(x.py())
+                .into_any()
+                .into()),
+            SupportedArray::I16(x) => Ok(array_slicing(x.readonly().as_array(), indices)?
+                .into_pyarray(x.py())
+                .into_any()
+                .into()),
+            SupportedArray::I32(x) => Ok(array_slicing(x.readonly().as_array(), indices)?
+                .into_pyarray(x.py())
+                .into_any()
+                .into()),
+            SupportedArray::I64(x) => Ok(array_slicing(x.readonly().as_array(), indices)?
+                .into_pyarray(x.py())
+                .into_any()
+                .into()),
+            SupportedArray::U8(x) => Ok(array_slicing(x.readonly().as_array(), indices)?
+                .into_pyarray(x.py())
+                .into_any()
+                .into()),
+            SupportedArray::U16(x) => Ok(array_slicing(x.readonly().as_array(), indices)?
+                .into_pyarray(x.py())
+                .into_any()
+                .into()),
+            SupportedArray::U32(x) => Ok(array_slicing(x.readonly().as_array(), indices)?
+                .into_pyarray(x.py())
+                .into_any()
+                .into()),
+            SupportedArray::U64(x) => Ok(array_slicing(x.readonly().as_array(), indices)?
+                .into_pyarray(x.py())
+                .into_any()
+                .into()),
+            SupportedArray::F32(x) => Ok(array_slicing(x.readonly().as_array(), indices)?
+                .into_pyarray(x.py())
+                .into_any()
+                .into()),
+            SupportedArray::F64(x) => Ok(array_slicing(x.readonly().as_array(), indices)?
+                .into_pyarray(x.py())
+                .into_any()
+                .into()),
+        }
     }
 
     #[pyfn(m)]
@@ -403,7 +470,8 @@ fn rust_ext<'py>(m: &Bound<'py, PyModule>) -> PyResult<()> {
     }
 
     #[pyfn(m)]
-    fn polymorphic_add<'py>(
+    #[pyo3(name = "polymorphic_add")]
+    fn polymorphic_add_py<'py>(
         x: SupportedArray<'py>,
         y: SupportedArray<'py>,
     ) -> PyResult<Bound<'py, PyAny>> {
