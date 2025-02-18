@@ -192,6 +192,7 @@ where
 /// Structure to hold object creation parameters sent by client
 #[derive(Debug, Serialize, Deserialize)]
 pub struct CreateObjectParams {
+    pub parent_id: Option<u128>,
     pub name: String,
     pub initial_metadata: Option<HashMap<String, MetadataValue>>,
     pub array_data: Option<ArrayType>,
@@ -203,6 +204,8 @@ pub struct CreateObjectParams {
 pub struct DataObject {
     /// Unique identifier (UUIDv7 as u128).
     pub id: u128,
+    /// parent id
+    pub parent_id: Option<u128>,
     /// A human-readable name.
     pub name: String,
     /// Optional attached NDArray of any supported type.
@@ -215,11 +218,12 @@ pub struct DataObject {
 
 impl DataObject {
     /// Create a new DataObject with the given parameters.
-    /// Note: The id field will be set by the server during object creation.
+    /// NOTE: The id field will be set **by the server** during object creation.
     pub fn new(params: CreateObjectParams) -> Self {
         DataObject {
             // Use a temporary ID that will be replaced by the server
             id: 0,
+            parent_id: params.parent_id,
             name: params.name,
             array: params.array_data,
             metadata: params.initial_metadata.unwrap_or_default(),
