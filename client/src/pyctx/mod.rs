@@ -142,11 +142,11 @@ pub fn create_object_impl<'py>(
     parent_id: Option<u128>,
     metadata: Option<Vec<Option<Bound<'py, PyDict>>>>,
     array_data: Option<Vec<Option<SupportedNumpyArray<'py>>>>,
-) -> PyResult<PyObject> {
+) -> PyResult<Vec<PyObject>> {
     let create_obj_params =
         crate::datastore::create_objects_req_proc(name, parent_id, metadata, array_data);
     if create_obj_params.is_none() {
-        return Ok(py.None().into_any().into());
+        return Ok(vec![py.None().into_any().into()]);
     }
 
     let main_obj_id = create_obj_params.as_ref().unwrap()[0].obj_id;
@@ -173,9 +173,15 @@ pub fn create_object_impl<'py>(
         .map_err(|e| PyErr::new::<PyValueError, _>(format!("Deserialization error: {}", e)))?;
     debug!("create_objects: result vector length: {:?}", result.len());
     debug!("create_objects: result vector: {:?}", result);
-    let result_bytes: Vec<u8> = result.iter().flat_map(|x| x.to_le_bytes()).collect();
-    let py_array = PyArray1::from_vec(py, result_bytes);
-    Ok(py_array.into_any().into())
+    let result_ids = result
+        .iter()
+        .map(|x| {
+            PyArray1::from_slice(py, x.to_le_bytes().as_slice())
+                .into_any()
+                .into()
+        })
+        .collect();
+    Ok(result_ids)
 }
 
 pub fn times_two_impl<'py, T>(py: Python<'py>, x: PyReadonlyArrayDyn<'py, T>) -> PyResult<PyObject>
