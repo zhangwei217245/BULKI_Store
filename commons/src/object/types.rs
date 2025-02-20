@@ -16,38 +16,6 @@ pub enum MetadataValue {
     RangeList(Vec<(usize, usize)>),
 }
 
-impl MetadataValue {
-    pub fn to_string(&self) -> String {
-        match self {
-            MetadataValue::String(s) => s.to_string(),
-            MetadataValue::Int(i) => i.to_string(),
-            MetadataValue::UInt(i) => i.to_string(),
-            MetadataValue::Float(f) => f.to_string(),
-            MetadataValue::StringList(s) => s.join(",").to_string(),
-            MetadataValue::IntList(i) => i
-                .iter()
-                .map(|i| i.to_string())
-                .collect::<Vec<_>>()
-                .join(","),
-            MetadataValue::UIntList(i) => i
-                .iter()
-                .map(|i| i.to_string())
-                .collect::<Vec<_>>()
-                .join(","),
-            MetadataValue::FloatList(f) => f
-                .iter()
-                .map(|f| f.to_string())
-                .collect::<Vec<_>>()
-                .join(","),
-            MetadataValue::RangeList(r) => r
-                .iter()
-                .map(|(s, e)| format!("{}-{}", s, e))
-                .collect::<Vec<_>>()
-                .join(","),
-        }
-    }
-}
-
 /// Represents the different types of arrays that can be stored
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum SupportedRustArrayD {
@@ -70,9 +38,14 @@ pub enum SupportedRustArrayD {
 
 impl SupportedRustArrayD {
     /// Get a slice of the array, returning the same type
-    pub fn slice(&self, region: &[SliceInfoElem]) -> SupportedRustArrayD {
+    pub fn slice(&self, region: &[Slice]) -> SupportedRustArrayD {
+        // Convert slices to SliceInfoElem
+        let slice_info_elems: Vec<SliceInfoElem> =
+            region.iter().map(|s| SliceInfoElem::from(*s)).collect();
+
         // Create SliceInfo
-        let info = SliceInfo::<_, IxDyn, IxDyn>::try_from(region).expect("Invalid slice pattern");
+        let info = SliceInfo::<_, IxDyn, IxDyn>::try_from(slice_info_elems)
+            .expect("Invalid slice pattern");
 
         match self {
             // Floating point types
@@ -215,52 +188,16 @@ impl From<ArrayD<u128>> for SupportedRustArrayD {
 }
 
 /// Helper trait to check if a type can be converted to ArrayType
-pub trait IntoRustArrayD {
-    fn into_rust_array_d(self) -> SupportedRustArrayD;
+pub trait IntoArrayType {
+    fn into_array_type(self) -> SupportedRustArrayD;
 }
 
-impl<T> IntoRustArrayD for ArrayD<T>
+impl<T> IntoArrayType for ArrayD<T>
 where
     T: 'static,
     ArrayD<T>: Into<SupportedRustArrayD>,
 {
-    fn into_rust_array_d(self) -> SupportedRustArrayD {
+    fn into_array_type(self) -> SupportedRustArrayD {
         self.into()
-    }
-}
-
-/// A serializable version of ndarray::SliceInfoElem
-#[derive(Debug, Serialize, Deserialize)]
-pub enum SerializableSliceInfoElem {
-    Index(isize),
-    Slice {
-        start: isize,
-        end: Option<isize>,
-        step: isize,
-    },
-    NewAxis,
-}
-
-impl From<SliceInfoElem> for SerializableSliceInfoElem {
-    fn from(elem: SliceInfoElem) -> Self {
-        match elem {
-            SliceInfoElem::Index(i) => SerializableSliceInfoElem::Index(i),
-            SliceInfoElem::Slice { start, end, step } => {
-                SerializableSliceInfoElem::Slice { start, end, step }
-            }
-            SliceInfoElem::NewAxis => SerializableSliceInfoElem::NewAxis,
-        }
-    }
-}
-
-impl From<SerializableSliceInfoElem> for SliceInfoElem {
-    fn from(elem: SerializableSliceInfoElem) -> Self {
-        match elem {
-            SerializableSliceInfoElem::Index(i) => SliceInfoElem::Index(i),
-            SerializableSliceInfoElem::Slice { start, end, step } => {
-                SliceInfoElem::Slice { start, end, step }
-            }
-            SerializableSliceInfoElem::NewAxis => SliceInfoElem::NewAxis,
-        }
     }
 }

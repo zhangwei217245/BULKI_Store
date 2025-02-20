@@ -22,10 +22,12 @@ lazy_static! {
     static ref PROCESS_SIZE: AtomicU32 = AtomicU32::new(1);
 }
 
+#[allow(dead_code)]
 pub fn get_rank() -> u32 {
     PROCESS_RANK.load(Ordering::SeqCst)
 }
 
+#[allow(dead_code)]
 pub fn get_size() -> u32 {
     PROCESS_SIZE.load(Ordering::SeqCst)
 }
@@ -48,6 +50,7 @@ pub struct ServerContext {
     endpoint_shutdowns: HashMap<String, oneshot::Sender<()>>,
 }
 
+#[allow(dead_code)]
 #[derive(Debug)]
 pub enum PersistenceEvent {
     SaveData { endpoint_id: String, data: Vec<u8> },

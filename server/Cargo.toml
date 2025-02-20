@@ -19,6 +19,7 @@ msgpack-numpy = { workspace = true }
 env_logger = { workspace = true }
 lazy_static = { workspace = true }
 uuid = { workspace = true }
+fnv = { workspace = true }
 
 [features]
 default = ["mpi"]

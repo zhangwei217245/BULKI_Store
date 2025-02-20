@@ -1,9 +1,8 @@
 use anyhow::Result;
-use commons::handler::{HandlerDispatcher, HandlerResult, RequestHandlerKind};
 use commons::rpc::grpc::GrpcTX;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
-/// Register request handlers for the GrpcTX endpoint
+/// Register request handlers for the GrpcTX endpoint for server < - > server communication
 pub fn register_handlers(tx: &mut GrpcTX) -> Result<()> {
     if let Some(handler) = &mut tx.context.handler {
         Arc::get_mut(handler)

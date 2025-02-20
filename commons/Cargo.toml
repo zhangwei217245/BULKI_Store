@@ -26,7 +26,7 @@ tokio-stream = { version = "0.1.17", features = ["net"] }
 env_logger = { workspace = true }
 uuid = { workspace = true }
 num-traits = { version = "0.2.19" }
-
+fnv = { workspace = true }
 [build-dependencies]
 tonic-build = { workspace = true }
 

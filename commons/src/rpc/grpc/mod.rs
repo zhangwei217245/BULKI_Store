@@ -25,11 +25,15 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::oneshot;
+use tonic::codec::CompressionEncoding;
 use tonic::transport::{Channel, Server};
 use tonic::Request;
 
 const MAX_SERVER_ADDR_LEN: usize = 256;
 const DEFAULT_BASE_PORT: u16 = 50051;
+
+const MAX_DECODING_MESSAGE_SIZE: usize = usize::MAX;
+const MAX_ENCODING_MESSAGE_SIZE: usize = usize::MAX;
 
 #[derive(Default, Clone)]
 pub struct GrpcRX {
@@ -83,7 +87,7 @@ impl GrpcTX {
         };
         let data = RPCData {
             metadata: Some(metadata),
-            data: vec![0; 2],
+            data: Some(vec![0; 2]),
         };
         let request = RpcMessage {
             binary_data: rmp_serde::to_vec(&data).unwrap(),
@@ -129,7 +133,7 @@ impl GrpcTX {
         info!("[TX Rank {}] got endpoint {}", self.context.rank, endpoint);
 
         // Use Tonic's advanced channel features
-        let channel = Channel::from_shared(endpoint)?
+        let channel = Channel::builder(endpoint.parse().unwrap())
             .connect_timeout(Self::CONNECT_TIMEOUT)
             .tcp_keepalive(Some(Self::KEEPALIVE_INTERVAL))
             // .tcp_nodelay(true) // Disable Nagle's algorithm for better latency
@@ -143,7 +147,11 @@ impl GrpcTX {
 
         self.connections.insert(rx_id, channel);
 
-        let client = GrpcBulkistoreClient::new(self.connections.get(&rx_id).unwrap().clone());
+        let client = GrpcBulkistoreClient::new(self.connections.get(&rx_id).unwrap().clone())
+            .send_compressed(CompressionEncoding::Gzip)
+            .accept_compressed(CompressionEncoding::Gzip)
+            .max_decoding_message_size(MAX_DECODING_MESSAGE_SIZE)
+            .max_encoding_message_size(MAX_ENCODING_MESSAGE_SIZE);
 
         Ok(client)
     }
@@ -265,7 +273,13 @@ impl RxEndpoint for GrpcRX {
                     // spawn a new task to start server
                     tokio::spawn(async move {
                         Server::builder()
-                            .add_service(GrpcBulkistoreServer::from_arc(service))
+                            .add_service(
+                                GrpcBulkistoreServer::from_arc(service)
+                                    .max_decoding_message_size(MAX_DECODING_MESSAGE_SIZE)
+                                    .max_encoding_message_size(MAX_ENCODING_MESSAGE_SIZE)
+                                    .accept_compressed(CompressionEncoding::Gzip)
+                                    .send_compressed(CompressionEncoding::Gzip),
+                            )
                             // add as a dev-dependency the crate `tokio-stream` with feature `net` enabled
                             .serve_with_incoming_shutdown(
                                 tokio_stream::wrappers::TcpListenerStream::new(listener),
@@ -456,7 +470,7 @@ impl TxEndpoint for GrpcTX {
         handler_register(self)?;
         Ok(())
     }
-    fn discover_servers(&mut self) -> Result<()> {
+    fn discover_servers(&mut self) -> Result<isize> {
         let pdc_tmp_dir = FileUtility::get_pdc_tmp_dir();
         info!("Getting PDC tmp dir: {}", pdc_tmp_dir.display());
 
@@ -506,7 +520,7 @@ impl TxEndpoint for GrpcTX {
             self.context.rank,
             self.context.server_addresses.as_ref().unwrap().len()
         );
-        Ok(())
+        Ok(self.context.server_addresses.as_ref().unwrap().len() as isize)
     }
 
     async fn send_message(
@@ -519,8 +533,8 @@ impl TxEndpoint for GrpcTX {
         let mut client = self.get_or_create_connection(rx_id).await?;
 
         debug!(
-            "[TX Rank {}] Sending message to RX Rank {}",
-            self.context.rank, rx_id
+            "[TX Rank {}] Sending {} message to RX Rank {}",
+            self.context.rank, handler_name, rx_id
         );
 
         let metadata = RPCMetadata {
@@ -541,16 +555,17 @@ impl TxEndpoint for GrpcTX {
             .map_err(|e| anyhow::anyhow!("Failed to serialize message: {}", e))?;
 
         debug!(
-            "[TX Rank {}] Serialized message: {:?}",
-            self.context.rank, binary_data
+            "[TX Rank {}] Serialized {} message length: {:?}",
+            self.context.rank,
+            handler_name,
+            binary_data.len()
         );
         // Create request
         let request = tonic::Request::new(RpcMessage { binary_data });
-        debug!("Sending request to RX {}", rx_id);
-
+        let req_size = request.get_ref().binary_data.len();
         debug!(
-            "[TX Rank {}] Sending request: {:?}",
-            self.context.rank, request
+            "[TX Rank {}] Sending request of length: {} to RX {} for fn {}",
+            self.context.rank, req_size, rx_id, handler_name
         );
 
         // Send binary request and wait for response
@@ -559,7 +574,15 @@ impl TxEndpoint for GrpcTX {
                 let response = response.into_inner();
                 // Deserialize the response binary_data to get our RPCData
                 match rmp_serde::from_slice::<RPCData>(&response.binary_data) {
-                    Ok(rpc_data) => self.process_response(rpc_data).await,
+                    Ok(rpc_data) => {
+                        debug!(
+                            "[TX Rank {}] Received response of length: {} for fn {}",
+                            self.context.rank,
+                            response.binary_data.len(),
+                            handler_name
+                        );
+                        self.process_response(rpc_data).await
+                    }
                     Err(e) => Err(anyhow::anyhow!("Failed to deserialize response: {}", e)),
                 }
             }

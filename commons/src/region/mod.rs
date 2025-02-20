@@ -1,5 +1,5 @@
 use anyhow::Result;
-use ndarray::{Array, ArrayD, IxDyn, OwnedRepr, Slice};
+use ndarray::{Array, ArrayD, IxDyn, OwnedRepr};
 use serde::{Deserialize, Serialize};
 use std::fmt::Debug;
 

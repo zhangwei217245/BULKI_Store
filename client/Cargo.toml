@@ -35,6 +35,8 @@ thread_local = "1.1.4"
 numpy = "0.23.0"
 ordered-float = "4.6.0" # Specific for this example
 serde = { workspace = true, features = ["derive"] }
+lazy_static = { workspace = true }
+fnv = { workspace = true }
 
 [features]
 default = ["mpi"]

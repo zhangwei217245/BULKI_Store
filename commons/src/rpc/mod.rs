@@ -126,14 +126,14 @@ pub struct RPCMetadata {
 
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
 pub struct RPCData {
-    pub data: Vec<u8>,
+    pub data: Option<Vec<u8>>,
     pub metadata: Option<RPCMetadata>,
 }
 
 impl RPCData {
-    pub fn new(data: impl Into<Vec<u8>>) -> Self {
+    pub fn new(data: Option<impl Into<Vec<u8>>>) -> Self {
         Self {
-            data: data.into(),
+            data: data.map(|d| d.into()),
             metadata: None,
         }
     }
@@ -262,7 +262,7 @@ pub trait TxEndpoint {
     where
         F: FnOnce(&mut Self) -> Result<()>;
 
-    fn discover_servers(&mut self) -> Result<()>;
+    fn discover_servers(&mut self) -> Result<isize>;
     // send a message to a server identified by its index
     async fn send_message(&self, rx_id: usize, handler_name: &str, msg: RPCData)
         -> Result<RPCData>;

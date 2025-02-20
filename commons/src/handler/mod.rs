@@ -1,13 +1,13 @@
 use std::collections::HashMap;
 use std::sync::Mutex;
 
-use crate::rpc::{RPCData, StatusCode};
+use crate::rpc::RPCData;
 use anyhow::Result;
 use inventory;
 use serde::{Deserialize, Serialize};
 use std::time::Instant;
 
-enum HandlerType {
+pub enum HandlerType {
     Request,
     Response,
 }
