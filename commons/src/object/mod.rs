@@ -36,7 +36,7 @@ impl DataObject {
     pub fn new(params: CreateObjectParams) -> Self {
         DataObject {
             // Use a temporary ID that will be replaced by the server
-            id: 0,
+            id: params.obj_id,
             parent_id: params.parent_id,
             name: params.name,
             array: params.array_data,

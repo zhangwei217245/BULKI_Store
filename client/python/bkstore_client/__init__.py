@@ -1,6 +1,9 @@
-from .bkstore_client import *
-from .bkc_object import *
+"""
+BulkiStore Client Python Package
 
-__doc__ = bkstore_client.__doc__
-if hasattr(bkstore_client, "__all__"):
-    __all__ = bkstore_client.__all__
+This package provides Python bindings and helper functions for the BulkiStore client.
+"""
+
+from .helpers import *  # This will expose all public functions from helpers.py
+
+__version__ = "0.1.0"  # Match this with your package version
