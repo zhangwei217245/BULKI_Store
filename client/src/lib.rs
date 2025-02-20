@@ -3,6 +3,8 @@ mod cltctx;
 mod datastore;
 mod pyctx;
 
+use std::collections::HashMap;
+
 use env_logger;
 use numpy::{
     datetime::{units, Timedelta},
@@ -11,18 +13,71 @@ use numpy::{
     PyReadonlyArrayDyn, PyReadwriteArray1, PyReadwriteArrayDyn,
 };
 use pyctx::converter::SupportedNumpyArray;
-use pyo3::types::PySlice;
 use pyo3::{
     exceptions::PyValueError,
-    pymodule,
-    types::{PyAnyMethods, PyDict, PyDictMethods, PyModule},
-    Bound, PyAny, PyObject, PyResult, Python,
+    pymethods, pymodule,
+    types::{PyAnyMethods, PyDict, PyDictMethods, PyInt, PyModule},
+    Bound, IntoPyObjectExt, Py, PyAny, PyObject, PyResult, Python,
 };
+use pyo3::{pyclass, types::PySlice};
 
 #[pymodule]
 #[pyo3(name = "bkstore_client")]
 fn rust_ext<'py>(m: &Bound<'py, PyModule>) -> PyResult<()> {
     env_logger::init();
+
+    #[pyclass]
+    struct BKCObject {
+        #[pyo3(get)]
+        id: u128,
+        #[pyo3(get)]
+        name: String,
+        #[pyo3(get)]
+        metadata: Option<Py<PyDict>>,
+        #[pyo3(get)]
+        array_data: Option<Py<PyAny>>,
+        #[pyo3(get)]
+        parent_id: Option<u128>,
+        #[pyo3(get)]
+        children: Vec<u128>,
+    }
+
+    // #[pymethods]
+    // impl BKCObject {
+    //     #[new]
+    //     fn new(
+    //         py: Python,
+    //         name: String,
+    //         parent_id: Option<u128>,
+    //         metadata: Option<Py<PyDict>>,
+    //         array_data: Option<SupportedNumpyArray>,
+    //     ) -> PyResult<Self> {
+    //         let obj_ids = create_objects(
+    //             py,
+    //             name.clone(),
+    //             parent_id,
+    //             Some(vec![Some(metadata.clone())]),
+    //             Some(vec![Some(array_data.clone())]),
+    //         )?;
+
+    //         Ok(BKCObject {
+    //             id: obj_ids[0].extract(py)?,
+    //             name,
+    //             metadata: metadata.map(|m| m.into()),
+    //             array_data: array_data.map(|a| a.into()),
+    //             parent_id,
+    //             children: obj_ids[1..]
+    //                 .iter()
+    //                 .map(|id| id.extract(py).unwrap())
+    //                 .collect(),
+    //         })
+    //     }
+
+    //     fn __repr__(&self) -> String {
+    //         format!("BKCObject(id={}, name={})", self.id, self.name)
+    //     }
+    // }
+
     // Module initialization - just register the init function
     #[pyfn(m)]
     #[pyo3(name = "init")]
@@ -30,6 +85,25 @@ fn rust_ext<'py>(m: &Bound<'py, PyModule>) -> PyResult<()> {
         pyctx::init_py(py)
     }
 
+    /// Creates one or more objects with the given parameters.
+    ///
+    /// # Arguments
+    ///
+    /// * `name` - A name for the new object.
+    /// * `parent_id` - An optional identifier for the parent object.
+    /// * `metadata` - Optional metadata as a list of dictionaries.
+    /// * `array_data` - Optional list of supported NumPy arrays.
+    ///
+    /// # Returns
+    ///
+    /// A vector of Python objects representing the created objects.
+    ///
+    /// # Examples
+    ///
+    /// ```python
+    /// import bkstore_client as bkc
+    /// objs = bkc.create_objects("example", parent_id=42)
+    /// ```
     #[pyfn(m)]
     #[pyo3(name = "create_objects")]
     #[pyo3(signature = (name, parent_id=None, metadata=None, array_data=None))]
@@ -39,9 +113,34 @@ fn rust_ext<'py>(m: &Bound<'py, PyModule>) -> PyResult<()> {
         parent_id: Option<u128>,
         metadata: Option<Vec<Option<Bound<'py, PyDict>>>>,
         array_data: Option<Vec<Option<SupportedNumpyArray<'py>>>>,
-    ) -> PyResult<Vec<PyObject>> {
+    ) -> PyResult<Vec<Py<PyInt>>> {
         pyctx::create_object_impl(py, name, parent_id, metadata, array_data)
     }
+
+    /// load an object and possibly its subobjects
+    /// by default, we do not load subobjects
+    /// but if load_subobjects is set to True, we load subobjects that are filtered by
+    /// subobj_meta_filter and subobj_array_data_filter
+    ///
+    /// Params:
+    /// *required_metadata* is a list of metadata keys, and the loaded major object will
+    /// contain only the subset of metadata specified by metadata_filter
+    /// *required_slice* is a list of PySlices, and the loaded major object will
+    /// contain only the subset of array data specified by array_data_filter
+    /// *load_subobjects* determines whether to load subobjects or not
+    /// *subobj_meta_filter and subobj_array_data_filter are used to filter the subobjects
+    /// if load_subobjects is set to True
+    // #[pyfn(m)]
+    // #[pyo3(name = "load_major_object")]
+    // #[pyo3(signature = (major_obj_id, required_metadata=None, required_slice=None, subobj_meta_filter=None, subobj_array_data_filter=None))]
+    // fn load_objects<'py>(
+    //     py: Python<'py>,
+    //     major_obj_id: u128,
+    //     metadata_filter: Option<Vec<Option<Bound<'py, PyDict>>>>,
+    //     array_data_filter: Option<Vec<Option<SupportedNumpyArray<'py>>>>,
+    // ) -> PyResult<Vec<PyObject>> {
+    //     pyctx::load_objects_impl(py, obj_ids, metadata_filter, array_data_filter)
+    // }
 
     ///////////////////////////////////////////////////////////////////////////
     //     Ok(())

@@ -1,8 +1,8 @@
 use commons::object::types::{MetadataValue, SupportedRustArrayD};
 use numpy::{PyArrayDyn, PyArrayMethods};
 use pyo3::{
-    types::{PyAnyMethods, PyDict, PyDictMethods},
-    Bound, FromPyObject, PyAny, PyErr, PyResult, Python,
+    types::{PyAnyMethods, PyDict, PyDictMethods, PyInt},
+    Bound, FromPyObject, IntoPy, IntoPyObjectExt, Py, PyAny, PyErr, PyResult, Python,
 };
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -194,4 +194,16 @@ pub fn convert_metadata<'py>(
             Ok(Some(res))
         }
     }
+}
+
+pub fn convert_vec_u128_to_py_long(py: Python, vec: Vec<u128>) -> PyResult<Vec<Py<PyInt>>> {
+    let rst = vec
+        .into_iter()
+        .map(|num| {
+            let obj = num.into_py(py);
+            let pylong = obj.downcast_bound::<PyInt>(py).unwrap();
+            pylong.clone().unbind()
+        })
+        .collect();
+    Ok(rst)
 }
