@@ -43,6 +43,22 @@ fn rust_ext<'py>(m: &Bound<'py, PyModule>) -> PyResult<()> {
         pyctx::create_object_impl(py, name, parent_id, metadata, array_data)
     }
 
+    ///////////////////////////////////////////////////////////////////////////
+    //     Ok(())
+    // }
+    //
+    // #[pymodule]
+    // #[pyo3(name = "bkstore_client_demo")]
+    // fn rust_demo_ext<'py>(m: &Bound<'py, PyModule>) -> PyResult<()> {
+    //     env_logger::init();
+    //     // Module initialization - just register the init function
+    //     #[pyfn(m)]
+    //     #[pyo3(name = "init")]
+    //     fn init_py(py: Python<'_>) -> PyResult<()> {
+    //         pyctx::init_py(py)
+    //     }
+    ///////////////////////////////////////////////////////////////////////////
+
     #[pyfn(m)]
     #[pyo3(name = "times_two")]
     fn times_two<'py>(

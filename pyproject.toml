@@ -10,8 +10,13 @@ version = "0.1.0"
 
 [tool.maturin]
 features = ["pyo3/extension-module"]
-module-name = "bkstore_client"
-python-source = "client/python"
-python-package = ["bkc_object"]
-include = [{ path = "client/python/**/*.py", format = ["sdist", "wheel"] }]
+# module-name = "bkstore_client"
+python-source = "client/python/bkstore_client"
+python-packages = ["bkc_object"]
+include = [
+    "bkstore_client/__init__.py",
+    "bkstore_client/bkc_object/__init__.py",
+    "bkstore_client/bkc_object/helpers.py",
+    "bkstore_client/bkc_object/bkcobject.py",
+]
 manifest-path = "client/Cargo.toml"
