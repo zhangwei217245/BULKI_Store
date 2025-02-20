@@ -1,14 +1,34 @@
+pub mod resphandler;
 use anyhow::{anyhow, Result};
 use commons::rpc::grpc::GrpcTX;
-use commons::rpc::{MessageType, RPCData, RPCMetadata, TxEndpoint};
+use commons::rpc::{RPCData, TxEndpoint};
+use lazy_static::lazy_static;
 use log::{debug, info};
 use mpi::environment::Universe;
 #[cfg(feature = "mpi")]
 use mpi::topology::SimpleCommunicator;
 #[cfg(feature = "mpi")]
 use mpi::traits::*;
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Arc;
-mod resphandler;
+
+lazy_static! {
+    static ref CLIENT_RANK: AtomicU32 = AtomicU32::new(0);
+    static ref CLIENT_COUNT: AtomicU32 = AtomicU32::new(1);
+    static ref SERVER_COUNT: AtomicU32 = AtomicU32::new(0);
+}
+
+pub fn get_client_rank() -> u32 {
+    CLIENT_RANK.load(Ordering::SeqCst)
+}
+#[allow(dead_code)]
+pub fn get_client_count() -> u32 {
+    CLIENT_COUNT.load(Ordering::SeqCst)
+}
+
+pub fn get_server_count() -> u32 {
+    SERVER_COUNT.load(Ordering::SeqCst)
+}
 
 pub struct ClientContext {
     #[cfg(feature = "mpi")]
@@ -21,7 +41,7 @@ pub struct ClientContext {
     size: usize,
     pub c2s_client: Option<GrpcTX>,
 }
-
+#[allow(dead_code)]
 #[derive(Debug)]
 pub struct BenchmarkStats {
     pub total_requests: usize,
@@ -62,12 +82,16 @@ impl ClientContext {
                 self.rank = 0;
                 self.size = 1;
             }
+            CLIENT_RANK.store(self.rank as u32, Ordering::SeqCst);
+            CLIENT_COUNT.store(self.size as u32, Ordering::SeqCst);
         }
         #[cfg(not(feature = "mpi"))]
         {
             self.world = Some(());
             self.rank = 0;
             self.size = 1;
+            CLIENT_RANK.store(self.rank as u32, Ordering::SeqCst);
+            CLIENT_COUNT.store(self.size as u32, Ordering::SeqCst);
         }
         Ok(())
     }
@@ -79,19 +103,24 @@ impl ClientContext {
             info!("Initializing client-server endpoint");
             c2s_client.initialize(resphandler::register_handlers)?;
             info!("Client-server endpoint initialized");
-            c2s_client.discover_servers()?;
-            info!("Servers discovered");
+            let server_count = c2s_client.discover_servers()?;
+            SERVER_COUNT.store(server_count as u32, Ordering::SeqCst);
+            info!(
+                "{:?} Servers discovered",
+                SERVER_COUNT.load(Ordering::SeqCst)
+            );
             self.c2s_client = Some(c2s_client);
         }
         Ok(())
     }
-
+    #[allow(dead_code)]
     pub fn initialize_blocking(&mut self, universe: Option<Arc<Universe>>) -> Result<()> {
         tokio::runtime::Runtime::new()
             .unwrap()
             .block_on(self.initialize(universe))
     }
 
+    #[allow(dead_code)]
     pub fn get_server_count(&self) -> usize {
         self.c2s_client
             .as_ref()
@@ -99,11 +128,11 @@ impl ClientContext {
             .map(|addresses| addresses.len())
             .unwrap_or(0)
     }
-
+    #[allow(dead_code)]
     pub fn get_rank(&self) -> usize {
         self.rank
     }
-
+    #[allow(dead_code)]
     pub fn get_size(&self) -> usize {
         self.size
     }
@@ -121,7 +150,7 @@ impl ClientContext {
             Err(anyhow!("C2S client not initialized"))
         }
     }
-
+    #[allow(dead_code)]
     pub async fn benchmark_rpc(
         &self,
         num_requests: usize,
@@ -165,7 +194,7 @@ impl ClientContext {
                 .send_message(
                     server_rank,
                     "health::HealthCheck::check",
-                    RPCData::new(data.clone()),
+                    RPCData::new(Some(data.clone())),
                 )
                 .await
             {
@@ -203,6 +232,7 @@ impl ClientContext {
 }
 
 impl BenchmarkStats {
+    #[allow(dead_code)]
     pub fn print_stats(&self) {
         let tps = if self.total_duration_ms > 0 {
             (self.successful_requests as f64 * 1000.0) / self.total_duration_ms as f64

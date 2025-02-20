@@ -11,7 +11,10 @@ pub fn register_handlers(rx: &mut GrpcRX) -> Result<()> {
             .register("bench::times_three", crate::bench::times_three)
             .register("datastore::times_two", crate::datastore::times_two)
             .register("datastore::times_three", crate::datastore::times_three)
-            .register("datastore::create_object", crate::datastore::create_object)
+            .register(
+                "datastore::create_objects",
+                crate::datastore::create_objects,
+            )
             .register("datastore::get_object", crate::datastore::get_object)
             .register(
                 "datastore::update_metadata",

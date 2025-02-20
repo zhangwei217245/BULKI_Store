@@ -2,40 +2,45 @@ mod bk_ndarr;
 mod cltctx;
 mod datastore;
 mod pyctx;
-use crate::bk_ndarr::*;
-use std::cell::RefCell;
-use std::ops::Add;
-use std::sync::Arc;
 
-use cltctx::ClientContext;
-use commons::region::SerializableNDArray;
-use commons::rpc::RPCData;
-use log::{debug, error, warn};
-use ndarray::{Axis, SliceInfoElem};
+use env_logger;
 use numpy::{
     datetime::{units, Timedelta},
-    ndarray::{Array1, ArrayD, ArrayView1, ArrayViewD, ArrayViewMutD, Shape, Zip},
-    Complex64, Element, IntoPyArray, PyArray, PyArray1, PyArrayDescr, PyArrayDyn, PyArrayMethods,
-    PyReadonlyArray1, PyReadonlyArrayDyn, PyReadwriteArray1, PyReadwriteArrayDyn,
+    ndarray::Zip,
+    Complex64, IntoPyArray, PyArray1, PyArrayDescr, PyArrayDyn, PyArrayMethods, PyReadonlyArray1,
+    PyReadonlyArrayDyn, PyReadwriteArray1, PyReadwriteArrayDyn,
 };
-use pyctx::SupportedArray;
-use pyo3::{exceptions::PyIndexError, types::PySlice, Py};
+use pyctx::converter::SupportedNumpyArray;
+use pyo3::types::PySlice;
 use pyo3::{
-    exceptions::{PyTypeError, PyValueError},
+    exceptions::PyValueError,
     pymodule,
     types::{PyAnyMethods, PyDict, PyDictMethods, PyModule},
-    Bound, FromPyObject, PyAny, PyObject, PyResult, Python,
+    Bound, PyAny, PyObject, PyResult, Python,
 };
-use pyo3::{IntoPy, IntoPyObject, IntoPyObjectExt, PyErr};
 
 #[pymodule]
 #[pyo3(name = "bkstore_client")]
 fn rust_ext<'py>(m: &Bound<'py, PyModule>) -> PyResult<()> {
+    env_logger::init();
     // Module initialization - just register the init function
     #[pyfn(m)]
     #[pyo3(name = "init")]
     fn init_py(py: Python<'_>) -> PyResult<()> {
         pyctx::init_py(py)
+    }
+
+    #[pyfn(m)]
+    #[pyo3(name = "create_objects")]
+    #[pyo3(signature = (name, parent_id=None, metadata=None, array_data=None))]
+    fn create_objects<'py>(
+        py: Python<'py>,
+        name: String,
+        parent_id: Option<u128>,
+        metadata: Option<Bound<'py, PyDict>>,
+        array_data: Option<Vec<SupportedNumpyArray<'py>>>,
+    ) -> PyResult<PyObject> {
+        pyctx::create_object_impl(py, name, parent_id, metadata, array_data)
     }
 
     #[pyfn(m)]
@@ -74,98 +79,118 @@ fn rust_ext<'py>(m: &Bound<'py, PyModule>) -> PyResult<()> {
     #[pyfn(m)]
     #[pyo3(name = "array_slicing")]
     fn array_slicing_py<'py>(
-        x: SupportedArray<'py>,
+        x: SupportedNumpyArray<'py>,
         indices: Vec<Bound<'py, PySlice>>,
     ) -> PyResult<PyObject> {
         // Convert Python objects to IndexType
         match x {
-            SupportedArray::I8(x) => Ok(pyctx::array_slicing(x.readonly().as_array(), indices)?
-                .into_pyarray(x.py())
-                .into_any()
-                .into()),
-            SupportedArray::I16(x) => Ok(pyctx::array_slicing(x.readonly().as_array(), indices)?
-                .into_pyarray(x.py())
-                .into_any()
-                .into()),
-            SupportedArray::I32(x) => Ok(pyctx::array_slicing(x.readonly().as_array(), indices)?
-                .into_pyarray(x.py())
-                .into_any()
-                .into()),
-            SupportedArray::I64(x) => Ok(pyctx::array_slicing(x.readonly().as_array(), indices)?
-                .into_pyarray(x.py())
-                .into_any()
-                .into()),
-            SupportedArray::U8(x) => Ok(pyctx::array_slicing(x.readonly().as_array(), indices)?
-                .into_pyarray(x.py())
-                .into_any()
-                .into()),
-            SupportedArray::U16(x) => Ok(pyctx::array_slicing(x.readonly().as_array(), indices)?
-                .into_pyarray(x.py())
-                .into_any()
-                .into()),
-            SupportedArray::U32(x) => Ok(pyctx::array_slicing(x.readonly().as_array(), indices)?
-                .into_pyarray(x.py())
-                .into_any()
-                .into()),
-            SupportedArray::U64(x) => Ok(pyctx::array_slicing(x.readonly().as_array(), indices)?
-                .into_pyarray(x.py())
-                .into_any()
-                .into()),
-            SupportedArray::F32(x) => Ok(pyctx::array_slicing(x.readonly().as_array(), indices)?
-                .into_pyarray(x.py())
-                .into_any()
-                .into()),
-            SupportedArray::F64(x) => Ok(pyctx::array_slicing(x.readonly().as_array(), indices)?
-                .into_pyarray(x.py())
-                .into_any()
-                .into()),
+            SupportedNumpyArray::I8(x) => {
+                Ok(pyctx::array_slicing(x.readonly().as_array(), indices)?
+                    .into_pyarray(x.py())
+                    .into_any()
+                    .into())
+            }
+            SupportedNumpyArray::I16(x) => {
+                Ok(pyctx::array_slicing(x.readonly().as_array(), indices)?
+                    .into_pyarray(x.py())
+                    .into_any()
+                    .into())
+            }
+            SupportedNumpyArray::I32(x) => {
+                Ok(pyctx::array_slicing(x.readonly().as_array(), indices)?
+                    .into_pyarray(x.py())
+                    .into_any()
+                    .into())
+            }
+            SupportedNumpyArray::I64(x) => {
+                Ok(pyctx::array_slicing(x.readonly().as_array(), indices)?
+                    .into_pyarray(x.py())
+                    .into_any()
+                    .into())
+            }
+            SupportedNumpyArray::U8(x) => {
+                Ok(pyctx::array_slicing(x.readonly().as_array(), indices)?
+                    .into_pyarray(x.py())
+                    .into_any()
+                    .into())
+            }
+            SupportedNumpyArray::U16(x) => {
+                Ok(pyctx::array_slicing(x.readonly().as_array(), indices)?
+                    .into_pyarray(x.py())
+                    .into_any()
+                    .into())
+            }
+            SupportedNumpyArray::U32(x) => {
+                Ok(pyctx::array_slicing(x.readonly().as_array(), indices)?
+                    .into_pyarray(x.py())
+                    .into_any()
+                    .into())
+            }
+            SupportedNumpyArray::U64(x) => {
+                Ok(pyctx::array_slicing(x.readonly().as_array(), indices)?
+                    .into_pyarray(x.py())
+                    .into_any()
+                    .into())
+            }
+            SupportedNumpyArray::F32(x) => {
+                Ok(pyctx::array_slicing(x.readonly().as_array(), indices)?
+                    .into_pyarray(x.py())
+                    .into_any()
+                    .into())
+            }
+            SupportedNumpyArray::F64(x) => {
+                Ok(pyctx::array_slicing(x.readonly().as_array(), indices)?
+                    .into_pyarray(x.py())
+                    .into_any()
+                    .into())
+            }
         }
     }
 
     // wrapper of `head`
     #[pyfn(m)]
     #[pyo3(name = "head")]
-    fn head_py<'py>(py: Python<'py>, x: SupportedArray<'py>) -> PyResult<PyObject> {
+    fn head_py<'py>(py: Python<'py>, x: SupportedNumpyArray<'py>) -> PyResult<PyObject> {
         println!("head_py started");
 
         match x {
-            SupportedArray::I8(x) => Ok(pyctx::head(py, x.readonly().as_array())
+            SupportedNumpyArray::I8(x) => Ok(pyctx::head(py, x.readonly().as_array())
                 .into_pyarray(py)
                 .into_any()
                 .into()),
-            SupportedArray::I16(x) => Ok(pyctx::head(py, x.readonly().as_array())
+            SupportedNumpyArray::I16(x) => Ok(pyctx::head(py, x.readonly().as_array())
                 .into_pyarray(py)
                 .into_any()
                 .into()),
-            SupportedArray::I32(x) => Ok(pyctx::head(py, x.readonly().as_array())
+            SupportedNumpyArray::I32(x) => Ok(pyctx::head(py, x.readonly().as_array())
                 .into_pyarray(py)
                 .into_any()
                 .into()),
-            SupportedArray::I64(x) => Ok(pyctx::head(py, x.readonly().as_array())
+            SupportedNumpyArray::I64(x) => Ok(pyctx::head(py, x.readonly().as_array())
                 .into_pyarray(py)
                 .into_any()
                 .into()),
-            SupportedArray::U8(x) => Ok(pyctx::head(py, x.readonly().as_array())
+            SupportedNumpyArray::U8(x) => Ok(pyctx::head(py, x.readonly().as_array())
                 .into_pyarray(py)
                 .into_any()
                 .into()),
-            SupportedArray::U16(x) => Ok(pyctx::head(py, x.readonly().as_array())
+            SupportedNumpyArray::U16(x) => Ok(pyctx::head(py, x.readonly().as_array())
                 .into_pyarray(py)
                 .into_any()
                 .into()),
-            SupportedArray::U32(x) => Ok(pyctx::head(py, x.readonly().as_array())
+            SupportedNumpyArray::U32(x) => Ok(pyctx::head(py, x.readonly().as_array())
                 .into_pyarray(py)
                 .into_any()
                 .into()),
-            SupportedArray::U64(x) => Ok(pyctx::head(py, x.readonly().as_array())
+            SupportedNumpyArray::U64(x) => Ok(pyctx::head(py, x.readonly().as_array())
                 .into_pyarray(py)
                 .into_any()
                 .into()),
-            SupportedArray::F32(x) => Ok(pyctx::head(py, x.readonly().as_array())
+            SupportedNumpyArray::F32(x) => Ok(pyctx::head(py, x.readonly().as_array())
                 .into_pyarray(py)
                 .into_any()
                 .into()),
-            SupportedArray::F64(x) => Ok(pyctx::head(py, x.readonly().as_array())
+            SupportedNumpyArray::F64(x) => Ok(pyctx::head(py, x.readonly().as_array())
                 .into_pyarray(py)
                 .into_any()
                 .into()),
@@ -233,8 +258,8 @@ fn rust_ext<'py>(m: &Bound<'py, PyModule>) -> PyResult<()> {
     #[pyfn(m)]
     #[pyo3(name = "polymorphic_add")]
     fn polymorphic_add_py<'py>(
-        x: SupportedArray<'py>,
-        y: SupportedArray<'py>,
+        x: SupportedNumpyArray<'py>,
+        y: SupportedNumpyArray<'py>,
     ) -> PyResult<Bound<'py, PyAny>> {
         // Example rule: if either array is F64, convert both to F64.
         // Otherwise, they must be the same type.
@@ -250,12 +275,11 @@ fn rust_ext<'py>(m: &Bound<'py, PyModule>) -> PyResult<()> {
         } else {
             // Otherwise, they should be the same type.
             match (x, y) {
-                (SupportedArray::I64(x), SupportedArray::I64(y)) => Ok(pyctx::generic_add(
-                    x.readonly().as_array(),
-                    y.readonly().as_array(),
-                )
-                .into_pyarray(x.py())
-                .into_any()),
+                (SupportedNumpyArray::I64(x), SupportedNumpyArray::I64(y)) => Ok(
+                    pyctx::generic_add(x.readonly().as_array(), y.readonly().as_array())
+                        .into_pyarray(x.py())
+                        .into_any(),
+                ),
                 // Add more cases for other same-type operations.
                 _ => Err(PyValueError::new_err(
                     "Unsupported combination of array types",

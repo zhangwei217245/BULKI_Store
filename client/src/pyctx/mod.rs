@@ -1,102 +1,27 @@
-use std::{cell::RefCell, ops::Add, sync::Arc};
-
-use log::debug;
-use serde::{Deserialize, Serialize};
-
-use crate::cltctx::ClientContext;
+pub mod converter;
+use crate::cltctx::{get_client_rank, get_server_count, ClientContext};
+use anyhow::Result;
+use commons::object::{objid::GlobalObjectIdExt, params::CreateObjectParams};
 use commons::region::SerializableNDArray;
 use commons::rpc::RPCData;
+use converter::{convert_metadata, SupportedNumpyArray};
+use log::debug;
 use numpy::{
-    datetime::{units, Timedelta},
-    ndarray::{
-        Array1, ArrayD, ArrayView1, ArrayViewD, ArrayViewMutD, Axis, Shape, SliceInfoElem, Zip,
-    },
-    Complex64, Element, IntoPyArray, PyArray, PyArray1, PyArrayDescr, PyArrayDyn, PyArrayMethods,
-    PyReadonlyArray1, PyReadonlyArrayDyn, PyReadwriteArray1, PyReadwriteArrayDyn,
+    ndarray::{ArrayD, ArrayViewD, ArrayViewMutD, Axis, SliceInfoElem},
+    Complex64, Element, PyArray, PyArray1, PyReadonlyArrayDyn,
 };
-use pyo3::{exceptions::PyIndexError, types::PySlice, Py};
 use pyo3::{
-    exceptions::{PyTypeError, PyValueError},
-    pymodule,
-    types::{PyAnyMethods, PyDict, PyDictMethods, PyModule},
-    Bound, FromPyObject, PyAny, PyObject, PyResult, Python,
+    exceptions::PyValueError,
+    types::{PyAnyMethods, PyDict, PySlice},
+    Bound, PyErr, PyObject, PyResult, Python,
 };
-use pyo3::{IntoPy, IntoPyObject, IntoPyObjectExt, PyErr};
+use std::{cell::RefCell, ops::Add, sync::Arc};
 
 thread_local! {
     static RUNTIME: RefCell<Option<tokio::runtime::Runtime>> = RefCell::new(None);
     static CONTEXT: RefCell<Option<ClientContext>> = RefCell::new(None);
     // request counter:
-
-}
-
-#[derive(FromPyObject)]
-pub enum SupportedArray<'py> {
-    I8(Bound<'py, PyArrayDyn<i8>>),
-    I16(Bound<'py, PyArrayDyn<i16>>),
-    I32(Bound<'py, PyArrayDyn<i32>>),
-    I64(Bound<'py, PyArrayDyn<i64>>),
-    U8(Bound<'py, PyArrayDyn<u8>>),
-    U16(Bound<'py, PyArrayDyn<u16>>),
-    U32(Bound<'py, PyArrayDyn<u32>>),
-    U64(Bound<'py, PyArrayDyn<u64>>),
-    F32(Bound<'py, PyArrayDyn<f32>>),
-    F64(Bound<'py, PyArrayDyn<f64>>),
-}
-
-// Example helper implementations.
-impl<'py> SupportedArray<'py> {
-    pub fn is_f64(&self) -> bool {
-        matches!(self, SupportedArray::F64(_))
-    }
-
-    /// Attempt to cast the array to F64.
-    /// For arrays already of type F64, it returns self.
-    /// For certain types (like I64), it performs a cast.
-    pub fn cast_to_f64(self) -> PyResult<Bound<'py, PyArrayDyn<f64>>> {
-        match self {
-            SupportedArray::F64(arr) => Ok(arr),
-            SupportedArray::F32(arr) => {
-                // Assume Bound has a method `cast` that returns a new Bound of the target type.
-                let casted = arr.cast::<f64>(false)?;
-                Ok(casted)
-            }
-            SupportedArray::I64(arr) => {
-                // Assume Bound has a method `cast` that returns a new Bound of the target type.
-                let casted = arr.cast::<f64>(false)?;
-                Ok(casted)
-            }
-            // You can add additional conversions here:
-            SupportedArray::I32(arr) => {
-                let casted = arr.cast::<f64>(false)?;
-                Ok(casted)
-            }
-            SupportedArray::I16(arr) => {
-                let casted = arr.cast::<f64>(false)?;
-                Ok(casted)
-            }
-            SupportedArray::I8(arr) => {
-                let casted = arr.cast::<f64>(false)?;
-                Ok(casted)
-            }
-            SupportedArray::U64(arr) => {
-                let casted = arr.cast::<f64>(false)?;
-                Ok(casted)
-            }
-            SupportedArray::U32(arr) => {
-                let casted = arr.cast::<f64>(false)?;
-                Ok(casted)
-            }
-            SupportedArray::U16(arr) => {
-                let casted = arr.cast::<f64>(false)?;
-                Ok(casted)
-            }
-            SupportedArray::U8(arr) => {
-                let casted = arr.cast::<f64>(false)?;
-                Ok(casted)
-            }
-        }
-    }
+    static REQUEST_COUNTER: RefCell<u32> = RefCell::new(0);
 }
 
 pub fn init_py(py: Python<'_>) -> PyResult<()> {
@@ -173,6 +98,126 @@ pub fn init_py(py: Python<'_>) -> PyResult<()> {
     Ok(())
 }
 
+fn rpc_call(srv_id: u32, method_name: &str, data: Option<Vec<u8>>) -> Result<Vec<u8>> {
+    debug!(
+        "[RPC_CALL][TX Rank {}] Sending Data of length {} to server {}",
+        CONTEXT.with(|ctx| ctx.borrow().as_ref().unwrap().get_rank()),
+        data.as_ref().map(|d| d.len()).unwrap_or(0),
+        srv_id
+    );
+    let response = CONTEXT
+        .with(|ctx| {
+            let ctx = ctx.borrow();
+            let ctx_ref = ctx.as_ref().expect("Context not initialized");
+            RUNTIME.with(|rt_cell| {
+                let rt = rt_cell.borrow();
+                let rt_ref = rt.as_ref().expect("Runtime not initialized");
+                rt_ref.block_on(ctx_ref.send_message(
+                    srv_id as usize,
+                    method_name,
+                    RPCData {
+                        metadata: None,
+                        data,
+                    },
+                ))
+            })
+        })
+        .map_err(|e| PyErr::new::<PyValueError, _>(format!("RPC error: {}", e)))?;
+    debug!(
+        "[RPC_CALL][TX Rank {}] Received response from server {}",
+        CONTEXT.with(|ctx| ctx.borrow().as_ref().unwrap().get_rank()),
+        srv_id
+    );
+    // Increment request counter
+    REQUEST_COUNTER.with(|counter| {
+        let mut counter = counter.borrow_mut();
+        *counter += 1;
+    });
+    // Get binary data from response (assuming response.data contains the binary payload)
+    Ok(response.data.unwrap())
+}
+
+pub fn create_object_impl<'py>(
+    py: Python<'py>,
+    name: String,
+    parent_id: Option<u128>,
+    metadata: Option<Bound<'py, PyDict>>,
+    array_data: Option<Vec<SupportedNumpyArray<'py>>>,
+) -> PyResult<PyObject> {
+    let metadata_map = convert_metadata(metadata)?;
+    // let mut create_obj_params: Option<Vec<CreateObjectParams>> = None;
+    // the way we acquire the object id here is to guarantee the colocation of the sub-objects.
+    // if you need to fully distribute all the objects, you should leave parent_id as None
+    let main_obj_id = commons::object::objid::GlobalObjectId::with_vnode_id(
+        &name,
+        parent_id.map(|id| id.vnode_id()),
+    )
+    .to_u128();
+    let create_obj_params = match array_data {
+        // no array data, this must be a container object
+        None => Some(vec![CreateObjectParams {
+            obj_id: main_obj_id,
+            name,
+            parent_id,
+            initial_metadata: metadata_map,
+            array_data: None,
+            client_rank: get_client_rank(),
+        }]),
+        Some(array_vec) => {
+            let mut params = Vec::with_capacity(array_vec.len());
+            let mut obj_id = main_obj_id;
+            // with the above, the object id is guaranteed to be colocated with the parent object on the same virtual node.
+            // and even for the sub-objects below, since we take the vnode_id from master object, they will be colocated as well.
+            // this will ensure that : regardless of the existence of parent_id, the sub-objects and major object will be colocated.
+            let vec_len = array_vec.len();
+            for (i, array) in array_vec.into_iter().enumerate() {
+                params.push(CreateObjectParams {
+                    obj_id,
+                    name: format!("{}-{}", name, i),
+                    parent_id: Some(parent_id.unwrap_or_else(|| main_obj_id)),
+                    initial_metadata: metadata_map.clone(),
+                    array_data: Some(array.into_array_type()),
+                    client_rank: get_client_rank(),
+                });
+                if i == vec_len - 1 {
+                    break;
+                }
+                obj_id = commons::object::objid::GlobalObjectId::with_vnode_id(
+                    &name,
+                    Some(main_obj_id.vnode_id()),
+                )
+                .to_u128();
+            }
+            Some(params)
+        }
+    };
+    // Serialize the parameters using MessagePack
+    let serialized_params = rmp_serde::to_vec(&create_obj_params)
+        .map_err(|e| PyErr::new::<PyValueError, _>(format!("Failed to serialize params: {}", e)))?;
+    debug!(
+        "create_objects: params data length: {:?}",
+        serialized_params.len()
+    );
+    // Get binary data from response (assuming response.data contains the binary payload)
+    let response_data = rpc_call(
+        main_obj_id.vnode_id() % get_server_count(),
+        "datastore::create_objects",
+        Some(serialized_params),
+    );
+
+    debug!(
+        "create_objects: response data length: {:?}",
+        response_data.as_ref().unwrap().len()
+    );
+
+    let result: Vec<u128> = rmp_serde::from_slice(&response_data.unwrap())
+        .map_err(|e| PyErr::new::<PyValueError, _>(format!("Deserialization error: {}", e)))?;
+    debug!("create_objects: result vector length: {:?}", result.len());
+    let result_bytes: Vec<u8> = result.iter().flat_map(|x| x.to_le_bytes()).collect();
+    let py_array = PyArray1::from_vec(py, result_bytes);
+    Ok(py_array.into_any().into())
+}
+
 pub fn times_two_impl<'py, T>(py: Python<'py>, x: PyReadonlyArrayDyn<'py, T>) -> PyResult<PyObject>
 where
     T: Copy + serde::Serialize + for<'de> serde::Deserialize<'de> + Element + std::fmt::Debug,
@@ -184,36 +229,20 @@ where
     let serialized = SerializableNDArray::serialize(x_array)
         .map_err(|e| PyErr::new::<PyValueError, _>(format!("Serialization error: {}", e)))?;
 
-    // Send message to server 0 and get response
-    let response = CONTEXT
-        .with(|ctx| {
-            let ctx = ctx.borrow();
-            let ctx_ref = ctx.as_ref().expect("Context not initialized");
-            RUNTIME.with(|rt_cell| {
-                let rt = rt_cell.borrow();
-                let rt_ref = rt.as_ref().expect("Runtime not initialized");
-                rt_ref.block_on(ctx_ref.send_message(
-                    0,
-                    "datastore::times_two",
-                    RPCData {
-                        metadata: None,
-                        data: serialized,
-                    },
-                ))
-            })
-        })
-        .map_err(|e| PyErr::new::<PyValueError, _>(format!("RPC error: {}", e)))?;
+    let srv_id = REQUEST_COUNTER.with(|counter| (*counter.borrow() as u32) % get_server_count());
 
-    // Get binary data from response (assuming response.data contains the binary payload)
-    let response_data = response.data;
+    let response_data = rpc_call(srv_id, "datastore::times_two", Some(serialized));
 
-    // Deserialize back into a rust ndarray
-    let result: ArrayD<T> = SerializableNDArray::deserialize(&response_data)
-        .map_err(|e| PyErr::new::<PyValueError, _>(format!("Deserialization error: {}", e)))?;
-
-    // Convert the resulting ndarray back to a NumPy array
-    let py_array = PyArray::from_array(py, &result);
-    Ok(py_array.into_py(py))
+    match response_data {
+        Ok(data) => {
+            let result: ArrayD<T> = SerializableNDArray::deserialize(&data).map_err(|e| {
+                PyErr::new::<PyValueError, _>(format!("Deserialization error: {}", e))
+            })?;
+            let py_array = PyArray::from_array(py, &result);
+            Ok(py_array.into_any().into())
+        }
+        Err(e) => Err(PyErr::new::<PyValueError, _>(format!("RPC error: {}", e))),
+    }
 }
 
 // example using generic T
