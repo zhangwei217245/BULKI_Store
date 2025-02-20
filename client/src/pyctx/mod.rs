@@ -7,13 +7,15 @@ use converter::SupportedNumpyArray;
 use log::debug;
 use numpy::{
     ndarray::{ArrayD, ArrayViewD, ArrayViewMutD, Axis, SliceInfoElem},
-    Complex64, Element, PyArray, PyArray1, PyReadonlyArrayDyn,
+    Complex64, Element, PyArray, PyReadonlyArrayDyn,
 };
+use pyo3::types::PyInt;
 use pyo3::{
     exceptions::PyValueError,
     types::{PyAnyMethods, PyDict, PySlice},
     Bound, PyErr, PyObject, PyResult, Python,
 };
+use pyo3::{IntoPyObjectExt, Py};
 use std::{cell::RefCell, ops::Add, sync::Arc};
 
 thread_local! {
@@ -142,46 +144,42 @@ pub fn create_object_impl<'py>(
     parent_id: Option<u128>,
     metadata: Option<Vec<Option<Bound<'py, PyDict>>>>,
     array_data: Option<Vec<Option<SupportedNumpyArray<'py>>>>,
-) -> PyResult<Vec<PyObject>> {
+) -> PyResult<Vec<Py<PyInt>>> {
     let create_obj_params =
         crate::datastore::create_objects_req_proc(name, parent_id, metadata, array_data);
-    if create_obj_params.is_none() {
-        return Ok(vec![py.None().into_any().into()]);
+    match create_obj_params {
+        None => Err(PyErr::new::<PyValueError, _>(
+            "Failed to create object parameters",
+        )),
+        Some(params) => {
+            let main_obj_id = params[0].obj_id;
+            // Serialize the parameters using MessagePack
+            let serialized_params = rmp_serde::to_vec(&params).map_err(|e| {
+                PyErr::new::<PyValueError, _>(format!("Failed to serialize params: {}", e))
+            })?;
+            debug!(
+                "create_objects: params data length: {:?}",
+                serialized_params.len()
+            );
+            // Get binary data from response (assuming response.data contains the binary payload)
+            let response_data = rpc_call(
+                main_obj_id.vnode_id() % get_server_count(),
+                "datastore::create_objects",
+                Some(serialized_params),
+            );
+            debug!(
+                "create_objects: response data length: {:?}",
+                response_data.as_ref().unwrap().len()
+            );
+            let result: Vec<u128> =
+                rmp_serde::from_slice(&response_data.unwrap()).map_err(|e| {
+                    PyErr::new::<PyValueError, _>(format!("Deserialization error: {}", e))
+                })?;
+            debug!("create_objects: result vector length: {:?}", result.len());
+            debug!("create_objects: result vector: {:?}", result);
+            converter::convert_vec_u128_to_py_long(py, result)
+        }
     }
-
-    let main_obj_id = create_obj_params.as_ref().unwrap()[0].obj_id;
-    // Serialize the parameters using MessagePack
-    let serialized_params = rmp_serde::to_vec(&create_obj_params)
-        .map_err(|e| PyErr::new::<PyValueError, _>(format!("Failed to serialize params: {}", e)))?;
-    debug!(
-        "create_objects: params data length: {:?}",
-        serialized_params.len()
-    );
-    // Get binary data from response (assuming response.data contains the binary payload)
-    let response_data = rpc_call(
-        main_obj_id.vnode_id() % get_server_count(),
-        "datastore::create_objects",
-        Some(serialized_params),
-    );
-
-    debug!(
-        "create_objects: response data length: {:?}",
-        response_data.as_ref().unwrap().len()
-    );
-
-    let result: Vec<u128> = rmp_serde::from_slice(&response_data.unwrap())
-        .map_err(|e| PyErr::new::<PyValueError, _>(format!("Deserialization error: {}", e)))?;
-    debug!("create_objects: result vector length: {:?}", result.len());
-    debug!("create_objects: result vector: {:?}", result);
-    let result_ids = result
-        .iter()
-        .map(|x| {
-            PyArray1::from_slice(py, x.to_le_bytes().as_slice())
-                .into_any()
-                .into()
-        })
-        .collect();
-    Ok(result_ids)
 }
 
 pub fn times_two_impl<'py, T>(py: Python<'py>, x: PyReadonlyArrayDyn<'py, T>) -> PyResult<PyObject>

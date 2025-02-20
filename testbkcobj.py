@@ -1,13 +1,6 @@
 import bkstore_client as bkc
 import numpy as np
 
-
-def to_u128_arr(bytes_arr):
-    return [
-        int.from_bytes(item, byteorder="little", signed=False) for item in bytes_arr
-    ]
-
-
 if __name__ == "__main__":
     bkc.init()
     dim_size = 100
@@ -22,4 +15,4 @@ if __name__ == "__main__":
         metadata=[{"type": "container"}, {"type": "regular"}],
         array_data=[arr6, arr4],
     )
-    print("{}".format(to_u128_arr(result)))
+    print(result)
