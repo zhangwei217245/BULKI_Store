@@ -213,6 +213,7 @@ pub fn create_object_impl<'py>(
     let result: Vec<u128> = rmp_serde::from_slice(&response_data.unwrap())
         .map_err(|e| PyErr::new::<PyValueError, _>(format!("Deserialization error: {}", e)))?;
     debug!("create_objects: result vector length: {:?}", result.len());
+    debug!("create_objects: result vector: {:?}", result);
     let result_bytes: Vec<u8> = result.iter().flat_map(|x| x.to_le_bytes()).collect();
     let py_array = PyArray1::from_vec(py, result_bytes);
     Ok(py_array.into_any().into())

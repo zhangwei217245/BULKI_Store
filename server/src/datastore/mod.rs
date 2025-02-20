@@ -71,6 +71,8 @@ pub fn create_objects(data: &mut RPCData) -> HandlerResult {
         }
     }
 
+    debug!("create_objects: obj_ids length: {:?}", obj_ids.len());
+    debug!("create_objects: obj_ids: {:?}", obj_ids);
     // Return the id of the object to the client
     data.data = Some(
         rmp_serde::to_vec(&obj_ids)

@@ -10,5 +10,7 @@ if __name__ == "__main__":
     arr4 = bkc.polymorphic_add(rd1, rd2)
     arr5 = bkc.array_slicing(arr4, [slice(0, 1), slice(0, 1), slice(0, 10, -2)])
     arr6 = bkc.times_two(arr5, arr5.dtype)
-    bkc.create_objects("abc", metadata={"type": "container"}, array_data=[arr6, arr4])
-    print("done")
+    result = bkc.create_objects(
+        "abc", metadata={"type": "container"}, array_data=[arr6, arr4]
+    )
+    print("{}".format(result))
