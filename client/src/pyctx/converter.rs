@@ -168,21 +168,30 @@ pub fn convert_pyany_to_metadata_value<'py>(
 
 /// Convert an optional PyDict wrapped in a Bound into an Option<HashMap<String, MetadataValue>>
 pub fn convert_metadata<'py>(
-    metadata: Option<Bound<'py, PyDict>>,
-) -> PyResult<Option<HashMap<String, MetadataValue>>> {
+    metadata: Option<Vec<Option<Bound<'py, PyDict>>>>,
+) -> PyResult<Option<Vec<Option<HashMap<String, MetadataValue>>>>> {
     match metadata {
         None => Ok(None),
         Some(bound) => {
-            let map = RefCell::new(HashMap::new());
-            bound.locked_for_each(
-                |key: Bound<'py, PyAny>, value: Bound<'py, PyAny>| -> PyResult<()> {
-                    let key: String = key.extract()?;
-                    let value = convert_pyany_to_metadata_value(bound.py(), value)?;
-                    map.borrow_mut().insert(key, value);
-                    Ok(())
-                },
-            )?;
-            Ok(Some(map.into_inner()))
+            let mut res = Vec::new();
+            for item in bound {
+                match item {
+                    None => res.push(None),
+                    Some(dict) => {
+                        let map = RefCell::new(HashMap::new());
+                        dict.locked_for_each(|key, value| {
+                            let mut map_ref = map.borrow_mut();
+                            map_ref.insert(
+                                key.to_string(),
+                                convert_pyany_to_metadata_value(dict.py(), value)?,
+                            );
+                            Ok(())
+                        })?;
+                        res.push(Some(map.into_inner()));
+                    }
+                }
+            }
+            Ok(Some(res))
         }
     }
 }
