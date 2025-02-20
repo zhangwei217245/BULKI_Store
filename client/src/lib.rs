@@ -37,8 +37,8 @@ fn rust_ext<'py>(m: &Bound<'py, PyModule>) -> PyResult<()> {
         py: Python<'py>,
         name: String,
         parent_id: Option<u128>,
-        metadata: Option<Bound<'py, PyDict>>,
-        array_data: Option<Vec<SupportedNumpyArray<'py>>>,
+        metadata: Option<Vec<Option<Bound<'py, PyDict>>>>,
+        array_data: Option<Vec<Option<SupportedNumpyArray<'py>>>>,
     ) -> PyResult<PyObject> {
         pyctx::create_object_impl(py, name, parent_id, metadata, array_data)
     }

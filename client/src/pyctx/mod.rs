@@ -1,10 +1,9 @@
 pub mod converter;
-use crate::cltctx::{get_client_rank, get_server_count, ClientContext};
+use crate::cltctx::{get_server_count, ClientContext};
 use anyhow::Result;
-use commons::object::{objid::GlobalObjectIdExt, params::CreateObjectParams};
-use commons::region::SerializableNDArray;
 use commons::rpc::RPCData;
-use converter::{convert_metadata, SupportedNumpyArray};
+use commons::{object::objid::GlobalObjectIdExt, region::SerializableNDArray};
+use converter::SupportedNumpyArray;
 use log::debug;
 use numpy::{
     ndarray::{ArrayD, ArrayViewD, ArrayViewMutD, Axis, SliceInfoElem},
@@ -141,56 +140,16 @@ pub fn create_object_impl<'py>(
     py: Python<'py>,
     name: String,
     parent_id: Option<u128>,
-    metadata: Option<Bound<'py, PyDict>>,
-    array_data: Option<Vec<SupportedNumpyArray<'py>>>,
+    metadata: Option<Vec<Option<Bound<'py, PyDict>>>>,
+    array_data: Option<Vec<Option<SupportedNumpyArray<'py>>>>,
 ) -> PyResult<PyObject> {
-    let metadata_map = convert_metadata(metadata)?;
-    // let mut create_obj_params: Option<Vec<CreateObjectParams>> = None;
-    // the way we acquire the object id here is to guarantee the colocation of the sub-objects.
-    // if you need to fully distribute all the objects, you should leave parent_id as None
-    let main_obj_id = commons::object::objid::GlobalObjectId::with_vnode_id(
-        &name,
-        parent_id.map(|id| id.vnode_id()),
-    )
-    .to_u128();
-    let create_obj_params = match array_data {
-        // no array data, this must be a container object
-        None => Some(vec![CreateObjectParams {
-            obj_id: main_obj_id,
-            name,
-            parent_id,
-            initial_metadata: metadata_map,
-            array_data: None,
-            client_rank: get_client_rank(),
-        }]),
-        Some(array_vec) => {
-            let mut params = Vec::with_capacity(array_vec.len());
-            let mut obj_id = main_obj_id;
-            // with the above, the object id is guaranteed to be colocated with the parent object on the same virtual node.
-            // and even for the sub-objects below, since we take the vnode_id from master object, they will be colocated as well.
-            // this will ensure that : regardless of the existence of parent_id, the sub-objects and major object will be colocated.
-            let vec_len = array_vec.len();
-            for (i, array) in array_vec.into_iter().enumerate() {
-                params.push(CreateObjectParams {
-                    obj_id,
-                    name: format!("{}-{}", name, i),
-                    parent_id: Some(parent_id.unwrap_or_else(|| main_obj_id)),
-                    initial_metadata: metadata_map.clone(),
-                    array_data: Some(array.into_array_type()),
-                    client_rank: get_client_rank(),
-                });
-                if i == vec_len - 1 {
-                    break;
-                }
-                obj_id = commons::object::objid::GlobalObjectId::with_vnode_id(
-                    &name,
-                    Some(main_obj_id.vnode_id()),
-                )
-                .to_u128();
-            }
-            Some(params)
-        }
-    };
+    let create_obj_params =
+        crate::datastore::create_objects_req_proc(name, parent_id, metadata, array_data);
+    if create_obj_params.is_none() {
+        return Ok(py.None().into_any().into());
+    }
+
+    let main_obj_id = create_obj_params.as_ref().unwrap()[0].obj_id;
     // Serialize the parameters using MessagePack
     let serialized_params = rmp_serde::to_vec(&create_obj_params)
         .map_err(|e| PyErr::new::<PyValueError, _>(format!("Failed to serialize params: {}", e)))?;
