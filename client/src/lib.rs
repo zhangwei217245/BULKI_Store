@@ -123,29 +123,29 @@ fn rust_ext<'py>(m: &Bound<'py, PyModule>) -> PyResult<()> {
         )
     }
 
-    // #[pyfn(m)]
-    // #[pyo3(name = "get_object_metadata")]
-    // #[pyo3(signature = (obj_id, meta_keys=None, sub_object_meta_keys=None))]
-    // fn get_object_metadata<'py>(
-    //     py: Python<'py>,
-    //     obj_id: u128,
-    //     meta_keys: Option<Vec<String>>,
-    //     sub_object_meta_keys: Option<Vec<String>>,
-    // ) -> PyResult<Py<PyDict>> {
-    //     pyctx::get_object_metadata_impl(py, obj_id, meta_keys, sub_object_meta_keys)
-    // }
+    #[pyfn(m)]
+    #[pyo3(name = "get_object_metadata")]
+    #[pyo3(signature = (obj_id, meta_keys=None, sub_object_meta_keys=None))]
+    fn get_object_metadata<'py>(
+        py: Python<'py>,
+        obj_id: u128,
+        meta_keys: Option<Vec<String>>,
+        sub_object_meta_keys: Option<Vec<String>>,
+    ) -> PyResult<Py<PyDict>> {
+        pyctx::get_object_metadata_impl(py, obj_id, meta_keys, sub_object_meta_keys)
+    }
 
-    // #[pyfn(m)]
-    // #[pyo3(name = "get_object_data")]
-    // #[pyo3(signature = (obj_id, region=None, sub_obj_regions=None))]
-    // fn get_object_data<'py>(
-    //     py: Python<'py>,
-    //     obj_id: u128,
-    //     region: Option<Vec<Bound<'py, PySlice>>>,
-    //     sub_obj_regions: Option<Vec<(String, Vec<Bound<'py, PySlice>>)>>,
-    // ) -> PyResult<Py<PyDict>> {
-    //     pyctx::get_object_data_impl(py, obj_id, region, sub_obj_regions)
-    // }
+    #[pyfn(m)]
+    #[pyo3(name = "get_object_data")]
+    #[pyo3(signature = (obj_id, region=None, sub_obj_regions=None))]
+    fn get_object_data<'py>(
+        py: Python<'py>,
+        obj_id: u128,
+        region: Option<Vec<Bound<'py, PySlice>>>,
+        sub_obj_regions: Option<Vec<(String, Vec<Bound<'py, PySlice>>)>>,
+    ) -> PyResult<Py<PyDict>> {
+        pyctx::get_object_data_impl(py, obj_id, region, sub_obj_regions)
+    }
 
     ///////////////////////////////////////////////////////////////////////////
     //     Ok(())

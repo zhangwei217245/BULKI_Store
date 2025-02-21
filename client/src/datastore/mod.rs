@@ -1,11 +1,19 @@
 use crate::cltctx::get_client_rank;
+use anyhow::Result;
 use commons::{
     handler::HandlerResult,
-    object::{objid::GlobalObjectIdExt, params::CreateObjectParams},
+    object::{
+        objid::GlobalObjectIdExt,
+        params::{CreateObjectParams, GetObjectSliceParams},
+        types::SerializableSliceInfoElem,
+    },
     rpc::RPCData,
 };
 use log::debug;
-use pyo3::{types::PyDict, Bound};
+use pyo3::{
+    types::{PyDict, PySlice},
+    Bound,
+};
 use rand::distr::Alphanumeric;
 use rand::Rng;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -129,7 +137,7 @@ pub fn create_objects_req_proc<'py>(
     create_obj_params
 }
 
-pub fn create_objects_resp_proc(response: &mut RPCData) -> HandlerResult {
+pub fn common_resp_proc(response: &mut RPCData) -> HandlerResult {
     debug!(
         "Processing response: data length: {:?}",
         response.data.as_ref().unwrap().len()
@@ -138,4 +146,56 @@ pub fn create_objects_resp_proc(response: &mut RPCData) -> HandlerResult {
     let result_metadata = response.metadata.as_mut().unwrap();
     let handler_result = result_metadata.handler_result.as_ref().unwrap();
     handler_result.to_owned()
+}
+
+pub fn get_object_slice_req_proc<'py>(
+    obj_id: u128,
+    region: Option<Vec<Bound<'py, PySlice>>>,
+    sub_obj_regions: Option<Vec<(String, Vec<Bound<'py, PySlice>>)>>,
+) -> Result<GetObjectSliceParams> {
+    // Convert main region
+    let region_slices = match region {
+        Some(r) => {
+            Some(super::pyctx::converter::convert_pyslice_vec_to_rust_slice_vec(r.len(), Some(r))?)
+        }
+        None => None,
+    };
+
+    // Convert to serializable form
+    let serializable_region = region_slices.map(|slices| {
+        slices
+            .into_iter()
+            .map(SerializableSliceInfoElem::from)
+            .collect()
+    });
+
+    // Convert sub-object regions
+    let serializable_sub_regions = sub_obj_regions.map(|sub_regions| {
+        sub_regions
+            .into_iter()
+            .map(|(name, slices)| {
+                let slice_elems =
+                    super::pyctx::converter::convert_pyslice_vec_to_rust_serde_slice_vec(
+                        slices.len(),
+                        Some(slices),
+                    );
+                Ok((
+                    name,
+                    match slice_elems {
+                        Ok(slice_elems) => Some(slice_elems),
+                        Err(e) => None,
+                    },
+                ))
+            })
+            .collect::<Result<Vec<_>>>()
+            .unwrap()
+    });
+
+    let get_object_data_params = GetObjectSliceParams {
+        obj_id,
+        region: serializable_region,
+        sub_obj_regions: serializable_sub_regions,
+    };
+
+    Ok(get_object_data_params)
 }

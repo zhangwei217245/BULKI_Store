@@ -1,6 +1,8 @@
 pub mod converter;
 use crate::cltctx::{get_server_count, ClientContext};
 use anyhow::Result;
+use commons::object::params::{GetObjectSliceParams, GetObjectSliceResponse};
+use commons::object::types::SerializableSliceInfoElem;
 use commons::rpc::RPCData;
 use commons::{object::objid::GlobalObjectIdExt, region::SerializableNDArray};
 use converter::SupportedNumpyArray;
@@ -188,6 +190,58 @@ pub fn create_object_impl<'py>(
     }
 }
 
+pub fn get_object_metadata_impl<'py>(
+    py: Python<'py>,
+    obj_id: u128,
+    meta_keys: Option<Vec<String>>,
+    sub_object_meta_keys: Option<Vec<String>>,
+) -> PyResult<Py<PyDict>> {
+    // TODO
+    unimplemented!()
+}
+
+pub fn get_object_data_impl<'py>(
+    py: Python<'py>,
+    obj_id: u128,
+    region: Option<Vec<Bound<'py, PySlice>>>,
+    sub_obj_regions: Option<Vec<(String, Vec<Bound<'py, PySlice>>)>>,
+) -> PyResult<Py<PyDict>> {
+    let get_object_data_params =
+        super::datastore::get_object_slice_req_proc(obj_id, region, sub_obj_regions);
+    match get_object_data_params {
+        Err(_) => Err(PyErr::new::<PyValueError, _>(
+            "Failed to create object parameters",
+        )),
+        Ok(params) => {
+            let main_obj_id = params.obj_id;
+            // Serialize the parameters using MessagePack
+            let serialized_params = rmp_serde::to_vec(&params).map_err(|e| {
+                PyErr::new::<PyValueError, _>(format!("Failed to serialize params: {}", e))
+            })?;
+            debug!(
+                "get_object_data: params data length: {:?}",
+                serialized_params.len()
+            );
+            // Get binary data from response (assuming response.data contains the binary payload)
+            let response_data = rpc_call(
+                main_obj_id.vnode_id() % get_server_count(),
+                "datastore::get_object_data",
+                Some(serialized_params),
+            );
+            debug!(
+                "get_object_data: response data length: {:?}",
+                response_data.as_ref().unwrap().len()
+            );
+            let result: GetObjectSliceResponse = rmp_serde::from_slice(&response_data.unwrap())
+                .map_err(|e| {
+                    PyErr::new::<PyValueError, _>(format!("Deserialization error: {}", e))
+                })?;
+            debug!("get_object_data: result vector: {:?}", result);
+            converter::convert_get_object_slice_response_to_pydict(py, result)
+        }
+    }
+}
+
 pub fn times_two_impl<'py, T>(py: Python<'py>, x: PyReadonlyArrayDyn<'py, T>) -> PyResult<PyObject>
 where
     T: Copy + serde::Serialize + for<'de> serde::Deserialize<'de> + Element + std::fmt::Debug,
@@ -250,40 +304,12 @@ pub fn generic_add<T: Copy + Add<Output = T>>(
     &x + &y
 }
 
-/// Convert a Python slice (wrapped in Bound) into an ndarray SliceInfoElem.
-pub fn py_slice_to_ndarray_slice<'py>(slice: Bound<'py, PySlice>) -> PyResult<SliceInfoElem> {
-    let py_slice = slice.as_ref();
-    let start: Option<isize> = py_slice.getattr("start")?.extract()?;
-    let stop: Option<isize> = py_slice.getattr("stop")?.extract()?;
-    let step: Option<isize> = py_slice.getattr("step")?.extract()?;
-    Ok(SliceInfoElem::Slice {
-        start: start.unwrap_or(0),
-        end: stop,
-        step: step.unwrap_or(1),
-    })
-}
-
 pub fn array_slicing<'py, T: Copy>(
     x: ArrayViewD<'_, T>,
     indices: Vec<Bound<'py, PySlice>>,
 ) -> PyResult<ArrayD<T>> {
     // Convert all Python slices into ndarray slice elements
-    let mut slice_spec: Vec<SliceInfoElem> = Vec::with_capacity(x.ndim());
-
-    // Convert provided slices
-    for index in indices.iter() {
-        slice_spec.push(py_slice_to_ndarray_slice(index.to_owned())?);
-    }
-
-    // If fewer slices provided than dimensions, fill rest with full slices
-    while slice_spec.len() < x.ndim() {
-        slice_spec.push(SliceInfoElem::Slice {
-            start: 0,
-            end: None,
-            step: 1,
-        });
-    }
-
+    let slice_spec = converter::convert_pyslice_vec_to_rust_slice_vec(x.ndim(), Some(indices))?;
     // Apply slicing and return an owned copy
     Ok(x.slice(&slice_spec[..]).to_owned())
 }
