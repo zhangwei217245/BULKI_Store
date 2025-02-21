@@ -10,12 +10,12 @@ use numpy::{
     Complex64, Element, PyArray, PyReadonlyArrayDyn,
 };
 use pyo3::types::PyInt;
+use pyo3::Py;
 use pyo3::{
     exceptions::PyValueError,
     types::{PyAnyMethods, PyDict, PySlice},
     Bound, PyErr, PyObject, PyResult, Python,
 };
-use pyo3::{IntoPyObjectExt, Py};
 use std::{cell::RefCell, ops::Add, sync::Arc};
 
 thread_local! {
@@ -142,11 +142,19 @@ pub fn create_object_impl<'py>(
     py: Python<'py>,
     name: String,
     parent_id: Option<u128>,
-    metadata: Option<Vec<Option<Bound<'py, PyDict>>>>,
-    array_data: Option<Vec<Option<SupportedNumpyArray<'py>>>>,
+    metadata: Option<Bound<'py, PyDict>>,
+    array_meta_list: Option<Vec<Option<Bound<'py, PyDict>>>>,
+    array_data_list: Option<Vec<Option<SupportedNumpyArray<'py>>>>,
+    sub_object_key: Option<String>,
 ) -> PyResult<Vec<Py<PyInt>>> {
-    let create_obj_params =
-        crate::datastore::create_objects_req_proc(name, parent_id, metadata, array_data);
+    let create_obj_params = crate::datastore::create_objects_req_proc(
+        name,
+        parent_id,
+        metadata,
+        array_meta_list,
+        array_data_list,
+        sub_object_key,
+    );
     match create_obj_params {
         None => Err(PyErr::new::<PyValueError, _>(
             "Failed to create object parameters",

@@ -1,55 +1,65 @@
 use fnv::FnvHasher;
 use lazy_static::lazy_static;
+use rand::rngs::StdRng;
+use rand::{Rng, SeedableRng};
 use serde::{Deserialize, Serialize};
 use std::{
     hash::{Hash, Hasher},
-    sync::atomic::{AtomicU16, Ordering},
+    sync::atomic::{AtomicU32, Ordering},
     time::{SystemTime, UNIX_EPOCH},
 }; // Fast, non-cryptographic hash
 
 lazy_static! {
-    static ref SEQUENCE_GENERATOR: AtomicU16 = AtomicU16::new(0);
+    static ref SEQUENCE_GENERATOR: AtomicU32 = {
+        // Create seed from current time and process id for better uniqueness
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos() as u64;
+        let pid = std::process::id() as u64;
+        let seed = now.wrapping_mul(pid);
+
+        // Create a well-seeded RNG
+        let mut rng = StdRng::seed_from_u64(seed);
+        AtomicU32::new(rng.random())
+    };
 }
 
-fn get_virtual_node_id(timestamp: u32, object_name: &str) -> u32 {
-    let mut hasher = FnvHasher::default();
-    // Combine the client-specific identifier with the object name.
-    timestamp.hash(&mut hasher);
-    object_name.hash(&mut hasher);
-    // Map the 64-bit FNV hash into a 24-bit number.
-    (hasher.finish() & 0xFFFFFF) as u32
-}
+/// The object ID is a globally unique identifier (GUID) of an object.
+/// The format is [ timestamp (64 bits) | sequence (32 bits) | version (8 bits) | name_hash (24 bits) ]
+///
+///
+///
 /// The total number of CPU cores of Perlmutter: 507,904
 /// The largest number of CPU cores a supercomputer may have: 10,649,600 (Sunway TaihuLight)
 /// An order of 100 million servers in active operation worldwide.
-/// Therefore, we consider 2^24 to be the largest number of virtual nodes we support,
-/// and it is already 10% of all the active servers,
+/// Therefore, we consider 2^32 to be the largest number of virtual nodes we support,
+/// and this can cover almost all the active servers worldwide,
 /// and even more than what the largest supercomputer can hold.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct GlobalObjectId {
-    version: u8,       // 8 bits:  Protocol version
-    virtual_node: u32, // 24 bits: Virtual node ID
-    timestamp: u64,    // 48 bits: seconds since epoch (enough until year 34,800)
-    sequence: u16,     // 16 bits: Sequence number
-    name_hash: u32,    // 32 bits: FNV hash of object name
+    // [ timestamp (64 bits) | sequence (32 bits) | name_hash (24 bits) | version (8 bits) ]
+    timestamp: u64, // 64 bits: microseconds since epoch (enough for 584,000 years)
+    sequence: u32,  // 32 bits: Sequence number
+    version: u8,    // 8 bits:  Object version
+    name_hash: u32, // 24 bits: FNV hash of object name, used for virtual node ID.
 }
 
 impl GlobalObjectId {
     pub fn to_u128(&self) -> u128 {
-        ((self.version as u128) << 120) |                   // 8 bits  [127-120]
-        ((self.virtual_node as u128 & 0xFFFFFF) << 96) |    // 24 bits [119-96]
-        ((self.timestamp as u128 & 0xFFFFFFFFFFFF) << 48) | // 48 bits [95-48]
-        ((self.sequence as u128) << 32) |                   // 16 bits [47-32]
-        (self.name_hash as u128 & 0xFFFFFFFF) // 32 bits [31-0]
+        // [ timestamp (64 bits) | sequence (32 bits) | version (8 bits) | name_hash (24 bits) ]
+        ((self.timestamp as u128) << 64) |               // 64 bits [127-64]
+        ((self.sequence as u128) << 32) |               // 32 bits [63-32]
+        ((self.version as u128) << 24) |                // 8 bits  [31-24]
+        (self.name_hash as u128 & 0xFFFFFF) // 24 bits [23-0]
     }
 
     pub fn from_u128(value: u128) -> Self {
         Self {
-            version: ((value >> 120) & 0xFF) as u8,
-            virtual_node: ((value >> 96) & 0xFFFFFF) as u32, // Only take 24 bits
-            timestamp: ((value >> 48) & 0xFFFFFFFFFFFF) as u64, // 48 bits
-            sequence: ((value >> 32) & 0xFFFF) as u16,
-            name_hash: (value & 0xFFFFFFFF) as u32,
+            timestamp: ((value >> 64) & 0xFFFFFFFFFFFFFFFF) as u64, // 64 bits
+            sequence: ((value >> 32) & 0xFFFFFFFF) as u32,          // 32 bits
+            version: ((value >> 24) & 0xFF) as u8,                  // 8 bits
+            name_hash: (value & 0xFFFFFF) as u32,                   // 24 bits
         }
     }
 
@@ -64,40 +74,38 @@ impl GlobalObjectId {
         let timestamp = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap()
-            .as_millis() as u64;
+            .as_micros() as u64;
         Self {
-            version: 1,
-            virtual_node: vnode_id
-                .unwrap_or_else(|| get_virtual_node_id((timestamp >> 32) as u32, object_name)),
-            name_hash,
             timestamp,
-            sequence: SEQUENCE_GENERATOR.fetch_add(1, Ordering::SeqCst) as u16,
+            sequence: SEQUENCE_GENERATOR.fetch_add(1, Ordering::SeqCst) as u32,
+            name_hash: vnode_id.unwrap_or(name_hash),
+            version: 1,
         }
     }
 }
 
 pub trait GlobalObjectIdExt {
     fn timestamp(self) -> u64;
-    fn vnode_id(self) -> u32;
-    fn sequence(self) -> u16;
+    fn sequence(self) -> u32;
     fn name_hash(self) -> u32;
     fn version(self) -> u8;
+    fn vnode_id(self) -> u32;
 }
 
 impl GlobalObjectIdExt for u128 {
     fn timestamp(self) -> u64 {
-        ((self >> 48) & 0xFFFFFFFFFFFF) as u64
+        ((self >> 64) & 0xFFFFFFFFFFFFFFFF) as u64 // 64 bits [127-64]
     }
-    fn vnode_id(self) -> u32 {
-        ((self >> 96) & 0xFFFFFF) as u32
-    }
-    fn sequence(self) -> u16 {
-        ((self >> 32) & 0xFFFF) as u16
-    }
-    fn name_hash(self) -> u32 {
-        (self & 0xFFFFFFFF) as u32
+    fn sequence(self) -> u32 {
+        ((self >> 32) & 0xFFFFFFFF) as u32 // 32 bits [63-32]
     }
     fn version(self) -> u8 {
-        ((self >> 120) & 0xFF) as u8
+        ((self >> 24) & 0xFF) as u8 // 8 bits [31-24]
+    }
+    fn name_hash(self) -> u32 {
+        (self & 0xFFFFFF) as u32 // 24 bits [23-0]
+    }
+    fn vnode_id(self) -> u32 {
+        self.name_hash() // Same as name_hash, used for virtual node ID
     }
 }

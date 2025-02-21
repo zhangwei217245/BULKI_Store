@@ -12,3 +12,8 @@ pub struct CreateObjectParams {
     pub array_data: Option<SupportedRustArrayD>,
     pub client_rank: u32, // MPI rank of the client
 }
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct GetMajorObjectParams {
+    pub major_obj_id: u128,
+}
