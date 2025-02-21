@@ -11,10 +11,8 @@ pub fn register_handlers(tx: &mut GrpcTX) -> Result<()> {
         Arc::get_mut(handler)
             .ok_or_else(|| anyhow::anyhow!("Handler dispatcher is shared and cannot be mutated"))?
             .register("datastore::times_two", bk_ndarr::process_response)
-            .register(
-                "datastore::create_objects",
-                datastore::create_objects_resp_proc,
-            );
+            .register("datastore::create_objects", datastore::common_resp_proc)
+            .register("datastore::get_object_data", datastore::common_resp_proc);
         Ok(())
     } else {
         Err(anyhow::anyhow!("Handler dispatcher not initialized"))

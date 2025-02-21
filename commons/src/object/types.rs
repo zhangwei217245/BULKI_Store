@@ -70,14 +70,9 @@ pub enum SupportedRustArrayD {
 
 impl SupportedRustArrayD {
     /// Get a slice of the array, returning the same type
-    pub fn slice(&self, region: &[Slice]) -> SupportedRustArrayD {
-        // Convert slices to SliceInfoElem
-        let slice_info_elems: Vec<SliceInfoElem> =
-            region.iter().map(|s| SliceInfoElem::from(*s)).collect();
-
+    pub fn slice(&self, region: &[SliceInfoElem]) -> SupportedRustArrayD {
         // Create SliceInfo
-        let info = SliceInfo::<_, IxDyn, IxDyn>::try_from(slice_info_elems)
-            .expect("Invalid slice pattern");
+        let info = SliceInfo::<_, IxDyn, IxDyn>::try_from(region).expect("Invalid slice pattern");
 
         match self {
             // Floating point types

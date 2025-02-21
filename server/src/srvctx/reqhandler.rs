@@ -15,7 +15,10 @@ pub fn register_handlers(rx: &mut GrpcRX) -> Result<()> {
                 "datastore::create_objects",
                 crate::datastore::create_objects,
             )
-            .register("datastore::get_object", crate::datastore::get_object)
+            .register(
+                "datastore::get_object_data",
+                crate::datastore::get_object_data,
+            )
             .register(
                 "datastore::update_metadata",
                 crate::datastore::update_metadata,

@@ -2,7 +2,7 @@ pub mod objid;
 pub mod params;
 pub mod types;
 use dashmap::DashMap;
-use ndarray::Slice;
+use ndarray::{Slice, SliceInfoElem};
 
 use params::CreateObjectParams;
 use rmp_serde::encode;
@@ -30,6 +30,8 @@ pub struct DataObject {
     pub metadata: HashMap<String, MetadataValue>,
     /// Nested child DataObjects.
     pub children: Option<HashSet<u128>>,
+    /// The name to ID index for all children.
+    pub child_name_idx: Option<HashMap<String, u128>>,
 }
 
 impl DataObject {
@@ -45,6 +47,7 @@ impl DataObject {
             array: params.array_data,
             metadata: params.initial_metadata.unwrap_or_default(),
             children: Some(HashSet::new()),
+            child_name_idx: Some(HashMap::new()),
         }
     }
 
@@ -54,15 +57,30 @@ impl DataObject {
     }
 
     /// Add a child DataObject.
-    pub fn add_child(&mut self, child_id: u128) {
+    pub fn add_child(&mut self, obj_name: String, child_id: u128) {
         self.children.as_mut().unwrap().insert(child_id);
+        self.child_name_idx
+            .as_mut()
+            .unwrap()
+            .insert(obj_name, child_id);
     }
 
     /// add a group of children.
-    pub fn add_children(&mut self, child_ids: Vec<u128>) {
-        for child_id in child_ids {
-            self.add_child(child_id);
+    pub fn add_children(&mut self, obj_name_child_ids: Vec<(String, u128)>) {
+        for (obj_name, child_id) in obj_name_child_ids {
+            self.add_child(obj_name, child_id);
         }
+    }
+
+    pub fn get_child_id_by_name(&self, obj_name: &str) -> Option<u128> {
+        self.child_name_idx.as_ref().unwrap().get(obj_name).cloned()
+    }
+
+    pub fn get_child_ids_by_names(&self, obj_names: Vec<&str>) -> Vec<u128> {
+        obj_names
+            .iter()
+            .map(|name| self.child_name_idx.as_ref().unwrap()[*name])
+            .collect()
     }
 
     /// get all child ids.
@@ -76,8 +94,15 @@ impl DataObject {
     }
 
     /// Get a slice of the attached NDArray.
-    pub fn get_array_slice(&self, region: &[Slice]) -> Option<SupportedRustArrayD> {
-        self.array.as_ref().map(|arr| arr.slice(region))
+    pub fn get_array_slice(
+        &self,
+        region: Option<Vec<SliceInfoElem>>,
+    ) -> Option<SupportedRustArrayD> {
+        match (self.array.as_ref(), region) {
+            (Some(arr), Some(region)) => Some(arr.slice(&region)),
+            (Some(arr), None) => Some(arr.clone()),
+            _ => None,
+        }
     }
 
     /// Add or update a metadata attribute.
@@ -153,14 +178,14 @@ impl DataStore {
         // save object
         self.objects.insert(obj_id, obj);
         // add name to obj index
-        self.name_obj_idx.insert(obj_name, obj_id);
+        self.name_obj_idx.insert(obj_name.clone(), obj_id);
         // add to parent child index of parent object
         if let Some(parent_id) = parent_obj_id {
             if parent_id == obj_id {
                 return;
             }
             if let Some(mut parent_obj) = self.objects.get_mut(&parent_id) {
-                parent_obj.add_child(obj_id);
+                parent_obj.add_child(obj_name.clone(), obj_id);
             }
         }
     }
@@ -187,7 +212,11 @@ impl DataStore {
     }
 
     /// Retrieve a slice from the NDArray attached to a DataObject identified by its u128 ID.
-    pub fn get_object_slice(&self, id: u128, region: &[Slice]) -> Option<SupportedRustArrayD> {
+    pub fn get_object_slice(
+        &self,
+        id: u128,
+        region: Option<Vec<SliceInfoElem>>,
+    ) -> Option<SupportedRustArrayD> {
         self.get(id)?.get_array_slice(region)
     }
 
@@ -200,11 +229,14 @@ impl DataStore {
     /// * Vector of array slices, in the same order as the input
     pub fn get_regions_by_obj_ids(
         &self,
-        obj_regions: Vec<(u128, Vec<Slice>)>,
-    ) -> Vec<Option<SupportedRustArrayD>> {
+        obj_regions: Vec<(u128, Option<Vec<SliceInfoElem>>)>,
+    ) -> Vec<(u128, Option<String>, Option<SupportedRustArrayD>)> {
         obj_regions
             .into_iter()
-            .map(|(id, region)| self.get_object_slice(id, &region))
+            .map(|(id, region)| match self.get(id) {
+                Some(obj) => (id, Some(obj.name), self.get_object_slice(id, region)),
+                None => (id, None, None),
+            })
             .collect()
     }
 

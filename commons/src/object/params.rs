@@ -25,19 +25,19 @@ pub struct GetObjectMetaParams {
 pub struct GetObjectMetaResponse {
     pub obj_id: u128,
     pub metadata: Option<HashMap<String, MetadataValue>>,
-    pub sub_obj_meta: Option<Vec<(u128, Option<HashMap<String, MetadataValue>>)>>,
+    pub sub_obj_meta: Option<Vec<(u128, String, Option<HashMap<String, MetadataValue>>)>>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct GetObjectSliceParams {
     pub obj_id: u128,
-    pub region: Vec<SerializableSliceInfoElem>,
-    pub sub_obj_regions: Option<Vec<(u128, Vec<SerializableSliceInfoElem>)>>,
+    pub region: Option<Vec<SerializableSliceInfoElem>>,
+    pub sub_obj_regions: Option<Vec<(String, Option<Vec<SerializableSliceInfoElem>>)>>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct GetObjectSliceResponse {
     pub obj_id: u128,
     pub array_slice: Option<SupportedRustArrayD>,
-    pub sub_obj_slices: Option<Vec<(u128, Option<SupportedRustArrayD>)>>,
+    pub sub_obj_slices: Option<Vec<(u128, Option<String>, Option<SupportedRustArrayD>)>>,
 }
