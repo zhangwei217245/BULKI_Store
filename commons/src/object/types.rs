@@ -16,6 +16,38 @@ pub enum MetadataValue {
     RangeList(Vec<(usize, usize)>),
 }
 
+impl MetadataValue {
+    pub fn to_string(&self) -> String {
+        match self {
+            MetadataValue::String(s) => s.to_string(),
+            MetadataValue::Int(i) => i.to_string(),
+            MetadataValue::UInt(i) => i.to_string(),
+            MetadataValue::Float(f) => f.to_string(),
+            MetadataValue::StringList(s) => s.join(",").to_string(),
+            MetadataValue::IntList(i) => i
+                .iter()
+                .map(|i| i.to_string())
+                .collect::<Vec<_>>()
+                .join(","),
+            MetadataValue::UIntList(i) => i
+                .iter()
+                .map(|i| i.to_string())
+                .collect::<Vec<_>>()
+                .join(","),
+            MetadataValue::FloatList(f) => f
+                .iter()
+                .map(|f| f.to_string())
+                .collect::<Vec<_>>()
+                .join(","),
+            MetadataValue::RangeList(r) => r
+                .iter()
+                .map(|(s, e)| format!("{}-{}", s, e))
+                .collect::<Vec<_>>()
+                .join(","),
+        }
+    }
+}
+
 /// Represents the different types of arrays that can be stored
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum SupportedRustArrayD {

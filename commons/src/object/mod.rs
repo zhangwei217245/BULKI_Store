@@ -145,9 +145,21 @@ impl DataStore {
     /// Insert or update a DataObject in the store.
     pub fn insert(&self, obj: DataObject) {
         let obj_id = obj.id;
+        let parent_obj_id = obj.parent_id;
         let obj_name = obj.name.clone();
+        // save object
         self.objects.insert(obj_id, obj);
+        // add name to obj index
         self.name_obj_idx.insert(obj_name, obj_id);
+        // add to parent child index of parent object
+        if let Some(parent_id) = parent_obj_id {
+            if parent_id == obj_id {
+                return;
+            }
+            if let Some(mut parent_obj) = self.objects.get_mut(&parent_id) {
+                parent_obj.add_child(obj_id);
+            }
+        }
     }
 
     /// Retrieve a DataObject by its u128 ID.

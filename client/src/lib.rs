@@ -3,8 +3,6 @@ mod cltctx;
 mod datastore;
 mod pyctx;
 
-use std::collections::HashMap;
-
 use env_logger;
 use numpy::{
     datetime::{units, Timedelta},
@@ -15,9 +13,9 @@ use numpy::{
 use pyctx::converter::SupportedNumpyArray;
 use pyo3::{
     exceptions::PyValueError,
-    pymethods, pymodule,
+    pymodule,
     types::{PyAnyMethods, PyDict, PyDictMethods, PyInt, PyModule},
-    Bound, IntoPyObjectExt, Py, PyAny, PyObject, PyResult, Python,
+    Bound, Py, PyAny, PyObject, PyResult, Python,
 };
 use pyo3::{pyclass, types::PySlice};
 
@@ -106,15 +104,25 @@ fn rust_ext<'py>(m: &Bound<'py, PyModule>) -> PyResult<()> {
     /// ```
     #[pyfn(m)]
     #[pyo3(name = "create_objects")]
-    #[pyo3(signature = (name, parent_id=None, metadata=None, array_data=None))]
+    #[pyo3(signature = (name, parent_id=None, metadata=None, array_meta_list=None, array_data_list=None, sub_object_key=None))]
     fn create_objects<'py>(
         py: Python<'py>,
         name: String,
         parent_id: Option<u128>,
-        metadata: Option<Vec<Option<Bound<'py, PyDict>>>>,
-        array_data: Option<Vec<Option<SupportedNumpyArray<'py>>>>,
+        metadata: Option<Bound<'py, PyDict>>,
+        array_meta_list: Option<Vec<Option<Bound<'py, PyDict>>>>,
+        array_data_list: Option<Vec<Option<SupportedNumpyArray<'py>>>>,
+        sub_object_key: Option<String>,
     ) -> PyResult<Vec<Py<PyInt>>> {
-        pyctx::create_object_impl(py, name, parent_id, metadata, array_data)
+        pyctx::create_object_impl(
+            py,
+            name,
+            parent_id,
+            metadata,
+            array_meta_list,
+            array_data_list,
+            sub_object_key,
+        )
     }
 
     /// load an object and possibly its subobjects
