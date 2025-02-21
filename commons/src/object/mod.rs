@@ -22,6 +22,8 @@ pub struct DataObject {
     pub parent_id: Option<u128>,
     /// A human-readable name.
     pub name: String,
+    /// The key of the object name in the metadata dictionary.
+    pub obj_name_key: String,
     /// Optional attached NDArray of any supported type.
     pub array: Option<SupportedRustArrayD>,
     /// Arbitrary metadata attributes.
@@ -38,7 +40,8 @@ impl DataObject {
             // Use a temporary ID that will be replaced by the server
             id: params.obj_id,
             parent_id: params.parent_id,
-            name: params.name,
+            obj_name_key: params.obj_name_key,
+            name: params.obj_name,
             array: params.array_data,
             metadata: params.initial_metadata.unwrap_or_default(),
             children: Some(HashSet::new()),
