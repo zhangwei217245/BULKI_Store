@@ -104,50 +104,47 @@ fn rust_ext<'py>(m: &Bound<'py, PyModule>) -> PyResult<()> {
     /// ```
     #[pyfn(m)]
     #[pyo3(name = "create_objects")]
-    #[pyo3(signature = (name, parent_id=None, metadata=None, array_meta_list=None, array_data_list=None, sub_object_key=None))]
+    #[pyo3(signature = (obj_name_key, parent_id=None, metadata=None, array_meta_list=None, array_data_list=None))]
     fn create_objects<'py>(
         py: Python<'py>,
-        name: String,
+        obj_name_key: String,
         parent_id: Option<u128>,
         metadata: Option<Bound<'py, PyDict>>,
         array_meta_list: Option<Vec<Option<Bound<'py, PyDict>>>>,
         array_data_list: Option<Vec<Option<SupportedNumpyArray<'py>>>>,
-        sub_object_key: Option<String>,
     ) -> PyResult<Vec<Py<PyInt>>> {
         pyctx::create_object_impl(
             py,
-            name,
+            obj_name_key,
             parent_id,
             metadata,
             array_meta_list,
             array_data_list,
-            sub_object_key,
         )
     }
 
-    /// load an object and possibly its subobjects
-    /// by default, we do not load subobjects
-    /// but if load_subobjects is set to True, we load subobjects that are filtered by
-    /// subobj_meta_filter and subobj_array_data_filter
-    ///
-    /// Params:
-    /// *required_metadata* is a list of metadata keys, and the loaded major object will
-    /// contain only the subset of metadata specified by metadata_filter
-    /// *required_slice* is a list of PySlices, and the loaded major object will
-    /// contain only the subset of array data specified by array_data_filter
-    /// *load_subobjects* determines whether to load subobjects or not
-    /// *subobj_meta_filter and subobj_array_data_filter are used to filter the subobjects
-    /// if load_subobjects is set to True
     // #[pyfn(m)]
-    // #[pyo3(name = "load_major_object")]
-    // #[pyo3(signature = (major_obj_id, required_metadata=None, required_slice=None, subobj_meta_filter=None, subobj_array_data_filter=None))]
-    // fn load_objects<'py>(
+    // #[pyo3(name = "get_object_metadata")]
+    // #[pyo3(signature = (obj_id, meta_keys=None, sub_object_meta_keys=None))]
+    // fn get_object_metadata<'py>(
     //     py: Python<'py>,
-    //     major_obj_id: u128,
-    //     metadata_filter: Option<Vec<Option<Bound<'py, PyDict>>>>,
-    //     array_data_filter: Option<Vec<Option<SupportedNumpyArray<'py>>>>,
-    // ) -> PyResult<Vec<PyObject>> {
-    //     pyctx::load_objects_impl(py, obj_ids, metadata_filter, array_data_filter)
+    //     obj_id: u128,
+    //     meta_keys: Option<Vec<String>>,
+    //     sub_object_meta_keys: Option<Vec<String>>,
+    // ) -> PyResult<Py<PyDict>> {
+    //     pyctx::get_object_metadata_impl(py, obj_id, meta_keys, sub_object_meta_keys)
+    // }
+
+    // #[pyfn(m)]
+    // #[pyo3(name = "get_object_data")]
+    // #[pyo3(signature = (obj_id, region=None, sub_obj_regions=None))]
+    // fn get_object_data<'py>(
+    //     py: Python<'py>,
+    //     obj_id: u128,
+    //     region: Option<Vec<Bound<'py, PySlice>>>,
+    //     sub_obj_regions: Option<Vec<(String, Vec<Bound<'py, PySlice>>)>>,
+    // ) -> PyResult<Py<PyDict>> {
+    //     pyctx::get_object_data_impl(py, obj_id, region, sub_obj_regions)
     // }
 
     ///////////////////////////////////////////////////////////////////////////

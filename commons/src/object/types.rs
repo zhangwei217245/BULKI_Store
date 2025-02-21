@@ -220,16 +220,52 @@ impl From<ArrayD<u128>> for SupportedRustArrayD {
 }
 
 /// Helper trait to check if a type can be converted to ArrayType
-pub trait IntoArrayType {
-    fn into_array_type(self) -> SupportedRustArrayD;
+pub trait IntoRustArrayD {
+    fn into_rust_array_d(self) -> SupportedRustArrayD;
 }
 
-impl<T> IntoArrayType for ArrayD<T>
+impl<T> IntoRustArrayD for ArrayD<T>
 where
     T: 'static,
     ArrayD<T>: Into<SupportedRustArrayD>,
 {
-    fn into_array_type(self) -> SupportedRustArrayD {
+    fn into_rust_array_d(self) -> SupportedRustArrayD {
         self.into()
+    }
+}
+
+/// A serializable version of ndarray::SliceInfoElem
+#[derive(Debug, Serialize, Deserialize)]
+pub enum SerializableSliceInfoElem {
+    Index(isize),
+    Slice {
+        start: isize,
+        end: Option<isize>,
+        step: isize,
+    },
+    NewAxis,
+}
+
+impl From<SliceInfoElem> for SerializableSliceInfoElem {
+    fn from(elem: SliceInfoElem) -> Self {
+        match elem {
+            SliceInfoElem::Index(i) => SerializableSliceInfoElem::Index(i),
+            SliceInfoElem::Slice { start, end, step } => {
+                SerializableSliceInfoElem::Slice { start, end, step }
+            }
+            SliceInfoElem::NewAxis => SerializableSliceInfoElem::NewAxis,
+        }
+    }
+}
+
+impl From<SerializableSliceInfoElem> for SliceInfoElem {
+    fn from(elem: SerializableSliceInfoElem) -> Self {
+        match elem {
+            SerializableSliceInfoElem::Index(i) => SliceInfoElem::Index(i),
+            SerializableSliceInfoElem::Slice { start, end, step } => {
+                SliceInfoElem::Slice { start, end, step }
+            }
+            SerializableSliceInfoElem::NewAxis => SliceInfoElem::NewAxis,
+        }
     }
 }

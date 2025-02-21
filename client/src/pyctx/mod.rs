@@ -140,20 +140,18 @@ fn rpc_call(srv_id: u32, method_name: &str, data: Option<Vec<u8>>) -> Result<Vec
 
 pub fn create_object_impl<'py>(
     py: Python<'py>,
-    name: String,
+    obj_name_key: String,
     parent_id: Option<u128>,
     metadata: Option<Bound<'py, PyDict>>,
     array_meta_list: Option<Vec<Option<Bound<'py, PyDict>>>>,
     array_data_list: Option<Vec<Option<SupportedNumpyArray<'py>>>>,
-    sub_object_key: Option<String>,
 ) -> PyResult<Vec<Py<PyInt>>> {
     let create_obj_params = crate::datastore::create_objects_req_proc(
-        name,
+        obj_name_key,
         parent_id,
         metadata,
         array_meta_list,
         array_data_list,
-        sub_object_key,
     );
     match create_obj_params {
         None => Err(PyErr::new::<PyValueError, _>(
