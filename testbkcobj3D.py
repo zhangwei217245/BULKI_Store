@@ -43,8 +43,14 @@ if __name__ == "__main__":
         obj_ids[0],
         region=None,
         sub_obj_regions=[
-            ("arr6", [slice(0, 1), slice(0, 1), slice(0, 2, -1)]),
-            ("arr4", [slice(0, 1), slice(0, 1), slice(0, 10, -2)]),
+            (
+                "arr6",
+                [slice(0, 1), slice(0, 1), slice(0, 2, -1)],
+            ),
+            (
+                "arr4",
+                [slice(0, 1), slice(0, 1), slice(0, 10, -2)],
+            ),
         ],
     )
     print(result)
@@ -59,8 +65,22 @@ if __name__ == "__main__":
             obj_ids[0],
             region=None,
             sub_obj_regions=[
-                ("arr6", [slice(0, 1), slice(0, 1), slice(0, 2, -1)]),
-                ("arr4", [slice(0, 1), slice(0, 1), slice(0, 10, -2)]),
+                (
+                    "arr6",
+                    [
+                        slice(0, 1),
+                        slice(0, 1),
+                        slice(0, 2, -1),
+                    ],
+                ),
+                (
+                    "arr4",
+                    [
+                        slice(0, 1),
+                        slice(0, 1),
+                        slice(0, 10, -2),
+                    ],
+                ),
             ],
         )
     print(
