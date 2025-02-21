@@ -2,6 +2,7 @@ use commons::object::{
     params::GetObjectSliceResponse,
     types::{MetadataValue, SerializableSliceInfoElem, SupportedRustArrayD},
 };
+use log::debug;
 use ndarray::SliceInfoElem;
 use numpy::{IntoPyArray, PyArrayDyn, PyArrayMethods};
 use pyo3::{
@@ -314,39 +315,41 @@ pub fn convert_get_object_slice_response_to_pydict<'py>(
             })
             .transpose()?,
     )?;
-    dict.set_item(
-        "sub_obj_slices",
-        response
-            .sub_obj_slices
-            .map(|slices| {
-                let py_list = pyo3::types::PyList::empty(py);
-                for (id, name, array) in slices {
-                    let sub_dict = PyDict::new(py);
-                    sub_dict.set_item("id", id)?;
-                    sub_dict.set_item("name", name)?;
-                    // Convert array to Python object if present
-                    let py_array = array
-                        .map(|x| match x {
-                            SupportedRustArrayD::Int8(a) => Ok(a.into_pyarray(py).into_any()),
-                            SupportedRustArrayD::Int16(a) => Ok(a.into_pyarray(py).into_any()),
-                            SupportedRustArrayD::Int32(a) => Ok(a.into_pyarray(py).into_any()),
-                            SupportedRustArrayD::Int64(a) => Ok(a.into_pyarray(py).into_any()),
-                            SupportedRustArrayD::UInt8(a) => Ok(a.into_pyarray(py).into_any()),
-                            SupportedRustArrayD::UInt16(a) => Ok(a.into_pyarray(py).into_any()),
-                            SupportedRustArrayD::UInt32(a) => Ok(a.into_pyarray(py).into_any()),
-                            SupportedRustArrayD::UInt64(a) => Ok(a.into_pyarray(py).into_any()),
-                            SupportedRustArrayD::Float32(a) => Ok(a.into_pyarray(py).into_any()),
-                            SupportedRustArrayD::Float64(a) => Ok(a.into_pyarray(py).into_any()),
-                            _ => Err(PyErr::new::<PyValueError, _>("Unsupported array type")),
-                        })
-                        .transpose()?;
 
-                    sub_dict.set_item("array", py_array)?;
-                    py_list.add(sub_dict)?;
-                }
-                Ok::<pyo3::Bound<'_, PyList>, PyErr>(py_list)
-            })
-            .transpose()?,
-    )?;
+    // Convert sub-object slices
+    let sub_slices = match response.sub_obj_slices {
+        Some(slices) => {
+            let mut temp_array = Vec::with_capacity(slices.len());
+            for (id, name, array) in slices {
+                let sub_dict = PyDict::new(py);
+                sub_dict.set_item("id", id)?;
+                sub_dict.set_item("name", name)?;
+
+                // Convert array to Python object if present
+                let py_array = array
+                    .map(|x| match x {
+                        SupportedRustArrayD::Int8(a) => Ok(a.into_pyarray(py).into_any()),
+                        SupportedRustArrayD::Int16(a) => Ok(a.into_pyarray(py).into_any()),
+                        SupportedRustArrayD::Int32(a) => Ok(a.into_pyarray(py).into_any()),
+                        SupportedRustArrayD::Int64(a) => Ok(a.into_pyarray(py).into_any()),
+                        SupportedRustArrayD::UInt8(a) => Ok(a.into_pyarray(py).into_any()),
+                        SupportedRustArrayD::UInt16(a) => Ok(a.into_pyarray(py).into_any()),
+                        SupportedRustArrayD::UInt32(a) => Ok(a.into_pyarray(py).into_any()),
+                        SupportedRustArrayD::UInt64(a) => Ok(a.into_pyarray(py).into_any()),
+                        SupportedRustArrayD::Float32(a) => Ok(a.into_pyarray(py).into_any()),
+                        SupportedRustArrayD::Float64(a) => Ok(a.into_pyarray(py).into_any()),
+                        _ => Err(PyErr::new::<PyValueError, _>("Unsupported array type")),
+                    })
+                    .transpose()?;
+
+                sub_dict.set_item("array", py_array)?;
+                temp_array.push(sub_dict);
+            }
+            Some(PyList::new(py, temp_array).unwrap())
+        }
+        None => None,
+    };
+    dict.set_item("sub_obj_slices", sub_slices)?;
+    // debug!("Converted response: {:?}", dict);
     Ok(dict.into())
 }
