@@ -81,11 +81,7 @@ impl ServerContext {
         let (shutdown_tx, shutdown_rx) = oneshot::channel();
         let _ = endpoint.listen(start_listen_tx, shutdown_rx).await?;
         debug!("Endpoint {} is listening now", id);
-        let ready_file = FileUtility::get_pdc_tmp_dir().join(format!("rx_{}_ready.txt", id));
-        // write 'ready' to the ready file
-        tokio::fs::write(&ready_file, "ready")
-            .await
-            .expect("Failed to create ready file");
+       
         let endpoint = Arc::new(TokioMutex::new(endpoint));
         self.endpoints.insert(id.to_string(), endpoint);
         self.endpoint_shutdowns.insert(id.to_string(), shutdown_tx);
