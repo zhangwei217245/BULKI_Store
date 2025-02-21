@@ -1,6 +1,7 @@
 from ast import Slice
 import bkstore_client as bkc
 import numpy as np
+import time
 
 if __name__ == "__main__":
     bkc.init()
@@ -45,5 +46,26 @@ if __name__ == "__main__":
             ("arr6", [slice(0, 1), slice(0, 1), slice(0, 2, -1)]),
             ("arr4", [slice(0, 1), slice(0, 1), slice(0, 10, -2)]),
         ],
+    )
+    print(result)
+
+    # Stop for user input from console
+    input("Start benchmarking... Press Enter to continue...")
+
+    start_time = time.time()
+    num_iters = 1000
+    for i in range(num_iters):
+        result = bkc.get_object_data(
+            obj_ids[0],
+            region=None,
+            sub_obj_regions=[
+                ("arr6", [slice(0, 1), slice(0, 1), slice(0, 2, -1)]),
+                ("arr4", [slice(0, 1), slice(0, 1), slice(0, 10, -2)]),
+            ],
+        )
+    print(
+        "time:{}, throughput:{}".format(
+            time.time() - start_time, num_iters / (time.time() - start_time)
+        )
     )
     print(result)

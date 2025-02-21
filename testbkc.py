@@ -31,7 +31,6 @@ if __name__ == "__main__":
     print(arr5)
 
     start_time = time.time()
-    start_time = time.time()
     for i in range(1000):
         arr6 = bkc.times_two(arr5, arr5.dtype)
     print("arr6.shape=", arr6.shape)
