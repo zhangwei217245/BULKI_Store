@@ -2,3 +2,11 @@
 .pdc_tmp/
 Cargo.lock
 target/
+.vscode/
+.pdc_data/
+*.tar.gz
+__pycache__/
+*.pyc
+*.pyo
+*.so
+*.abi3.*

@@ -1,2 +1,11 @@
+syntax = "proto3";
 
+package bulkistore;
 
+service GrpcBulkistore {
+  rpc ProcessRequest (RpcMessage) returns (RpcMessage);
+}
+
+message RpcMessage {
+  bytes binary_data = 1;        // Actual data payload
+}
