@@ -40,10 +40,10 @@ if __name__ == "__main__":
 
     result = bkc.get_object_data(
         obj_ids[0],
-        region=[Slice(0, 1), Slice(0, 1), Slice(0, 10, -2)],
+        region=None,
         sub_obj_regions=[
-            ("arr6", [Slice(0, 1), Slice(0, 1), Slice(0, 10, -2)]),
-            ("arr4", [Slice(0, 1), Slice(0, 1), Slice(0, 2, -1)]),
+            ("arr6", [slice(0, 1), slice(0, 1), slice(0, 2, -1)]),
+            ("arr4", [slice(0, 1), slice(0, 1), slice(0, 10, -2)]),
         ],
     )
     print(result)

@@ -236,7 +236,7 @@ pub fn get_object_data_impl<'py>(
                 .map_err(|e| {
                     PyErr::new::<PyValueError, _>(format!("Deserialization error: {}", e))
                 })?;
-            debug!("get_object_data: result vector: {:?}", result);
+            // debug!("get_object_data: result vector: {:?}", result);
             converter::convert_get_object_slice_response_to_pydict(py, result)
         }
     }

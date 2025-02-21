@@ -146,6 +146,8 @@ pub fn get_object_data(data: &mut RPCData) -> HandlerResult {
                 sub_obj_slices: Some(sub_obj_slices),
             };
 
+            debug!("get_object_data response: {:?}", response);
+
             data.data = Some(
                 rmp_serde::to_vec(&response)
                     .map_err(|e| HandlerResult {
