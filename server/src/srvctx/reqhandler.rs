@@ -7,6 +7,7 @@ pub fn register_handlers(rx: &mut GrpcRX) -> Result<()> {
     if let Some(handler) = &mut rx.context.handler {
         Arc::get_mut(handler)
             .ok_or_else(|| anyhow::anyhow!("Handler dispatcher is shared and cannot be mutated"))?
+            .register("health::check", crate::health::check)
             .register("bench::times_two", crate::bench::times_two)
             .register("bench::times_three", crate::bench::times_three)
             .register("datastore::times_two", crate::datastore::times_two)
