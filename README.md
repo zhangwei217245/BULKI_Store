@@ -47,6 +47,13 @@ source ~/.venv/bulkistore/bin/activate
 pip install maturin
 ```
 
+or if you are using conda, you can just do:
+```bash
+conda activate bulkistore
+conda install conda-forge::maturin
+```
+
+
 ## Building commons and server
 
 ```bash
@@ -70,5 +77,6 @@ RUST_LOG=debug mpirun -np 4 target/debug/bulkistore-server
 ## Running the client
 
 ```bash
+RUST_BACKTRACE=1 RUST_LOG=debug python testbkcobj3D.py
 RUST_BACKTRACE=1 RUST_LOG=debug python testbkcobj5D.py 
 ```
