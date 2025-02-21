@@ -9,6 +9,12 @@ use pyo3::{types::PyDict, Bound};
 
 use crate::pyctx::converter::SupportedNumpyArray;
 
+/// Notes:
+/// if you specify parent_id, all the objects including sub-objects will be created under the parent object,
+/// and they will be co-located on the same virtual node.
+/// Otherwise, each major object will be created on a different virtual node,
+/// and all the sub-objects will be co-located on the same virtual node.
+/// But one thing is certain: regardless of the existence of parent_id, the sub-objects and major object will be colocated.
 pub fn create_objects_req_proc<'py>(
     name: String,
     parent_id: Option<u128>,
@@ -43,9 +49,6 @@ pub fn create_objects_req_proc<'py>(
         Some(array_vec) => {
             let vec_len = array_vec.len();
             let mut params = Vec::with_capacity(vec_len + 1);
-            // with the above, the object id is guaranteed to be colocated with the parent object on the same virtual node.
-            // and even for the sub-objects below, since we take the vnode_id from master object, they will be colocated as well.
-            // this will ensure that : regardless of the existence of parent_id, the sub-objects and major object will be colocated.
 
             // Step 1: create the major object first
             let major_object = CreateObjectParams {
@@ -80,7 +83,7 @@ pub fn create_objects_req_proc<'py>(
 
                 let obj_id = commons::object::objid::GlobalObjectId::with_vnode_id(
                     &sub_obj_name,
-                    Some(main_obj_id.vnode_id()),
+                    Some(parent_id.unwrap_or_else(|| main_obj_id).vnode_id()),
                 )
                 .to_u128();
 
