@@ -27,15 +27,25 @@ lazy_static! {
 
 /// The object ID is a globally unique identifier (GUID) of an object.
 /// The format is [ timestamp (64 bits) | sequence (32 bits) | version (8 bits) | name_hash (24 bits) ]
+/// timestamp: microseconds since epoch (enough for 584,000 years)
+/// sequence: a number that is unique within a single process and increases monotonically
+/// version: the version of the object
+/// name_hash: the hash of the object name, used for virtual node ID.
 ///
+/// Notes:
+/// We use the name_hash for virtual node ID, since it is FNV hash, which is fast and collision-free,
+/// this can ensure an even object distribution on virtual nodes.
 ///
-///
+/// What is the maximum number of virtual nodes we support?
+/// 2^24 = 16,777,216.
+/// Some facts:
 /// The total number of CPU cores of Perlmutter: 507,904
 /// The largest number of CPU cores a supercomputer may have: 10,649,600 (Sunway TaihuLight)
 /// An order of 100 million servers in active operation worldwide.
-/// Therefore, we consider 2^32 to be the largest number of virtual nodes we support,
-/// and this can cover almost all the active servers worldwide,
-/// and even more than what the largest supercomputer can hold.
+///
+/// Therefore, we can see that 24 bits is enough for us to cover a huge number of physical nodes
+/// and this almost 10% of all the active servers worldwide,
+/// and even more than the total number of CPU cores the largest supercomputer has.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct GlobalObjectId {
     // [ timestamp (64 bits) | sequence (32 bits) | name_hash (24 bits) | version (8 bits) ]
