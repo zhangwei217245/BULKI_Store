@@ -1,21 +1,20 @@
 pub mod converter;
 use crate::cltctx::{get_server_count, ClientContext};
 use anyhow::Result;
-use commons::object::params::{GetObjectSliceParams, GetObjectSliceResponse};
-use commons::object::types::SerializableSliceInfoElem;
+use commons::object::params::{GetObjectMetaResponse, GetObjectSliceResponse};
 use commons::rpc::RPCData;
 use commons::{object::objid::GlobalObjectIdExt, region::SerializableNDArray};
-use converter::SupportedNumpyArray;
+use converter::{MetaKeySpec, SupportedNumpyArray};
 use log::debug;
 use numpy::{
-    ndarray::{ArrayD, ArrayViewD, ArrayViewMutD, Axis, SliceInfoElem},
+    ndarray::{ArrayD, ArrayViewD, ArrayViewMutD, Axis},
     Complex64, Element, PyArray, PyReadonlyArrayDyn,
 };
 use pyo3::types::PyInt;
 use pyo3::Py;
 use pyo3::{
     exceptions::PyValueError,
-    types::{PyAnyMethods, PyDict, PySlice},
+    types::{PyDict, PySlice},
     Bound, PyErr, PyObject, PyResult, Python,
 };
 use std::{cell::RefCell, ops::Add, sync::Arc};
@@ -145,6 +144,7 @@ pub fn create_object_impl<'py>(
     obj_name_key: String,
     parent_id: Option<u128>,
     metadata: Option<Bound<'py, PyDict>>,
+    data: Option<SupportedNumpyArray<'py>>,
     array_meta_list: Option<Vec<Option<Bound<'py, PyDict>>>>,
     array_data_list: Option<Vec<Option<SupportedNumpyArray<'py>>>>,
 ) -> PyResult<Vec<Py<PyInt>>> {
@@ -152,6 +152,7 @@ pub fn create_object_impl<'py>(
         obj_name_key,
         parent_id,
         metadata,
+        data,
         array_meta_list,
         array_data_list,
     );
@@ -194,10 +195,42 @@ pub fn get_object_metadata_impl<'py>(
     py: Python<'py>,
     obj_id: u128,
     meta_keys: Option<Vec<String>>,
-    sub_object_meta_keys: Option<Vec<String>>,
+    sub_meta_keys: Option<MetaKeySpec>,
 ) -> PyResult<Py<PyDict>> {
-    // TODO
-    unimplemented!()
+    let get_object_metadata_params =
+        super::datastore::get_object_metadata_req_proc(obj_id, meta_keys, sub_meta_keys);
+    match get_object_metadata_params {
+        Err(_) => Err(PyErr::new::<PyValueError, _>(
+            "Failed to create get_object_metadata_params",
+        )),
+        Ok(params) => {
+            let main_obj_id = params.obj_id;
+            // Serialize the parameters using MessagePack
+            let serialized_params = rmp_serde::to_vec(&params).map_err(|e| {
+                PyErr::new::<PyValueError, _>(format!("Failed to serialize params: {}", e))
+            })?;
+            debug!(
+                "get_object_metadata: params data length: {:?}",
+                serialized_params.len()
+            );
+            // Get binary data from response (assuming response.data contains the binary payload)
+            let response_data = rpc_call(
+                main_obj_id.vnode_id() % get_server_count(),
+                "datastore::get_object_metadata",
+                Some(serialized_params),
+            );
+            debug!(
+                "get_object_metadata: response data length: {:?}",
+                response_data.as_ref().unwrap().len()
+            );
+            let result: GetObjectMetaResponse = rmp_serde::from_slice(&response_data.unwrap())
+                .map_err(|e| {
+                    PyErr::new::<PyValueError, _>(format!("Deserialization error: {}", e))
+                })?;
+            debug!("get_object_metadata: result: {:?}", result);
+            converter::convert_get_object_meta_response_to_pydict(py, result)
+        }
+    }
 }
 
 pub fn get_object_data_impl<'py>(

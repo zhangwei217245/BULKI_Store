@@ -1,18 +1,22 @@
 use anyhow::Result;
 use commons::handler::HandlerResult;
-use commons::object::params::{GetObjectSliceParams, GetObjectSliceResponse};
+use commons::object::params::{
+    GetObjectMetaParams, GetObjectMetaResponse, GetObjectSliceParams, GetObjectSliceResponse,
+    SerializableMetaKeySpec,
+};
 use commons::object::types::SerializableSliceInfoElem;
 use commons::object::{
     params::CreateObjectParams,
     types::{MetadataValue, SupportedRustArrayD},
     DataObject, DataStore,
 };
-use commons::region::{SerializableNDArray, SerializableSlice};
+use commons::region::SerializableNDArray;
 use commons::rpc::{RPCData, StatusCode};
 use lazy_static::lazy_static;
 use log::debug;
-use ndarray::{Slice, SliceInfoElem};
+use ndarray::SliceInfoElem;
 use rmp_serde;
+use std::collections::HashMap;
 use std::sync::atomic::{AtomicU32, AtomicU64};
 use std::sync::{Arc, RwLock};
 
@@ -39,7 +43,7 @@ fn create_object_internal(param: CreateObjectParams) -> Result<Option<u128>> {
     let obj = DataObject::new(param);
     let obj_id = obj.id;
     // Insert into store
-    GLOBAL_STORE.write().unwrap().insert(obj);
+    GLOBAL_STORE.write().unwrap().insert(obj)?;
     Ok(Some(obj_id))
 }
 
@@ -169,6 +173,108 @@ pub fn get_object_data(data: &mut RPCData) -> HandlerResult {
     }
 }
 
+#[allow(dead_code)]
+/// Get metadata for a DataObject by its ID and metadata keys.
+pub fn get_object_metadata(data: &mut RPCData) -> HandlerResult {
+    // Deserialize the ID from the incoming data.
+    let params: GetObjectMetaParams = rmp_serde::from_slice(&data.data.as_ref().unwrap())
+        .map_err(|e| HandlerResult {
+            status_code: StatusCode::Internal as u8,
+            message: Some(format!("Failed to deserialize id: {}", e)),
+        })
+        .unwrap();
+    let store = GLOBAL_STORE.read().unwrap();
+    let key_refs = params
+        .meta_keys
+        .as_ref()
+        .map(|ks| ks.iter().map(|k| k.as_str()).collect())
+        .unwrap_or_default();
+
+    let obj_metadata: Option<(String, HashMap<String, MetadataValue>)> =
+        store.get_obj_metadata(params.obj_id, key_refs);
+
+    let (obj_name, metadata) = match obj_metadata {
+        Some((obj_name, metadata)) => (obj_name, metadata),
+        None => {
+            return HandlerResult {
+                status_code: StatusCode::NotFound as u8,
+                message: Some(format!("Object {} not found", params.obj_id)),
+            }
+        }
+    };
+
+    let sub_metadata_result: Option<Vec<(u128, String, HashMap<String, MetadataValue>)>> =
+        match params.sub_meta_keys {
+            Some(SerializableMetaKeySpec::Simple(keys)) => {
+                // loading the same set of attributes for all related sub-objects
+                let sub_obj_ids = store.get_obj_children(params.obj_id).unwrap_or(vec![]);
+                let meta_filter: Vec<&str> = keys.iter().map(|s| s.as_str()).collect();
+                Some(
+                    sub_obj_ids
+                        .iter()
+                        .map(|(id, obj_name)| {
+                            (
+                                id.to_owned(),
+                                obj_name.clone(),
+                                store
+                                    .get_obj_metadata(id.to_owned(), meta_filter.clone())
+                                    .and_then(|(_, ometa)| Some(ometa))
+                                    .unwrap_or(HashMap::new()),
+                            )
+                        })
+                        .collect(),
+                )
+            }
+            Some(SerializableMetaKeySpec::WithObject(map)) => {
+                // loading different sets of attributes for each specified sub-object
+                let sub_obj_ids = store.get_obj_children(params.obj_id).unwrap_or(vec![]);
+                Some(
+                    sub_obj_ids
+                        .iter()
+                        .filter(|(_, obj_name)| map.contains_key(obj_name))
+                        .map(|(id, obj_name)| {
+                            (
+                                id.to_owned(),
+                                obj_name.to_owned(),
+                                store
+                                    .get_named_obj_metadata(
+                                        obj_name,
+                                        map.get(obj_name)
+                                            .unwrap_or(&vec![])
+                                            .iter()
+                                            .map(|s| s.as_str())
+                                            .collect(),
+                                    )
+                                    .unwrap_or(HashMap::new()),
+                            )
+                        })
+                        .collect(),
+                )
+            }
+            None => None,
+        };
+
+    let result = GetObjectMetaResponse {
+        obj_id: params.obj_id,
+        obj_name: obj_name.clone(),
+        metadata: Some(metadata),
+        sub_obj_metadata: sub_metadata_result,
+    };
+
+    data.data = Some(
+        rmp_serde::to_vec(&result)
+            .map_err(|e| HandlerResult {
+                status_code: StatusCode::Internal as u8,
+                message: Some(format!("Failed to serialize response: {}", e)),
+            })
+            .unwrap(),
+    );
+    HandlerResult {
+        status_code: StatusCode::Ok as u8,
+        message: None,
+    }
+}
+
 /// Update metadata of a DataObject.
 pub fn update_metadata(data: &mut RPCData) -> HandlerResult {
     // Deserialize (id, key, value) from the incoming data.
@@ -186,7 +292,15 @@ pub fn update_metadata(data: &mut RPCData) -> HandlerResult {
         Some(mut obj) => {
             // Update the metadata and reinsert the object.
             obj.set_metadata(key, value);
-            store.insert(obj.clone());
+            match store.insert(obj.clone()) {
+                Ok(_) => (),
+                Err(e) => {
+                    return HandlerResult {
+                        status_code: StatusCode::Internal as u8,
+                        message: Some(format!("Failed to update metadata: {}", e)),
+                    }
+                }
+            };
             data.data = Some(
                 rmp_serde::to_vec(&obj)
                     .map_err(|e| HandlerResult {
@@ -223,7 +337,15 @@ pub fn update_array(data: &mut RPCData) -> HandlerResult {
         Some(mut obj) => {
             // Update the NDArray and reinsert the object.
             obj.attach_array(array);
-            store.insert(obj.clone());
+            match store.insert(obj.clone()) {
+                Ok(_) => (),
+                Err(e) => {
+                    return HandlerResult {
+                        status_code: StatusCode::Internal as u8,
+                        message: Some(format!("Failed to update array: {}", e)),
+                    }
+                }
+            };
             data.data = Some(
                 rmp_serde::to_vec(&obj)
                     .map_err(|e| HandlerResult {
@@ -274,45 +396,6 @@ pub fn delete_object(data: &mut RPCData) -> HandlerResult {
         None => HandlerResult {
             status_code: StatusCode::NotFound as u8,
             message: Some(format!("Object with id {} not found", id)),
-        },
-    }
-}
-
-#[allow(dead_code)]
-/// Get metadata for a DataObject by its ID and metadata keys.
-pub fn get_metadata(data: &mut RPCData) -> HandlerResult {
-    // Deserialize the ID and keys from the incoming data.
-    let (id, keys): (u128, Vec<String>) = rmp_serde::from_slice(&data.data.as_ref().unwrap())
-        .map_err(|e| HandlerResult {
-            status_code: StatusCode::Internal as u8,
-            message: Some(format!("Failed to deserialize input: {}", e)),
-        })
-        .unwrap();
-
-    // Convert String keys to &str
-    let key_refs: Vec<&str> = keys.iter().map(|s| s.as_str()).collect();
-
-    // Acquire a read lock on the DataStore.
-    let store = GLOBAL_STORE.read().unwrap();
-    match store.get_metadata(id, key_refs) {
-        Some(metadata) => {
-            // Serialize the metadata back into RPCData.
-            data.data = Some(
-                rmp_serde::to_vec(&metadata)
-                    .map_err(|e| HandlerResult {
-                        status_code: StatusCode::Internal as u8,
-                        message: Some(format!("Failed to serialize metadata: {}", e)),
-                    })
-                    .unwrap(),
-            );
-            HandlerResult {
-                status_code: StatusCode::Ok as u8,
-                message: None,
-            }
-        }
-        None => HandlerResult {
-            status_code: StatusCode::NotFound as u8,
-            message: Some(format!("Metadata not found for object {}", id)),
         },
     }
 }

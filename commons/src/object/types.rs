@@ -1,4 +1,4 @@
-use ndarray::{ArrayD, IxDyn, Slice, SliceInfo, SliceInfoElem};
+use ndarray::{ArrayD, IxDyn, SliceInfo, SliceInfoElem};
 use serde::{Deserialize, Serialize};
 
 /// Represents various types of metadata values.

@@ -21,6 +21,10 @@ pub fn register_handlers(rx: &mut GrpcRX) -> Result<()> {
                 crate::datastore::get_object_data,
             )
             .register(
+                "datastore::get_object_metadata",
+                crate::datastore::get_object_metadata,
+            )
+            .register(
                 "datastore::update_metadata",
                 crate::datastore::update_metadata,
             )

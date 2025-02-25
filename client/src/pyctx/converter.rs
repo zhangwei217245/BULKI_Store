@@ -1,13 +1,13 @@
 use commons::object::{
-    params::GetObjectSliceResponse,
+    params::{GetObjectMetaResponse, GetObjectSliceResponse},
     types::{MetadataValue, SerializableSliceInfoElem, SupportedRustArrayD},
 };
-use log::debug;
+
 use ndarray::SliceInfoElem;
 use numpy::{IntoPyArray, PyArrayDyn, PyArrayMethods};
 use pyo3::{
     exceptions::PyValueError,
-    types::{PyAnyMethods, PyDict, PyDictMethods, PyInt, PyList, PySlice},
+    types::{PyAnyMethods, PyDict, PyDictMethods, PyInt, PyList, PyListMethods, PySlice},
     Bound, FromPyObject, IntoPyObjectExt, Py, PyAny, PyErr, PyResult, Python,
 };
 use std::cell::RefCell;
@@ -124,6 +124,23 @@ impl<'py> SupportedNumpyArray<'py> {
                 SupportedRustArrayD::Float64(arr)
             }
         }
+    }
+}
+
+pub fn convert_metadata_value_to_pyany<'py>(
+    py: Python<'py>,
+    value: MetadataValue,
+) -> PyResult<Bound<'py, PyAny>> {
+    match value {
+        MetadataValue::Int(v) => v.into_bound_py_any(py),
+        MetadataValue::UInt(v) => v.into_bound_py_any(py),
+        MetadataValue::Float(v) => v.into_bound_py_any(py),
+        MetadataValue::String(v) => v.into_bound_py_any(py),
+        MetadataValue::IntList(v) => v.into_bound_py_any(py),
+        MetadataValue::UIntList(v) => v.into_bound_py_any(py),
+        MetadataValue::FloatList(v) => v.into_bound_py_any(py),
+        MetadataValue::StringList(v) => v.into_bound_py_any(py),
+        MetadataValue::RangeList(v) => v.into_bound_py_any(py),
     }
 }
 
@@ -295,7 +312,7 @@ pub fn convert_get_object_slice_response_to_pydict<'py>(
     py: Python<'py>,
     response: GetObjectSliceResponse,
 ) -> PyResult<Py<PyDict>> {
-    let mut dict = PyDict::new(py);
+    let dict = PyDict::new(py);
     dict.set_item(
         "array_slice",
         response
@@ -352,4 +369,80 @@ pub fn convert_get_object_slice_response_to_pydict<'py>(
     dict.set_item("sub_obj_slices", sub_slices)?;
     // debug!("Converted response: {:?}", dict);
     Ok(dict.into())
+}
+
+pub fn convert_get_object_meta_response_to_pydict<'py>(
+    py: Python<'py>,
+    response: GetObjectMetaResponse,
+) -> PyResult<Py<PyDict>> {
+    let dict = PyDict::new(py);
+
+    // Convert obj_id to Python int
+    let obj_id = response.obj_id;
+    dict.set_item("obj_id", obj_id)?;
+
+    // Convert metadata if present
+    if let Some(metadata) = response.metadata {
+        let meta_dict = PyDict::new(py);
+        for (key, value) in metadata {
+            meta_dict.set_item(key, convert_metadata_value_to_pyany(py, value)?)?;
+        }
+        dict.set_item("metadata", meta_dict)?;
+    } else {
+        dict.set_item("metadata", py.None())?;
+    }
+    // Convert sub_obj_metadata if present
+    if let Some(sub_metadata) = response.sub_obj_metadata {
+        let sub_meta_list = PyList::empty(py);
+        for (sub_obj_id, sub_obj_name, sub_meta) in sub_metadata {
+            let sub_dict = PyDict::new(py);
+            sub_dict.set_item("obj_id", sub_obj_id)?;
+            sub_dict.set_item("name", sub_obj_name)?;
+
+            let meta_dict = PyDict::new(py);
+            for (key, value) in sub_meta {
+                meta_dict.set_item(key, convert_metadata_value_to_pyany(py, value)?)?;
+            }
+            sub_dict.set_item("metadata", meta_dict)?;
+            sub_meta_list.append(sub_dict)?;
+        }
+        dict.set_item("sub_obj_metadata", sub_meta_list)?;
+    } else {
+        dict.set_item("sub_obj_metadata", py.None())?;
+    }
+    Ok(dict.into())
+}
+
+#[derive(Debug)]
+pub enum MetaKeySpec {
+    Simple(Vec<String>),
+    WithObject(HashMap<String, Vec<String>>),
+}
+
+impl From<Vec<String>> for MetaKeySpec {
+    fn from(keys: Vec<String>) -> Self {
+        MetaKeySpec::Simple(keys)
+    }
+}
+
+impl<'py> FromPyObject<'py> for MetaKeySpec {
+    fn extract_bound(ob: &Bound<'py, PyAny>) -> PyResult<Self> {
+        if let Ok(keys) = <Vec<String>>::extract_bound(ob) {
+            return Ok(MetaKeySpec::Simple(keys));
+        }
+
+        if let Ok(dict) = ob.downcast::<PyDict>() {
+            let mut meta_map = HashMap::new();
+            for (key, value) in dict.iter() {
+                let obj_name = key.extract::<String>()?;
+                let meta_keys = value.extract::<Vec<String>>()?;
+                meta_map.insert(obj_name, meta_keys);
+            }
+            return Ok(MetaKeySpec::WithObject(meta_map));
+        }
+
+        Err(PyValueError::new_err(
+            "Expected either a list of strings or a tuple (str, list[str])",
+        ))
+    }
 }

@@ -2,8 +2,9 @@ pub mod objid;
 pub mod params;
 pub mod types;
 use dashmap::DashMap;
-use ndarray::{Slice, SliceInfoElem};
+use ndarray::SliceInfoElem;
 
+use anyhow::Result;
 use params::CreateObjectParams;
 use rmp_serde::encode;
 use serde::{Deserialize, Serialize};
@@ -29,7 +30,7 @@ pub struct DataObject {
     /// Arbitrary metadata attributes.
     pub metadata: HashMap<String, MetadataValue>,
     /// Nested child DataObjects.
-    pub children: Option<HashSet<u128>>,
+    pub children: Option<HashSet<(u128, String)>>,
     /// The name to ID index for all children.
     pub child_name_idx: Option<HashMap<String, u128>>,
 }
@@ -58,7 +59,10 @@ impl DataObject {
 
     /// Add a child DataObject.
     pub fn add_child(&mut self, obj_name: String, child_id: u128) {
-        self.children.as_mut().unwrap().insert(child_id);
+        self.children
+            .as_mut()
+            .unwrap()
+            .insert((child_id, obj_name.clone()));
         self.child_name_idx
             .as_mut()
             .unwrap()
@@ -85,12 +89,24 @@ impl DataObject {
 
     /// get all child ids.
     pub fn get_children_ids(&self) -> Vec<u128> {
-        self.children.as_ref().unwrap().iter().cloned().collect()
+        self.children
+            .as_ref()
+            .unwrap()
+            .iter()
+            .map(|(id, _)| id.to_owned())
+            .collect()
     }
 
     // remove a child
     pub fn remove_child(&mut self, child_id: u128) {
-        self.children.as_mut().unwrap().remove(&child_id);
+        self.children
+            .as_mut()
+            .unwrap()
+            .retain(|(id, _)| *id != child_id);
+        self.child_name_idx
+            .as_mut()
+            .unwrap()
+            .retain(|_, id| *id != child_id);
     }
 
     /// Get a slice of the attached NDArray.
@@ -171,10 +187,14 @@ impl DataStore {
     }
 
     /// Insert or update a DataObject in the store.
-    pub fn insert(&self, obj: DataObject) {
+    pub fn insert(&self, obj: DataObject) -> Result<()> {
         let obj_id = obj.id;
         let parent_obj_id = obj.parent_id;
         let obj_name = obj.name.clone();
+        // validate if obj_name exists
+        if self.name_obj_idx.contains_key(&obj_name) {
+            return Err(anyhow::Error::msg("Object name already exists"));
+        }
         // save object
         self.objects.insert(obj_id, obj);
         // add name to obj index
@@ -182,17 +202,35 @@ impl DataStore {
         // add to parent child index of parent object
         if let Some(parent_id) = parent_obj_id {
             if parent_id == obj_id {
-                return;
+                return Err(anyhow::Error::msg(
+                    "Parent and child objects cannot have the same ID",
+                ));
             }
             if let Some(mut parent_obj) = self.objects.get_mut(&parent_id) {
                 parent_obj.add_child(obj_name.clone(), obj_id);
+                Ok(())
+            } else {
+                Err(anyhow::Error::msg("Parent object not found"))
             }
+        } else {
+            Ok(())
         }
     }
 
     /// Retrieve a DataObject by its u128 ID.
     pub fn get(&self, id: u128) -> Option<DataObject> {
         self.objects.get(&id).map(|entry| entry.clone())
+    }
+
+    pub fn get_named_obj_metadata(
+        &self,
+        obj_name: &str,
+        keys: Vec<&str>,
+    ) -> Option<HashMap<String, MetadataValue>> {
+        self.name_obj_idx.get(obj_name).and_then(|reference| {
+            self.get(reference.value().to_owned())
+                .map(|obj| obj.get_metadata_map(keys))
+        })?
     }
 
     /// attach or update metadata of a DataObject by id
@@ -202,13 +240,32 @@ impl DataStore {
         }
     }
 
+    /// get the children of an object
+    pub fn get_obj_children(&self, id: u128) -> Option<Vec<(u128, String)>> {
+        // TODO: to check the case when the specified object does not exist
+        Some(
+            self.objects
+                .get(&id)?
+                .children
+                .as_ref()?
+                .iter()
+                .map(|(id, name)| (id.to_owned(), name.to_owned()))
+                .collect(),
+        )
+    }
+
     /// get a group of metadata by keys.
-    pub fn get_metadata(
+    pub fn get_obj_metadata(
         &self,
         id: u128,
         keys: Vec<&str>,
-    ) -> Option<HashMap<String, MetadataValue>> {
-        self.objects.get(&id).unwrap().get_metadata_map(keys)
+    ) -> Option<(String, HashMap<String, MetadataValue>)> {
+        self.objects.get(&id).map(|obj| {
+            (
+                obj.name.clone(),
+                obj.get_metadata_map(keys).unwrap_or(HashMap::new()),
+            )
+        })
     }
 
     /// Retrieve a slice from the NDArray attached to a DataObject identified by its u128 ID.

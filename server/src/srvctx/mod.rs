@@ -81,7 +81,6 @@ impl ServerContext {
         let (shutdown_tx, shutdown_rx) = oneshot::channel();
         let _ = endpoint.listen(start_listen_tx, shutdown_rx).await?;
         debug!("Endpoint {} is listening now", id);
-       
         let endpoint = Arc::new(TokioMutex::new(endpoint));
         self.endpoints.insert(id.to_string(), endpoint);
         self.endpoint_shutdowns.insert(id.to_string(), shutdown_tx);
