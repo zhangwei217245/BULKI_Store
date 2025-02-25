@@ -29,15 +29,57 @@ if __name__ == "__main__":
     print(arr6)
     obj_ids = bkc.create_objects(
         "name",
-        metadata={"name": "container", "type": "container"},
+        metadata={
+            "name": "container",
+            "type": "container",
+            "keys": ["arr6", "arr4"],
+            "ranges": [(1, 100), (100, 200)],
+            "part_num": 1,
+            "part_size": 100,
+        },
         parent_id=None,
         array_meta_list=[
-            {"name": "arr6", "type": "array"},
-            {"name": "arr4", "type": "array"},
+            {
+                "name": "arr6",
+                "type": "array",
+                "shape": arr6.shape,
+                "vcount": 100,
+                "voffset": 0,
+                "vdim": 0,
+            },
+            {
+                "name": "arr4",
+                "type": "array",
+                "shape": arr4.shape,
+                "vcount": 100,
+                "voffset": 0,
+                "vdim": 0,
+            },
         ],
         array_data_list=[arr6, arr4],
     )
     print(obj_ids)
+
+    result = bkc.get_object_metadata(
+        obj_ids[0],
+        meta_keys=["type", "keys", "ranges"],
+        sub_meta_keys=["name", "shape", "vcount", "voffset", "vdim"],
+    )
+    print(result)
+
+    result = bkc.get_object_metadata(
+        obj_ids[0],
+        meta_keys=["type", "keys", "ranges"],
+        sub_meta_keys={"arr6": ["name", "shape", "vcount", "voffset", "vdim"]},
+    )
+    print(result)
+
+    result = bkc.get_object_metadata(
+        obj_ids[0],
+        meta_keys=["type", "keys", "ranges"],
+        sub_meta_keys={"arr4": ["name", "shape", "vcount", "voffset", "vdim"]},
+    )
+    print(result)
 
     result = bkc.get_object_data(
         obj_ids[0],
