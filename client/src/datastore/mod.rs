@@ -9,7 +9,7 @@ use commons::{
         },
         types::SerializableSliceInfoElem,
     },
-    rpc::RPCData,
+    rpc::{RPCData, StatusCode},
 };
 use log::debug;
 use pyo3::{
@@ -26,7 +26,7 @@ fn generate_random_string() -> String {
     let pid = std::process::id();
     let timestamp = SystemTime::now()
         .duration_since(UNIX_EPOCH)
-        .unwrap()
+        .expect("System time should never be before UNIX_EPOCH")
         .as_micros();
 
     let random_suffix: String = rand::rng()
@@ -54,7 +54,7 @@ pub fn create_objects_req_proc<'py>(
 ) -> Option<Vec<CreateObjectParams>> {
     // Convert single metadata dict
     let major_metadata = crate::pyctx::converter::convert_metadata(Some(vec![metadata]))
-        .unwrap()
+        .unwrap_or(None)
         .and_then(|mut vec| vec.pop())
         .flatten();
 
@@ -63,7 +63,8 @@ pub fn create_objects_req_proc<'py>(
         None => None,
     };
 
-    let sub_obj_meta_list = crate::pyctx::converter::convert_metadata(sub_obj_meta_list).unwrap();
+    let sub_obj_meta_list =
+        crate::pyctx::converter::convert_metadata(sub_obj_meta_list).unwrap_or(None);
 
     // Get the name from metadata or generate a random one
     let obj_name = major_metadata
@@ -148,12 +149,28 @@ pub fn create_objects_req_proc<'py>(
 pub fn common_resp_proc(response: &mut RPCData) -> HandlerResult {
     debug!(
         "Processing response: data length: {:?}",
-        response.data.as_ref().unwrap().len()
+        response.data.as_ref().map(|v| v.len()).unwrap_or(0)
     );
 
-    let result_metadata = response.metadata.as_mut().unwrap();
-    let handler_result = result_metadata.handler_result.as_ref().unwrap();
-    handler_result.to_owned()
+    // If metadata is missing, return error
+    let result_metadata = match response.metadata.as_mut() {
+        Some(metadata) => metadata,
+        None => {
+            return HandlerResult {
+                status_code: StatusCode::Internal as u8,
+                message: Some("Response metadata is missing".to_string()),
+            }
+        }
+    };
+
+    // If handler_result is missing, return error
+    match &result_metadata.handler_result {
+        Some(handler_result) => handler_result.to_owned(),
+        None => HandlerResult {
+            status_code: StatusCode::Internal as u8,
+            message: Some("Handler result is missing".to_string()),
+        },
+    }
 }
 
 pub fn get_object_slice_req_proc<'py>(
@@ -178,26 +195,28 @@ pub fn get_object_slice_req_proc<'py>(
     });
 
     // Convert sub-object regions
-    let serializable_sub_regions = sub_obj_regions.map(|sub_regions| {
-        sub_regions
-            .into_iter()
-            .map(|(name, slices)| {
-                let slice_elems =
-                    super::pyctx::converter::convert_pyslice_vec_to_rust_serde_slice_vec(
-                        slices.len(),
-                        Some(slices),
-                    );
-                Ok((
-                    name,
-                    match slice_elems {
-                        Ok(slice_elems) => Some(slice_elems),
-                        Err(_) => None,
-                    },
-                ))
-            })
-            .collect::<Result<Vec<_>>>()
-            .unwrap()
-    });
+    let serializable_sub_regions = sub_obj_regions
+        .map(|sub_regions| {
+            sub_regions
+                .into_iter()
+                .map(|(name, slices)| {
+                    let slice_elems =
+                        super::pyctx::converter::convert_pyslice_vec_to_rust_serde_slice_vec(
+                            slices.len(),
+                            Some(slices),
+                        );
+                    Ok((
+                        name,
+                        match slice_elems {
+                            Ok(slice_elems) => Some(slice_elems),
+                            Err(_) => None,
+                        },
+                    ))
+                })
+                .collect::<Result<Vec<_>>>()
+        })
+        .transpose()
+        .map_err(|e| anyhow::anyhow!("Failed to process sub-object regions: {}", e))?;
 
     let get_object_data_params = GetObjectSliceParams {
         obj_id,

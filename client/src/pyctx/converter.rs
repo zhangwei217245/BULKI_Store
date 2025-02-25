@@ -220,15 +220,21 @@ pub fn convert_metadata<'py>(
 }
 
 pub fn convert_vec_u128_to_py_long(py: Python, vec: Vec<u128>) -> PyResult<Vec<Py<PyInt>>> {
-    let rst = vec
-        .into_iter()
-        .map(|num| {
-            let obj = num.into_py_any(py).unwrap();
-            let pylong = obj.downcast_bound::<PyInt>(py).unwrap();
-            pylong.clone().unbind()
+    vec.into_iter()
+        .map(|num| -> PyResult<_> {
+            let obj = num.into_py_any(py).map_err(|e| {
+                PyErr::new::<PyValueError, _>(format!("Failed to convert {} to PyAny: {}", num, e))
+            })?;
+            obj.downcast_bound::<PyInt>(py)
+                .map_err(|e| {
+                    PyErr::new::<PyValueError, _>(format!(
+                        "Failed to downcast {} to PyInt: {}",
+                        num, e
+                    ))
+                })
+                .map(|pyint| pyint.clone().unbind())
         })
-        .collect();
-    Ok(rst)
+        .collect()
 }
 
 /// Convert a Python slice (wrapped in Bound) into an ndarray SliceInfoElem.
@@ -362,7 +368,7 @@ pub fn convert_get_object_slice_response_to_pydict<'py>(
                 sub_dict.set_item("array", py_array)?;
                 temp_array.push(sub_dict);
             }
-            Some(PyList::new(py, temp_array).unwrap())
+            Some(PyList::new(py, temp_array)?)
         }
         None => None,
     };

@@ -103,7 +103,10 @@ pub fn init_py(py: Python<'_>) -> PyResult<()> {
 fn rpc_call(srv_id: u32, method_name: &str, data: Option<Vec<u8>>) -> Result<Vec<u8>> {
     debug!(
         "[RPC_CALL][TX Rank {}] Sending Data of length {} to server {}",
-        CONTEXT.with(|ctx| ctx.borrow().as_ref().unwrap().get_rank()),
+        CONTEXT.with(|ctx| ctx
+            .borrow()
+            .as_ref()
+            .map_or(0, |context| context.get_rank())),
         data.as_ref().map(|d| d.len()).unwrap_or(0),
         srv_id
     );
@@ -127,7 +130,10 @@ fn rpc_call(srv_id: u32, method_name: &str, data: Option<Vec<u8>>) -> Result<Vec
         .map_err(|e| PyErr::new::<PyValueError, _>(format!("RPC error: {}", e)))?;
     debug!(
         "[RPC_CALL][TX Rank {}] Received response from server {}",
-        CONTEXT.with(|ctx| ctx.borrow().as_ref().unwrap().get_rank()),
+        CONTEXT.with(|ctx| ctx
+            .borrow()
+            .as_ref()
+            .map_or(0, |context| context.get_rank())),
         srv_id
     );
     // Increment request counter
@@ -136,7 +142,9 @@ fn rpc_call(srv_id: u32, method_name: &str, data: Option<Vec<u8>>) -> Result<Vec
         *counter += 1;
     });
     // Get binary data from response (assuming response.data contains the binary payload)
-    Ok(response.data.unwrap())
+    response
+        .data
+        .ok_or(anyhow::anyhow!("Response data is missing"))
 }
 
 pub fn create_object_impl<'py>(
@@ -178,12 +186,15 @@ pub fn create_object_impl<'py>(
             );
             debug!(
                 "create_objects: response data length: {:?}",
-                response_data.as_ref().unwrap().len()
+                response_data.as_ref().map_or(0, |d| d.len())
             );
-            let result: Vec<u128> =
-                rmp_serde::from_slice(&response_data.unwrap()).map_err(|e| {
-                    PyErr::new::<PyValueError, _>(format!("Deserialization error: {}", e))
-                })?;
+            let result: Vec<u128> = rmp_serde::from_slice(&response_data.map_err(|e| {
+                PyErr::new::<PyValueError, _>(format!(
+                    "RPC call failed, response data error: {}",
+                    e
+                ))
+            })?)
+            .map_err(|e| PyErr::new::<PyValueError, _>(format!("Deserialization error: {}", e)))?;
             debug!("create_objects: result vector length: {:?}", result.len());
             debug!("create_objects: result vector: {:?}", result);
             converter::convert_vec_u128_to_py_long(py, result)
@@ -221,9 +232,15 @@ pub fn get_object_metadata_impl<'py>(
             );
             debug!(
                 "get_object_metadata: response data length: {:?}",
-                response_data.as_ref().unwrap().len()
+                response_data.as_ref().map_or(0, |d| d.len())
             );
-            let result: GetObjectMetaResponse = rmp_serde::from_slice(&response_data.unwrap())
+            let result: GetObjectMetaResponse =
+                rmp_serde::from_slice(&response_data.map_err(|e| {
+                    PyErr::new::<PyValueError, _>(format!(
+                        "RPC call failed, response data error: {}",
+                        e
+                    ))
+                })?)
                 .map_err(|e| {
                     PyErr::new::<PyValueError, _>(format!("Deserialization error: {}", e))
                 })?;
@@ -263,9 +280,15 @@ pub fn get_object_data_impl<'py>(
             );
             debug!(
                 "get_object_data: response data length: {:?}",
-                response_data.as_ref().unwrap().len()
+                response_data.as_ref().map_or(0, |d| d.len())
             );
-            let result: GetObjectSliceResponse = rmp_serde::from_slice(&response_data.unwrap())
+            let result: GetObjectSliceResponse =
+                rmp_serde::from_slice(&response_data.map_err(|e| {
+                    PyErr::new::<PyValueError, _>(format!(
+                        "RPC call failed, response data error: {}",
+                        e
+                    ))
+                })?)
                 .map_err(|e| {
                     PyErr::new::<PyValueError, _>(format!("Deserialization error: {}", e))
                 })?;
