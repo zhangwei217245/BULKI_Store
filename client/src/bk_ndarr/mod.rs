@@ -1,5 +1,6 @@
+use commons::err::StatusCode;
 use commons::handler::HandlerResult;
-use commons::rpc::{RPCData, StatusCode};
+use commons::rpc::RPCData;
 use log::debug;
 
 pub fn process_response(data: &mut RPCData) -> HandlerResult {

@@ -1,5 +1,5 @@
 // Include the generated protobuf code
-
+pub mod err;
 pub mod handler;
 pub mod object;
 pub mod region;

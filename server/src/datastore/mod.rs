@@ -1,4 +1,5 @@
 use anyhow::Result;
+use commons::err::StatusCode;
 use commons::handler::HandlerResult;
 use commons::object::params::{
     GetObjectMetaParams, GetObjectMetaResponse, GetObjectSliceParams, GetObjectSliceResponse,
@@ -11,7 +12,7 @@ use commons::object::{
     DataObject, DataStore,
 };
 use commons::region::SerializableNDArray;
-use commons::rpc::{RPCData, StatusCode};
+use commons::rpc::RPCData;
 use lazy_static::lazy_static;
 use log::debug;
 use ndarray::SliceInfoElem;
@@ -39,12 +40,10 @@ pub fn init_datastore() -> HandlerResult {
     }
 }
 
-fn create_object_internal(param: CreateObjectParams) -> Result<Option<u128>> {
+fn create_object_internal(param: CreateObjectParams) -> Result<u128> {
     let obj = DataObject::new(param);
-    let obj_id = obj.id;
     // Insert into store
-    GLOBAL_STORE.write().unwrap().insert(obj)?;
-    Ok(Some(obj_id))
+    GLOBAL_STORE.write().unwrap().insert(obj)
 }
 
 /// Create a new DataObject with server-generated ID
@@ -61,18 +60,13 @@ pub fn create_objects(data: &mut RPCData) -> HandlerResult {
     let mut obj_ids: Vec<u128> = Vec::with_capacity(params.len());
     for param in params {
         match create_object_internal(param) {
-            Ok(Some(obj_id)) => obj_ids.push(obj_id),
-            Ok(None) => {
-                return HandlerResult {
-                    status_code: StatusCode::Internal as u8,
-                    message: Some("Failed to create object: returned None".to_string()),
-                }
-            }
+            Ok(obj_id) => obj_ids.push(obj_id),
             Err(e) => {
+                debug!("Failed to create object: {:?}", e);
                 return HandlerResult {
                     status_code: StatusCode::Internal as u8,
-                    message: Some(format!("Failed to create object: {}", e)),
-                }
+                    message: Some(format!("Failed to create object: {:?}", e)),
+                };
             }
         }
     }

@@ -187,7 +187,7 @@ impl DataStore {
     }
 
     /// Insert or update a DataObject in the store.
-    pub fn insert(&self, obj: DataObject) -> Result<()> {
+    pub fn insert(&self, obj: DataObject) -> Result<u128> {
         let obj_id = obj.id;
         let parent_obj_id = obj.parent_id;
         let obj_name = obj.name.clone();
@@ -208,12 +208,12 @@ impl DataStore {
             }
             if let Some(mut parent_obj) = self.objects.get_mut(&parent_id) {
                 parent_obj.add_child(obj_name.clone(), obj_id);
-                Ok(())
+                Ok(obj_id)
             } else {
                 Err(anyhow::Error::msg("Parent object not found"))
             }
         } else {
-            Ok(())
+            Ok(obj_id)
         }
     }
 

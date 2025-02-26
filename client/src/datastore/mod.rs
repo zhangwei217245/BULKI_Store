@@ -1,6 +1,7 @@
 use crate::{cltctx::get_client_rank, pyctx::converter::MetaKeySpec};
 use anyhow::Result;
 use commons::{
+    err::StatusCode,
     handler::HandlerResult,
     object::{
         objid::GlobalObjectIdExt,
@@ -9,7 +10,7 @@ use commons::{
         },
         types::SerializableSliceInfoElem,
     },
-    rpc::{RPCData, StatusCode},
+    rpc::RPCData,
 };
 use log::debug;
 use pyo3::{

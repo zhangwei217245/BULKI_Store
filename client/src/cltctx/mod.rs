@@ -1,7 +1,8 @@
 pub mod resphandler;
-use anyhow::{anyhow, Result};
+use anyhow::Result;
+use commons::err::{RPCResult, RpcErr, StatusCode};
 use commons::rpc::grpc::GrpcTX;
-use commons::rpc::{RPCData, TxEndpoint};
+use commons::rpc::TxEndpoint;
 use lazy_static::lazy_static;
 use log::{debug, info};
 use mpi::environment::Universe;
@@ -9,6 +10,7 @@ use mpi::environment::Universe;
 use mpi::topology::SimpleCommunicator;
 #[cfg(feature = "mpi")]
 use mpi::traits::*;
+use serde::{Deserialize, Serialize};
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Arc;
 
@@ -137,17 +139,24 @@ impl ClientContext {
         self.size
     }
 
-    pub async fn send_message(
+    pub async fn send_message<T, R>(
         &self,
         server_rank: usize,
         handler_name: &str,
-        data: RPCData,
-    ) -> Result<RPCData> {
+        data: &T,
+    ) -> RPCResult<R>
+    where
+        T: Serialize + Sync + 'static,
+        R: for<'de> Deserialize<'de>,
+    {
         if let Some(client) = &self.c2s_client {
             debug!("Sending message to server rank {}", server_rank);
             client.send_message(server_rank, handler_name, data).await
         } else {
-            Err(anyhow!("C2S client not initialized"))
+            Err(RpcErr::new(
+                StatusCode::Unknown,
+                "C2S client not initialized",
+            ))
         }
     }
     #[allow(dead_code)]
@@ -191,11 +200,7 @@ impl ClientContext {
             let request_start = std::time::SystemTime::now();
             let server_rank = i % self.get_server_count();
             match self
-                .send_message(
-                    server_rank,
-                    "health::HealthCheck::check",
-                    RPCData::new(Some(data.clone())),
-                )
+                .send_message::<Vec<u8>, Vec<u8>>(server_rank, "health::HealthCheck::check", &data)
                 .await
             {
                 Ok(_) => {

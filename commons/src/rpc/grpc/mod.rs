@@ -3,9 +3,13 @@ pub mod bulkistore {
     tonic::include_proto!("bulkistore");
 }
 
+use crate::err::RpcErr;
 use crate::handler::HandlerDispatcher;
-use crate::rpc::{MessageType, RPCData, RPCMetadata, RxContext, RxEndpoint, TxContext, TxEndpoint};
 use crate::utils::{FileUtility, TimeUtility};
+use crate::{
+    err::{RPCResult, StatusCode},
+    rpc::{MessageType, RPCData, RPCMetadata, RxContext, RxEndpoint, TxContext, TxEndpoint},
+};
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
 use bulkistore::grpc_bulkistore_client::GrpcBulkistoreClient;
@@ -19,8 +23,10 @@ use mpi::topology::SimpleCommunicator;
 #[cfg(feature = "mpi")]
 use mpi::traits::{Communicator, CommunicatorCollectives};
 use rand::Rng;
+use serde::{Deserialize, Serialize};
 use std::fs::{self, File};
 use std::io::Write;
+use std::marker::Sync;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
@@ -194,7 +200,7 @@ impl GrpcBulkistore for GrpcRX {
         let request = request.into_inner();
 
         // Deserialize the binary_data back into RPCData
-        let rpc_data: RPCData = match rmp_serde::from_slice(&request.binary_data) {
+        let rpc_data = match rmp_serde::from_slice::<RPCData>(&request.binary_data) {
             Ok(data) => data,
             Err(e) => {
                 return Err(tonic::Status::internal(format!(
@@ -523,14 +529,18 @@ impl TxEndpoint for GrpcTX {
         Ok(self.context.server_addresses.as_ref().unwrap().len() as isize)
     }
 
-    async fn send_message(
-        &self,
-        rx_id: usize,
-        handler_name: &str,
-        mut data: RPCData,
-    ) -> Result<RPCData> {
+    async fn send_message<T, R>(&self, rx_id: usize, handler_name: &str, input: &T) -> RPCResult<R>
+    where
+        T: Serialize + Sync + 'static,
+        R: for<'de> Deserialize<'de>,
+    {
         // Get cached or create new connection first
-        let mut client = self.get_or_create_connection(rx_id).await?;
+        let mut client = self.get_or_create_connection(rx_id).await.map_err(|e| {
+            RpcErr::new(
+                StatusCode::Internal,
+                format!("Failed to get or create connection: {}", e),
+            )
+        })?;
 
         debug!(
             "[TX Rank {}] Sending {} message to RX Rank {}",
@@ -549,19 +559,25 @@ impl TxEndpoint for GrpcTX {
             handler_result: None,
         };
 
-        data.metadata = Some(metadata);
+        let data = rmp_serde::to_vec(input).map_err(|e| {
+            RpcErr::new(
+                StatusCode::InvalidArgument,
+                format!("Failed to serialize params: {}", e),
+            )
+        })?;
 
-        let binary_data = rmp_serde::to_vec(&data)
-            .map_err(|e| anyhow::anyhow!("Failed to serialize message: {}", e))?;
+        let data = RPCData {
+            metadata: Some(metadata),
+            data: Some(data),
+        };
 
-        debug!(
-            "[TX Rank {}] Serialized {} message length: {:?}",
-            self.context.rank,
-            handler_name,
-            binary_data.len()
-        );
+        let bin_request = rmp_serde::to_vec(&data)
+            .map_err(|e| RpcErr::new(StatusCode::Internal, format!("{}", e)))?;
+
         // Create request
-        let request = tonic::Request::new(RpcMessage { binary_data });
+        let request = tonic::Request::new(RpcMessage {
+            binary_data: bin_request,
+        });
         let req_size = request.get_ref().binary_data.len();
         debug!(
             "[TX Rank {}] Sending request of length: {} to RX {} for fn {}",
@@ -571,19 +587,90 @@ impl TxEndpoint for GrpcTX {
         // Send binary request and wait for response
         match client.process_request(request).await {
             Ok(response) => {
-                let response = response.into_inner();
-                // Deserialize the response binary_data to get our RPCData
-                match rmp_serde::from_slice::<RPCData>(&response.binary_data) {
-                    Ok(rpc_data) => {
+                let bin_response = response.into_inner().binary_data;
+                match rmp_serde::from_slice::<RPCData>(&bin_response) {
+                    Ok(resp_data) => {
+                        // Extract message_type without moving the entire metadata
+                        let message_type = resp_data.metadata.as_ref().map(|m| m.message_type);
+                        // extract rx_id from metadata
+                        let rx_id = resp_data
+                            .metadata
+                            .as_ref()
+                            .map(|m| m.server_rank as usize)
+                            .unwrap_or(0);
+                        // extract handler_result status code
+                        let status_code = resp_data
+                            .metadata
+                            .as_ref()
+                            .and_then(|r| r.handler_result.as_ref())
+                            .map(|hs| hs.status_code)
+                            .unwrap_or(StatusCode::Unknown.into());
+                        let handler_message = resp_data
+                            .metadata
+                            .as_ref()
+                            .and_then(|r| r.handler_result.as_ref())
+                            .and_then(|hs| hs.message.clone())
+                            .unwrap_or("".to_string());
+
                         debug!(
-                            "[TX Rank {}] Received response of length: {} for fn {}",
+                            "[TX Rank {}][FN {}] {:?} from RX {}, status code: {}, request handler message: {}, response of length: {}",
                             self.context.rank,
-                            response.binary_data.len(),
-                            handler_name
+                            handler_name,
+                            message_type,
+                            rx_id,
+                            status_code,
+                            handler_message,
+                            bin_response.len()
                         );
-                        self.process_response(rpc_data).await
+                        // validate request handler result by status code and message.
+                        if status_code != StatusCode::Ok as u8 {
+                            return Err(RpcErr::new(status_code.into(), handler_message));
+                        }
+                        match message_type {
+                            Some(MessageType::Response) => {
+                                if let Some(handler) = &self.context.handler {
+                                    let resp_data =
+                                        handler.handle(resp_data).await.map_err(|e| {
+                                            RpcErr::new(
+                                                StatusCode::Internal,
+                                                format!("Handler error: {}", e),
+                                            )
+                                        })?;
+                                    rmp_serde::from_slice::<R>(
+                                        resp_data.data.as_ref().unwrap_or(&vec![]),
+                                    )
+                                    .map_err(|e| {
+                                        RpcErr::new(
+                                            StatusCode::Internal,
+                                            format!(
+                                                "Failed to deserialize RPCData response: {}",
+                                                e
+                                            ),
+                                        )
+                                    })
+                                } else {
+                                    debug!(
+                                        "No response handler registered, returning raw response"
+                                    );
+                                    Err(RpcErr::new(
+                                        StatusCode::Internal,
+                                        "No response handler registered",
+                                    ))
+                                }
+                            }
+                            _ => Err(RpcErr::new(
+                                StatusCode::Internal,
+                                format!("Unexpected message type: {:?}", message_type),
+                            )),
+                        }
                     }
-                    Err(e) => Err(anyhow::anyhow!("Failed to deserialize response: {}", e)),
+                    Err(e) => Err(RpcErr::new(
+                        StatusCode::Internal,
+                        format!(
+                            "Failed to deserialize binary response from RpcMessage: {}",
+                            e
+                        ),
+                    )),
                 }
             }
             Err(status) => {
@@ -592,30 +679,8 @@ impl TxEndpoint for GrpcTX {
                     self.connections.remove(&rx_id);
                     debug!("Removed failed connection to RX {}", rx_id);
                 }
-                Err(anyhow::anyhow!("RPC failed: {}", status))
+                Err(RpcErr::new(StatusCode::ConnectionFailure, status.message()))
             }
-        }
-    }
-
-    async fn process_response(&self, response: RPCData) -> Result<RPCData> {
-        // Extract message_type without moving the entire metadata
-        let message_type = response.metadata.as_ref().map(|m| m.message_type);
-        // extract rx_id from metadata
-        let rx_id = response.metadata.as_ref().map(|m| m.server_rank as usize);
-        match message_type {
-            Some(MessageType::Response) => {
-                debug!("Received response from RX {}", rx_id.unwrap());
-                if let Some(handler) = &self.context.handler {
-                    handler.handle(response).await
-                } else {
-                    debug!("No response handler registered, returning raw response");
-                    Ok(response)
-                }
-            }
-            _ => Err(anyhow::anyhow!(
-                "Unexpected message type in response: {:?}",
-                message_type
-            )),
         }
     }
 

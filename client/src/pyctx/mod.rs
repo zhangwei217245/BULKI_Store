@@ -1,9 +1,12 @@
 pub mod converter;
 use crate::cltctx::{get_server_count, ClientContext};
-use anyhow::Result;
-use commons::object::params::{GetObjectMetaResponse, GetObjectSliceResponse};
-use commons::rpc::RPCData;
-use commons::{object::objid::GlobalObjectIdExt, region::SerializableNDArray};
+
+use commons::err::RPCResult;
+use commons::object::objid::GlobalObjectIdExt;
+use commons::object::params::{
+    CreateObjectParams, GetObjectMetaParams, GetObjectMetaResponse, GetObjectSliceParams,
+    GetObjectSliceResponse,
+};
 use converter::{MetaKeySpec, SupportedNumpyArray};
 use log::debug;
 use numpy::{
@@ -17,6 +20,7 @@ use pyo3::{
     types::{PyDict, PySlice},
     Bound, PyErr, PyObject, PyResult, Python,
 };
+use serde::{Deserialize, Serialize};
 use std::{cell::RefCell, ops::Add, sync::Arc};
 
 thread_local! {
@@ -100,51 +104,26 @@ pub fn init_py(py: Python<'_>) -> PyResult<()> {
     Ok(())
 }
 
-fn rpc_call(srv_id: u32, method_name: &str, data: Option<Vec<u8>>) -> Result<Vec<u8>> {
-    debug!(
-        "[RPC_CALL][TX Rank {}] Sending Data of length {} to server {}",
-        CONTEXT.with(|ctx| ctx
-            .borrow()
-            .as_ref()
-            .map_or(0, |context| context.get_rank())),
-        data.as_ref().map(|d| d.len()).unwrap_or(0),
-        srv_id
-    );
-    let response = CONTEXT
-        .with(|ctx| {
-            let ctx = ctx.borrow();
-            let ctx_ref = ctx.as_ref().expect("Context not initialized");
-            RUNTIME.with(|rt_cell| {
-                let rt = rt_cell.borrow();
-                let rt_ref = rt.as_ref().expect("Runtime not initialized");
-                rt_ref.block_on(ctx_ref.send_message(
-                    srv_id as usize,
-                    method_name,
-                    RPCData {
-                        metadata: None,
-                        data,
-                    },
-                ))
-            })
+fn rpc_call<T, R>(srv_id: u32, method_name: &str, input: &T) -> RPCResult<R>
+where
+    T: Serialize + std::marker::Sync + 'static,
+    R: for<'de> Deserialize<'de>,
+{
+    let response = CONTEXT.with(|ctx| {
+        let ctx = ctx.borrow();
+        let ctx_ref = ctx.as_ref().expect("Context not initialized");
+        RUNTIME.with(|rt_cell| {
+            let rt = rt_cell.borrow();
+            let rt_ref = rt.as_ref().expect("Runtime not initialized");
+            rt_ref.block_on(ctx_ref.send_message::<T, R>(srv_id as usize, method_name, input))
         })
-        .map_err(|e| PyErr::new::<PyValueError, _>(format!("RPC error: {}", e)))?;
-    debug!(
-        "[RPC_CALL][TX Rank {}] Received response from server {}",
-        CONTEXT.with(|ctx| ctx
-            .borrow()
-            .as_ref()
-            .map_or(0, |context| context.get_rank())),
-        srv_id
-    );
+    });
     // Increment request counter
     REQUEST_COUNTER.with(|counter| {
         let mut counter = counter.borrow_mut();
         *counter += 1;
     });
-    // Get binary data from response (assuming response.data contains the binary payload)
     response
-        .data
-        .ok_or(anyhow::anyhow!("Response data is missing"))
 }
 
 pub fn create_object_impl<'py>(
@@ -156,45 +135,30 @@ pub fn create_object_impl<'py>(
     array_meta_list: Option<Vec<Option<Bound<'py, PyDict>>>>,
     array_data_list: Option<Vec<Option<SupportedNumpyArray<'py>>>>,
 ) -> PyResult<Vec<Py<PyInt>>> {
-    let create_obj_params = crate::datastore::create_objects_req_proc(
-        obj_name_key,
-        parent_id,
-        metadata,
-        data,
-        array_meta_list,
-        array_data_list,
-    );
+    let create_obj_params: Option<Vec<commons::object::params::CreateObjectParams>> =
+        crate::datastore::create_objects_req_proc(
+            obj_name_key,
+            parent_id,
+            metadata,
+            data,
+            array_meta_list,
+            array_data_list,
+        );
     match create_obj_params {
         None => Err(PyErr::new::<PyValueError, _>(
             "Failed to create object parameters",
         )),
         Some(params) => {
             let main_obj_id = params[0].obj_id;
-            // Serialize the parameters using MessagePack
-            let serialized_params = rmp_serde::to_vec(&params).map_err(|e| {
-                PyErr::new::<PyValueError, _>(format!("Failed to serialize params: {}", e))
-            })?;
-            debug!(
-                "create_objects: params data length: {:?}",
-                serialized_params.len()
-            );
             // Get binary data from response (assuming response.data contains the binary payload)
-            let response_data = rpc_call(
+            let result = rpc_call::<Vec<CreateObjectParams>, Vec<u128>>(
                 main_obj_id.vnode_id() % get_server_count(),
                 "datastore::create_objects",
-                Some(serialized_params),
-            );
-            debug!(
-                "create_objects: response data length: {:?}",
-                response_data.as_ref().map_or(0, |d| d.len())
-            );
-            let result: Vec<u128> = rmp_serde::from_slice(&response_data.map_err(|e| {
-                PyErr::new::<PyValueError, _>(format!(
-                    "RPC call failed, response data error: {}",
-                    e
-                ))
-            })?)
-            .map_err(|e| PyErr::new::<PyValueError, _>(format!("Deserialization error: {}", e)))?;
+                &params,
+            )
+            .map_err(|e| {
+                PyErr::new::<PyValueError, _>(format!("Failed to create objects: {}", e))
+            })?;
             debug!("create_objects: result vector length: {:?}", result.len());
             debug!("create_objects: result vector: {:?}", result);
             converter::convert_vec_u128_to_py_long(py, result)
@@ -216,34 +180,14 @@ pub fn get_object_metadata_impl<'py>(
         )),
         Ok(params) => {
             let main_obj_id = params.obj_id;
-            // Serialize the parameters using MessagePack
-            let serialized_params = rmp_serde::to_vec(&params).map_err(|e| {
-                PyErr::new::<PyValueError, _>(format!("Failed to serialize params: {}", e))
-            })?;
-            debug!(
-                "get_object_metadata: params data length: {:?}",
-                serialized_params.len()
-            );
-            // Get binary data from response (assuming response.data contains the binary payload)
-            let response_data = rpc_call(
+            let result = rpc_call::<GetObjectMetaParams, GetObjectMetaResponse>(
                 main_obj_id.vnode_id() % get_server_count(),
                 "datastore::get_object_metadata",
-                Some(serialized_params),
-            );
-            debug!(
-                "get_object_metadata: response data length: {:?}",
-                response_data.as_ref().map_or(0, |d| d.len())
-            );
-            let result: GetObjectMetaResponse =
-                rmp_serde::from_slice(&response_data.map_err(|e| {
-                    PyErr::new::<PyValueError, _>(format!(
-                        "RPC call failed, response data error: {}",
-                        e
-                    ))
-                })?)
-                .map_err(|e| {
-                    PyErr::new::<PyValueError, _>(format!("Deserialization error: {}", e))
-                })?;
+                &params,
+            )
+            .map_err(|e| {
+                PyErr::new::<PyValueError, _>(format!("Failed to get object metadata: {}", e))
+            })?;
             debug!("get_object_metadata: result: {:?}", result);
             converter::convert_get_object_meta_response_to_pydict(py, result)
         }
@@ -264,34 +208,14 @@ pub fn get_object_data_impl<'py>(
         )),
         Ok(params) => {
             let main_obj_id = params.obj_id;
-            // Serialize the parameters using MessagePack
-            let serialized_params = rmp_serde::to_vec(&params).map_err(|e| {
-                PyErr::new::<PyValueError, _>(format!("Failed to serialize params: {}", e))
-            })?;
-            debug!(
-                "get_object_data: params data length: {:?}",
-                serialized_params.len()
-            );
-            // Get binary data from response (assuming response.data contains the binary payload)
-            let response_data = rpc_call(
+            let result = rpc_call::<GetObjectSliceParams, GetObjectSliceResponse>(
                 main_obj_id.vnode_id() % get_server_count(),
                 "datastore::get_object_data",
-                Some(serialized_params),
-            );
-            debug!(
-                "get_object_data: response data length: {:?}",
-                response_data.as_ref().map_or(0, |d| d.len())
-            );
-            let result: GetObjectSliceResponse =
-                rmp_serde::from_slice(&response_data.map_err(|e| {
-                    PyErr::new::<PyValueError, _>(format!(
-                        "RPC call failed, response data error: {}",
-                        e
-                    ))
-                })?)
-                .map_err(|e| {
-                    PyErr::new::<PyValueError, _>(format!("Deserialization error: {}", e))
-                })?;
+                &params,
+            )
+            .map_err(|e| {
+                PyErr::new::<PyValueError, _>(format!("Failed to get object data: {}", e))
+            })?;
             // debug!("get_object_data: result vector: {:?}", result);
             converter::convert_get_object_slice_response_to_pydict(py, result)
         }
@@ -300,29 +224,22 @@ pub fn get_object_data_impl<'py>(
 
 pub fn times_two_impl<'py, T>(py: Python<'py>, x: PyReadonlyArrayDyn<'py, T>) -> PyResult<PyObject>
 where
-    T: Copy + serde::Serialize + for<'de> serde::Deserialize<'de> + Element + std::fmt::Debug,
+    T: Copy
+        + serde::Serialize
+        + for<'de> serde::Deserialize<'de>
+        + Element
+        + std::fmt::Debug
+        + 'static,
 {
     // Convert numpy array to a rust ndarray (owned copy)
-    let x_array = x.as_array().to_owned();
-
-    // Serialize the ndarray (using MessagePack, for example)
-    let serialized = SerializableNDArray::serialize(x_array)
-        .map_err(|e| PyErr::new::<PyValueError, _>(format!("Serialization error: {}", e)))?;
+    let x_array: ArrayD<T> = x.as_array().to_owned();
 
     let srv_id = REQUEST_COUNTER.with(|counter| (*counter.borrow() as u32) % get_server_count());
 
-    let response_data = rpc_call(srv_id, "datastore::times_two", Some(serialized));
-
-    match response_data {
-        Ok(data) => {
-            let result: ArrayD<T> = SerializableNDArray::deserialize(&data).map_err(|e| {
-                PyErr::new::<PyValueError, _>(format!("Deserialization error: {}", e))
-            })?;
-            let py_array = PyArray::from_array(py, &result);
-            Ok(py_array.into_any().into())
-        }
-        Err(e) => Err(PyErr::new::<PyValueError, _>(format!("RPC error: {}", e))),
-    }
+    let result = rpc_call::<ArrayD<T>, ArrayD<T>>(srv_id, "datastore::times_two", &x_array)
+        .map_err(|e| PyErr::new::<PyValueError, _>(format!("RPC error: {}", e)))?;
+    let py_array = PyArray::from_array(py, &result);
+    Ok(py_array.into_any().into())
 }
 
 // example using generic T
