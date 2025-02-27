@@ -7,11 +7,12 @@ use commons::object::params::{
     CreateObjectParams, GetObjectMetaParams, GetObjectMetaResponse, GetObjectSliceParams,
     GetObjectSliceResponse,
 };
-use converter::{MetaKeySpec, SupportedNumpyArray};
+use commons::object::types::SupportedRustArrayD;
+use converter::{IntoBoundPyAny, MetaKeySpec, SupportedNumpyArray};
 use log::debug;
 use numpy::{
     ndarray::{ArrayD, ArrayViewD, ArrayViewMutD, Axis},
-    Complex64, Element, PyArray, PyReadonlyArrayDyn,
+    Complex64,
 };
 use pyo3::types::PyInt;
 use pyo3::Py;
@@ -222,24 +223,27 @@ pub fn get_object_data_impl<'py>(
     }
 }
 
-pub fn times_two_impl<'py, T>(py: Python<'py>, x: PyReadonlyArrayDyn<'py, T>) -> PyResult<PyObject>
-where
-    T: Copy
-        + serde::Serialize
-        + for<'de> serde::Deserialize<'de>
-        + Element
-        + std::fmt::Debug
-        + 'static,
-{
-    // Convert numpy array to a rust ndarray (owned copy)
-    let x_array: ArrayD<T> = x.as_array().to_owned();
+pub fn times_two_impl<'py>(py: Python<'py>, x: SupportedNumpyArray<'py>) -> PyResult<PyObject> {
+    let input = x.into_array_type();
 
     let srv_id = REQUEST_COUNTER.with(|counter| (*counter.borrow() as u32) % get_server_count());
 
-    let result = rpc_call::<ArrayD<T>, ArrayD<T>>(srv_id, "datastore::times_two", &x_array)
-        .map_err(|e| PyErr::new::<PyValueError, _>(format!("RPC error: {}", e)))?;
-    let py_array = PyArray::from_array(py, &result);
-    Ok(py_array.into_any().into())
+    let result = rpc_call::<SupportedRustArrayD, SupportedRustArrayD>(
+        srv_id,
+        "datastore::times_two",
+        &input,
+    )
+    .map_err(|e| PyErr::new::<PyValueError, _>(format!("RPC error: {}", e)))?;
+
+    Ok(result
+        .into_bound_py_any(py)
+        .and_then(|rst| Ok(rst.unbind()))
+        .map_err(|e| {
+            PyErr::new::<PyValueError, _>(format!(
+                "Failed to convert SupportedRustArrayD to PyAny: {}",
+                e
+            ))
+        })?)
 }
 
 // example using generic T

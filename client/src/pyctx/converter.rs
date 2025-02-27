@@ -127,6 +127,28 @@ impl<'py> SupportedNumpyArray<'py> {
     }
 }
 
+pub trait IntoBoundPyAny {
+    fn into_bound_py_any<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>>;
+}
+
+impl IntoBoundPyAny for SupportedRustArrayD {
+    fn into_bound_py_any<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
+        match self {
+            SupportedRustArrayD::Int8(a) => Ok(a.to_owned().into_pyarray(py).into_any()),
+            SupportedRustArrayD::Int16(a) => Ok(a.to_owned().into_pyarray(py).into_any()),
+            SupportedRustArrayD::Int32(a) => Ok(a.to_owned().into_pyarray(py).into_any()),
+            SupportedRustArrayD::Int64(a) => Ok(a.to_owned().into_pyarray(py).into_any()),
+            SupportedRustArrayD::UInt8(a) => Ok(a.to_owned().into_pyarray(py).into_any()),
+            SupportedRustArrayD::UInt16(a) => Ok(a.to_owned().into_pyarray(py).into_any()),
+            SupportedRustArrayD::UInt32(a) => Ok(a.to_owned().into_pyarray(py).into_any()),
+            SupportedRustArrayD::UInt64(a) => Ok(a.to_owned().into_pyarray(py).into_any()),
+            SupportedRustArrayD::Float32(a) => Ok(a.to_owned().into_pyarray(py).into_any()),
+            SupportedRustArrayD::Float64(a) => Ok(a.to_owned().into_pyarray(py).into_any()),
+            _ => Err(PyErr::new::<PyValueError, _>("Unsupported array type")),
+        }
+    }
+}
+
 pub fn convert_metadata_value_to_pyany<'py>(
     py: Python<'py>,
     value: MetadataValue,

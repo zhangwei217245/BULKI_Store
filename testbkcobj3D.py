@@ -23,7 +23,7 @@ if __name__ == "__main__":
     print("arr5.shape=", arr5.shape)
     print("arr5:")
     print(arr5)
-    arr6 = bkc.times_two(arr5, arr5.dtype)
+    arr6 = bkc.times_two(arr5)
     print("arr6.shape=", arr6.shape)
     print("arr6:")
     print(arr6)
@@ -32,7 +32,7 @@ if __name__ == "__main__":
         metadata={
             "name": "container",
             "type": "container",
-            "keys": ["arr6", "arr4"],
+            "keys": ["arr5", "arr4"],
             "ranges": [(1, 100), (100, 200)],
             "part_num": 1,
             "part_size": 100,
@@ -40,9 +40,9 @@ if __name__ == "__main__":
         parent_id=None,
         array_meta_list=[
             {
-                "name": "arr6",
+                "name": "arr5",
                 "type": "array",
-                "shape": arr6.shape,
+                "shape": arr5.shape,
                 "vcount": 100,
                 "voffset": 0,
                 "vdim": 0,
@@ -56,7 +56,7 @@ if __name__ == "__main__":
                 "vdim": 0,
             },
         ],
-        array_data_list=[arr6, arr4],
+        array_data_list=[arr5, arr4],
     )
     print(obj_ids)
 
@@ -70,7 +70,7 @@ if __name__ == "__main__":
     result = bkc.get_object_metadata(
         obj_ids[0],
         meta_keys=["type", "keys", "ranges"],
-        sub_meta_keys={"arr6": ["name", "shape", "vcount", "voffset", "vdim"]},
+        sub_meta_keys={"arr5": ["name", "shape", "vcount", "voffset", "vdim"]},
     )
     print(result)
 
@@ -86,7 +86,7 @@ if __name__ == "__main__":
         region=None,
         sub_obj_regions=[
             (
-                "arr6",
+                "arr5",
                 [slice(0, 1), slice(0, 1), slice(0, 2, -1)],
             ),
             (
@@ -108,7 +108,7 @@ if __name__ == "__main__":
             region=None,
             sub_obj_regions=[
                 (
-                    "arr6",
+                    "arr5",
                     [
                         slice(0, 1),
                         slice(0, 1),

@@ -7,7 +7,7 @@ use env_logger;
 use numpy::{
     datetime::{units, Timedelta},
     ndarray::Zip,
-    Complex64, IntoPyArray, PyArray1, PyArrayDescr, PyArrayDyn, PyArrayMethods, PyReadonlyArray1,
+    Complex64, IntoPyArray, PyArray1, PyArrayDyn, PyArrayMethods, PyReadonlyArray1,
     PyReadonlyArrayDyn, PyReadwriteArray1, PyReadwriteArrayDyn,
 };
 use pyctx::converter::{MetaKeySpec, SupportedNumpyArray};
@@ -131,35 +131,9 @@ fn rust_ext<'py>(m: &Bound<'py, PyModule>) -> PyResult<()> {
 
     #[pyfn(m)]
     #[pyo3(name = "times_two")]
-    fn times_two<'py>(
-        py: Python<'py>,
-        x: PyObject,
-        dtype: Bound<'py, PyArrayDescr>,
-    ) -> PyResult<PyObject> {
+    fn times_two<'py>(py: Python<'py>, x: SupportedNumpyArray<'py>) -> PyResult<PyObject> {
         // Get the name of the dtype (for example, "float64", "int64", etc.)
-        let dtype_name: String = dtype.getattr("name")?.extract()?;
-
-        // Dispatch based on the dtype name.
-        match dtype_name.as_str() {
-            "float64" => {
-                let arr: PyReadonlyArrayDyn<f64> = x.extract(py)?;
-                pyctx::times_two_impl(py, arr)
-            }
-            "float32" => {
-                let arr: PyReadonlyArrayDyn<f32> = x.extract(py)?;
-                pyctx::times_two_impl(py, arr)
-            }
-            "int64" => {
-                let arr: PyReadonlyArrayDyn<i64> = x.extract(py)?;
-                pyctx::times_two_impl(py, arr)
-            }
-            "int32" => {
-                let arr: PyReadonlyArrayDyn<i32> = x.extract(py)?;
-                pyctx::times_two_impl(py, arr)
-            }
-            // Add more cases as needed...
-            _ => Err(PyValueError::new_err("Unsupported dtype")),
-        }
+        pyctx::times_two_impl(py, x)
     }
 
     #[pyfn(m)]

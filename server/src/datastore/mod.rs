@@ -482,12 +482,39 @@ pub fn get_regions_by_obj_ids(data: &mut RPCData) -> HandlerResult {
 
 // Async versions of the benchmark functions
 pub fn times_two(data: &mut RPCData) -> HandlerResult {
-    match SerializableNDArray::deserialize(&data.data.as_ref().unwrap()) {
+    match rmp_serde::from_slice::<SupportedRustArrayD>(&data.data.as_ref().unwrap()) {
         Ok(array) => {
             debug!("Received array: {:?}", array);
-            let result = array.mapv(|x: f64| x * 2.0);
+            let result = match array {
+                SupportedRustArrayD::Int8(arr) => SupportedRustArrayD::Int8(arr.mapv(|x| x * 2)),
+                SupportedRustArrayD::Int16(arr) => SupportedRustArrayD::Int16(arr.mapv(|x| x * 2)),
+                SupportedRustArrayD::Int32(arr) => SupportedRustArrayD::Int32(arr.mapv(|x| x * 2)),
+                SupportedRustArrayD::Int64(arr) => SupportedRustArrayD::Int64(arr.mapv(|x| x * 2)),
+                SupportedRustArrayD::UInt8(arr) => SupportedRustArrayD::UInt8(arr.mapv(|x| x * 2)),
+                SupportedRustArrayD::UInt16(arr) => {
+                    SupportedRustArrayD::UInt16(arr.mapv(|x| x * 2))
+                }
+                SupportedRustArrayD::UInt32(arr) => {
+                    SupportedRustArrayD::UInt32(arr.mapv(|x| x * 2))
+                }
+                SupportedRustArrayD::UInt64(arr) => {
+                    SupportedRustArrayD::UInt64(arr.mapv(|x| x * 2))
+                }
+                SupportedRustArrayD::Float32(arr) => {
+                    SupportedRustArrayD::Float32(arr.mapv(|x| x * 2.0))
+                }
+                SupportedRustArrayD::Float64(arr) => {
+                    SupportedRustArrayD::Float64(arr.mapv(|x| x * 2.0))
+                }
+                SupportedRustArrayD::UInt128(arr) => {
+                    SupportedRustArrayD::UInt128(arr.mapv(|x| x * 2))
+                }
+                SupportedRustArrayD::Int128(arr) => {
+                    SupportedRustArrayD::Int128(arr.mapv(|x| x * 2))
+                }
+            };
             debug!("Result array: {:?}", result);
-            data.data = Some(SerializableNDArray::serialize(result).unwrap());
+            data.data = Some(rmp_serde::to_vec(&result).unwrap());
             HandlerResult {
                 status_code: StatusCode::Ok as u8,
                 message: None,
@@ -495,7 +522,10 @@ pub fn times_two(data: &mut RPCData) -> HandlerResult {
         }
         Err(_) => HandlerResult {
             status_code: StatusCode::Internal as u8,
-            message: Some(String::from("Failed to deserialize array")),
+            message: Some(format!(
+                "Failed to deserialize array. Origin data length: {}",
+                data.data.as_ref().unwrap().len()
+            )),
         },
     }
 }
