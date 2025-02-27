@@ -561,7 +561,7 @@ impl TxEndpoint for GrpcTX {
 
         let data = rmp_serde::to_vec(input).map_err(|e| {
             RpcErr::new(
-                StatusCode::InvalidArgument,
+                StatusCode::InvalidRequest,
                 format!("Failed to serialize params: {}", e),
             )
         })?;
