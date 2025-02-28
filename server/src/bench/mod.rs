@@ -1,5 +1,6 @@
+use commons::err::StatusCode;
 use commons::handler::HandlerResult;
-use commons::rpc::{RPCData, StatusCode};
+use commons::rpc::RPCData;
 use rayon::prelude::*;
 
 pub fn times_two(data: &mut RPCData) -> HandlerResult {

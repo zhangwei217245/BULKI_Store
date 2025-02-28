@@ -168,6 +168,11 @@ impl<H: HandlerKind> HandlerDispatcher<H> {
             .map_err(|_| anyhow::anyhow!("Handler mutex poisoned"))?
             .handle(&mut message);
 
+        match handler_result.status_code {
+            0 => {}
+            _ => message.data = Some(vec![]),
+        }
+
         // Update the metadata with handler result and timing information
         if let Some(metadata) = &mut message.metadata {
             metadata.handler_result = Some(handler_result);

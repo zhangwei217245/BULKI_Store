@@ -1,11 +1,12 @@
+use commons::err::StatusCode;
 use commons::handler::HandlerResult;
-use commons::rpc::{RPCData, StatusCode};
+use commons::rpc::RPCData;
 use log::debug;
 
 pub fn process_response(data: &mut RPCData) -> HandlerResult {
     debug!(
         "Processing response data length: {:?}",
-        data.data.as_ref().unwrap().len()
+        data.data.as_ref().map_or(0, |d| d.len())
     );
     HandlerResult {
         status_code: StatusCode::Ok as u8,

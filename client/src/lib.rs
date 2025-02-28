@@ -7,10 +7,10 @@ use env_logger;
 use numpy::{
     datetime::{units, Timedelta},
     ndarray::Zip,
-    Complex64, IntoPyArray, PyArray1, PyArrayDescr, PyArrayDyn, PyArrayMethods, PyReadonlyArray1,
+    Complex64, IntoPyArray, PyArray1, PyArrayDyn, PyArrayMethods, PyReadonlyArray1,
     PyReadonlyArrayDyn, PyReadwriteArray1, PyReadwriteArrayDyn,
 };
-use pyctx::converter::SupportedNumpyArray;
+use pyctx::converter::{MetaKeySpec, SupportedNumpyArray};
 use pyo3::{
     exceptions::PyValueError,
     pymodule,
@@ -40,42 +40,6 @@ fn rust_ext<'py>(m: &Bound<'py, PyModule>) -> PyResult<()> {
         children: Vec<u128>,
     }
 
-    // #[pymethods]
-    // impl BKCObject {
-    //     #[new]
-    //     fn new(
-    //         py: Python,
-    //         name: String,
-    //         parent_id: Option<u128>,
-    //         metadata: Option<Py<PyDict>>,
-    //         array_data: Option<SupportedNumpyArray>,
-    //     ) -> PyResult<Self> {
-    //         let obj_ids = create_objects(
-    //             py,
-    //             name.clone(),
-    //             parent_id,
-    //             Some(vec![Some(metadata.clone())]),
-    //             Some(vec![Some(array_data.clone())]),
-    //         )?;
-
-    //         Ok(BKCObject {
-    //             id: obj_ids[0].extract(py)?,
-    //             name,
-    //             metadata: metadata.map(|m| m.into()),
-    //             array_data: array_data.map(|a| a.into()),
-    //             parent_id,
-    //             children: obj_ids[1..]
-    //                 .iter()
-    //                 .map(|id| id.extract(py).unwrap())
-    //                 .collect(),
-    //         })
-    //     }
-
-    //     fn __repr__(&self) -> String {
-    //         format!("BKCObject(id={}, name={})", self.id, self.name)
-    //     }
-    // }
-
     // Module initialization - just register the init function
     #[pyfn(m)]
     #[pyo3(name = "init")]
@@ -104,12 +68,13 @@ fn rust_ext<'py>(m: &Bound<'py, PyModule>) -> PyResult<()> {
     /// ```
     #[pyfn(m)]
     #[pyo3(name = "create_objects")]
-    #[pyo3(signature = (obj_name_key, parent_id=None, metadata=None, array_meta_list=None, array_data_list=None))]
+    #[pyo3(signature = (obj_name_key, parent_id=None, metadata=None, data=None, array_meta_list=None, array_data_list=None))]
     fn create_objects<'py>(
         py: Python<'py>,
         obj_name_key: String,
         parent_id: Option<u128>,
         metadata: Option<Bound<'py, PyDict>>,
+        data: Option<SupportedNumpyArray<'py>>,
         array_meta_list: Option<Vec<Option<Bound<'py, PyDict>>>>,
         array_data_list: Option<Vec<Option<SupportedNumpyArray<'py>>>>,
     ) -> PyResult<Vec<Py<PyInt>>> {
@@ -118,6 +83,7 @@ fn rust_ext<'py>(m: &Bound<'py, PyModule>) -> PyResult<()> {
             obj_name_key,
             parent_id,
             metadata,
+            data,
             array_meta_list,
             array_data_list,
         )
@@ -125,14 +91,14 @@ fn rust_ext<'py>(m: &Bound<'py, PyModule>) -> PyResult<()> {
 
     #[pyfn(m)]
     #[pyo3(name = "get_object_metadata")]
-    #[pyo3(signature = (obj_id, meta_keys=None, sub_object_meta_keys=None))]
+    #[pyo3(signature = (obj_id, meta_keys=None, sub_meta_keys=None))]
     fn get_object_metadata<'py>(
         py: Python<'py>,
         obj_id: u128,
         meta_keys: Option<Vec<String>>,
-        sub_object_meta_keys: Option<Vec<String>>,
+        sub_meta_keys: Option<MetaKeySpec>,
     ) -> PyResult<Py<PyDict>> {
-        pyctx::get_object_metadata_impl(py, obj_id, meta_keys, sub_object_meta_keys)
+        pyctx::get_object_metadata_impl(py, obj_id, meta_keys, sub_meta_keys)
     }
 
     #[pyfn(m)]
@@ -165,35 +131,9 @@ fn rust_ext<'py>(m: &Bound<'py, PyModule>) -> PyResult<()> {
 
     #[pyfn(m)]
     #[pyo3(name = "times_two")]
-    fn times_two<'py>(
-        py: Python<'py>,
-        x: PyObject,
-        dtype: Bound<'py, PyArrayDescr>,
-    ) -> PyResult<PyObject> {
+    fn times_two<'py>(py: Python<'py>, x: SupportedNumpyArray<'py>) -> PyResult<PyObject> {
         // Get the name of the dtype (for example, "float64", "int64", etc.)
-        let dtype_name: String = dtype.getattr("name")?.extract()?;
-
-        // Dispatch based on the dtype name.
-        match dtype_name.as_str() {
-            "float64" => {
-                let arr: PyReadonlyArrayDyn<f64> = x.extract(py)?;
-                pyctx::times_two_impl(py, arr)
-            }
-            "float32" => {
-                let arr: PyReadonlyArrayDyn<f32> = x.extract(py)?;
-                pyctx::times_two_impl(py, arr)
-            }
-            "int64" => {
-                let arr: PyReadonlyArrayDyn<i64> = x.extract(py)?;
-                pyctx::times_two_impl(py, arr)
-            }
-            "int32" => {
-                let arr: PyReadonlyArrayDyn<i32> = x.extract(py)?;
-                pyctx::times_two_impl(py, arr)
-            }
-            // Add more cases as needed...
-            _ => Err(PyValueError::new_err("Unsupported dtype")),
-        }
+        pyctx::times_two_impl(py, x)
     }
 
     #[pyfn(m)]

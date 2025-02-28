@@ -38,6 +38,8 @@ ordered-float = "4.6.0" # Specific for this example
 serde = { workspace = true, features = ["derive"] }
 lazy_static = { workspace = true }
 fnv = { workspace = true }
+rayon = { workspace = true }
+gxhash = { workspace = true }
 
 [features]
 default = ["mpi"]

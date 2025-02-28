@@ -2,7 +2,7 @@ mod cltctx;
 use std::sync::Arc;
 
 use cltctx::ClientContext;
-use commons::rpc::{MessageType, RPCData, RPCMetadata};
+// use commons::rpc::{MessageType, RPCData, RPCMetadata};
 use log::debug;
 
 #[tokio::main]

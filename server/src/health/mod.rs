@@ -1,9 +1,9 @@
+use commons::err::StatusCode;
 use commons::handler::HandlerResult;
-use commons::rpc::{RPCData, StatusCode};
-use log::debug;
+use commons::rpc::RPCData;
 
-pub fn check(data: &mut RPCData) -> HandlerResult {
-    debug!("Health check received: {:?}", data);
+pub fn check(_data: &mut RPCData) -> HandlerResult {
+    // debug!("Health check received: {:?}", data);
     HandlerResult {
         status_code: StatusCode::Ok as u8,
         message: None,

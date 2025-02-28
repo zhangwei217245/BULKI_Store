@@ -2,14 +2,17 @@ pub mod objid;
 pub mod params;
 pub mod types;
 use dashmap::DashMap;
-use ndarray::{Slice, SliceInfoElem};
+use gxhash::GxBuildHasher;
+use ndarray::SliceInfoElem;
 
+use anyhow::Result;
 use params::CreateObjectParams;
 use rmp_serde::encode;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::fmt::Debug;
 use std::fs::File;
+// use std::hash::{BuildHasherDefault, RandomState};
 use std::path::Path;
 use types::{MetadataValue, SupportedRustArrayD};
 
@@ -27,11 +30,11 @@ pub struct DataObject {
     /// Optional attached NDArray of any supported type.
     pub array: Option<SupportedRustArrayD>,
     /// Arbitrary metadata attributes.
-    pub metadata: HashMap<String, MetadataValue>,
+    pub metadata: HashMap<String, MetadataValue, GxBuildHasher>,
     /// Nested child DataObjects.
-    pub children: Option<HashSet<u128>>,
+    pub children: Option<HashSet<(u128, String), GxBuildHasher>>,
     /// The name to ID index for all children.
-    pub child_name_idx: Option<HashMap<String, u128>>,
+    pub child_name_idx: Option<HashMap<String, u128, GxBuildHasher>>,
 }
 
 impl DataObject {
@@ -45,9 +48,11 @@ impl DataObject {
             obj_name_key: params.obj_name_key,
             name: params.obj_name,
             array: params.array_data,
-            metadata: params.initial_metadata.unwrap_or_default(),
-            children: Some(HashSet::new()),
-            child_name_idx: Some(HashMap::new()),
+            metadata: params
+                .initial_metadata
+                .unwrap_or(HashMap::with_hasher(GxBuildHasher::default())),
+            children: Some(HashSet::with_hasher(GxBuildHasher::default())),
+            child_name_idx: Some(HashMap::with_hasher(GxBuildHasher::default())),
         }
     }
 
@@ -58,7 +63,10 @@ impl DataObject {
 
     /// Add a child DataObject.
     pub fn add_child(&mut self, obj_name: String, child_id: u128) {
-        self.children.as_mut().unwrap().insert(child_id);
+        self.children
+            .as_mut()
+            .unwrap()
+            .insert((child_id, obj_name.clone()));
         self.child_name_idx
             .as_mut()
             .unwrap()
@@ -85,12 +93,24 @@ impl DataObject {
 
     /// get all child ids.
     pub fn get_children_ids(&self) -> Vec<u128> {
-        self.children.as_ref().unwrap().iter().cloned().collect()
+        self.children
+            .as_ref()
+            .unwrap()
+            .iter()
+            .map(|(id, _)| id.to_owned())
+            .collect()
     }
 
     // remove a child
     pub fn remove_child(&mut self, child_id: u128) {
-        self.children.as_mut().unwrap().remove(&child_id);
+        self.children
+            .as_mut()
+            .unwrap()
+            .retain(|(id, _)| *id != child_id);
+        self.child_name_idx
+            .as_mut()
+            .unwrap()
+            .retain(|_, id| *id != child_id);
     }
 
     /// Get a slice of the attached NDArray.
@@ -100,7 +120,6 @@ impl DataObject {
     ) -> Option<SupportedRustArrayD> {
         match (self.array.as_ref(), region) {
             (Some(arr), Some(region)) => Some(arr.slice(&region)),
-            (Some(arr), None) => Some(arr.clone()),
             _ => None,
         }
     }
@@ -158,23 +177,27 @@ impl DataObject {
 
 /// A concurrent DataStore that indexes DataObjects by their u128 IDs using DashMap.
 pub struct DataStore {
-    pub objects: DashMap<u128, DataObject>,
-    pub name_obj_idx: DashMap<String, u128>,
+    pub objects: DashMap<u128, DataObject, GxBuildHasher>,
+    pub name_obj_idx: DashMap<String, u128, GxBuildHasher>,
 }
 impl DataStore {
     /// Create a new, empty DataStore.
     pub fn new() -> Self {
         DataStore {
-            objects: DashMap::new(),
-            name_obj_idx: DashMap::new(),
+            objects: DashMap::with_hasher(GxBuildHasher::default()),
+            name_obj_idx: DashMap::with_hasher(GxBuildHasher::default()),
         }
     }
 
     /// Insert or update a DataObject in the store.
-    pub fn insert(&self, obj: DataObject) {
+    pub fn insert(&self, obj: DataObject) -> Result<u128> {
         let obj_id = obj.id;
         let parent_obj_id = obj.parent_id;
         let obj_name = obj.name.clone();
+        // validate if obj_name exists
+        if self.name_obj_idx.contains_key(&obj_name) {
+            return Err(anyhow::Error::msg("Object name already exists"));
+        }
         // save object
         self.objects.insert(obj_id, obj);
         // add name to obj index
@@ -182,17 +205,35 @@ impl DataStore {
         // add to parent child index of parent object
         if let Some(parent_id) = parent_obj_id {
             if parent_id == obj_id {
-                return;
+                return Err(anyhow::Error::msg(
+                    "Parent and child objects cannot have the same ID",
+                ));
             }
             if let Some(mut parent_obj) = self.objects.get_mut(&parent_id) {
                 parent_obj.add_child(obj_name.clone(), obj_id);
+                Ok(obj_id)
+            } else {
+                Err(anyhow::Error::msg("Parent object not found"))
             }
+        } else {
+            Ok(obj_id)
         }
     }
 
     /// Retrieve a DataObject by its u128 ID.
     pub fn get(&self, id: u128) -> Option<DataObject> {
         self.objects.get(&id).map(|entry| entry.clone())
+    }
+
+    pub fn get_named_obj_metadata(
+        &self,
+        obj_name: &str,
+        keys: Vec<&str>,
+    ) -> Option<HashMap<String, MetadataValue>> {
+        self.name_obj_idx.get(obj_name).and_then(|reference| {
+            self.get(reference.value().to_owned())
+                .map(|obj| obj.get_metadata_map(keys))
+        })?
     }
 
     /// attach or update metadata of a DataObject by id
@@ -202,13 +243,66 @@ impl DataStore {
         }
     }
 
+    /// get the children of an object
+    pub fn get_obj_children(&self, id: u128) -> Option<Vec<(u128, String)>> {
+        // TODO: to check the case when the specified object does not exist
+        Some(
+            self.objects
+                .get(&id)?
+                .children
+                .as_ref()?
+                .iter()
+                .map(|(id, name)| (id.to_owned(), name.to_owned()))
+                .collect(),
+        )
+    }
+
+    /// get the obj_children by names
+    pub fn get_sub_obj_metadata_by_names(
+        &self,
+        main_obj_id: u128,
+        sub_obj_meta_keys: Option<&HashMap<String, Vec<String>>>,
+    ) -> Option<Vec<(u128, String, HashMap<String, MetadataValue>)>> {
+        match sub_obj_meta_keys {
+            Some(obj_meta_keys) => {
+                let children_name_index = &self.objects.get(&main_obj_id)?.child_name_idx;
+                match children_name_index {
+                    Some(index) => {
+                        let mut result = Vec::new();
+                        for (name, keys) in obj_meta_keys {
+                            if let Some(id) = index.get(name) {
+                                result.push((
+                                    id.to_owned(),
+                                    name.to_owned(),
+                                    self.get_obj_metadata(
+                                        id.to_owned(),
+                                        keys.iter().map(|k| k.as_str()).collect(),
+                                    )?
+                                    .1,
+                                ));
+                            }
+                        }
+                        Some(result)
+                    }
+                    None => None,
+                }
+            }
+            None => None,
+        }
+    }
+
     /// get a group of metadata by keys.
-    pub fn get_metadata(
+    pub fn get_obj_metadata(
         &self,
         id: u128,
         keys: Vec<&str>,
-    ) -> Option<HashMap<String, MetadataValue>> {
-        self.objects.get(&id).unwrap().get_metadata_map(keys)
+    ) -> Option<(String, HashMap<String, MetadataValue>)> {
+        self.objects.get(&id).map(|obj| {
+            (
+                obj.name.clone(),
+                obj.get_metadata_map(keys).unwrap_or(HashMap::new()),
+            )
+        })
     }
 
     /// Retrieve a slice from the NDArray attached to a DataObject identified by its u128 ID.

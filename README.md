@@ -1,4 +1,9 @@
+# BULKI Store
 
+## Prerequisites
+
+MPICH 4.0+ is required.
+protobuf 3.19.4+ is required.
 
 ## Compile on Perlmutter
 
@@ -42,6 +47,13 @@ source ~/.venv/bulkistore/bin/activate
 pip install maturin
 ```
 
+or if you are using conda, you can just do:
+```bash
+conda activate bulkistore
+conda install conda-forge::maturin
+```
+
+
 ## Building commons and server
 
 ```bash
@@ -51,41 +63,20 @@ cargo build -p commons -p server --(debug|release)
 ## Building the client
 
 ```bash
-maturin develop --manifest-path client/Cargo.toml
+maturin develop
 ```
 
 
 ## Running the server
 
 ```bash
-mpirun -np 4 ./target/debug/bulkistore_server
+RUST_LOG=debug mpirun -np 4 target/debug/bulkistore-server
 ```
 
 
 ## Running the client
 
-```python
-
-import bkstore_client as bkc
-bkc.init()
-import numpy as np
-import time
-
-
-
-arr1=np.array([1.5, 2.5, 3.5], dtype=np.float64)
-arr2=np.array([1, 2, 3], dtype=np.int64)
-# client side function for you to perform add
-arr3=bkc.polymorphic_add(arr1,arr2)
-# calling remote function and perform calculation remotely.
-bkc.times_two(arr3)
-
-stime = time.time()
-for i in range(1000):
-    bkc.times_two(arr3)
-
-etime = time.time()
-
-print("throughput: {} OPS/s".format( 1000/(etime-stime)))
-
+```bash
+RUST_BACKTRACE=1 RUST_LOG=debug python testbkcobj3D.py
+RUST_BACKTRACE=1 RUST_LOG=debug python testbkcobj5D.py 
 ```

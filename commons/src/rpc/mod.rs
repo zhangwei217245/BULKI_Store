@@ -7,7 +7,10 @@ use serde::{Deserialize, Serialize};
 use std::{default::Default, sync::Arc};
 use tokio::sync::oneshot;
 
-use crate::handler::{HandlerDispatcher, HandlerResult, RequestHandlerKind, ResponseHandlerKind};
+use crate::{
+    err::RPCResult,
+    handler::{HandlerDispatcher, HandlerResult, RequestHandlerKind, ResponseHandlerKind},
+};
 
 pub mod grpc; // Expose the grpc submodule
 
@@ -46,67 +49,6 @@ impl MessageType {
             0 => Ok(MessageType::Request),
             1 => Ok(MessageType::Response),
             _ => Err(format!("Invalid MessageType value: {}", value)),
-        }
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[repr(u8)]
-pub enum StatusCode {
-    Ok = 0,
-    Cancelled = 1,
-    Unknown = 2,
-    InvalidArgument = 3,
-    DeadlineExceeded = 4,
-    NotFound = 5,
-    AlreadyExists = 6,
-    PermissionDenied = 7,
-    ResourceExhausted = 8,
-    FailedPrecondition = 9,
-    Aborted = 10,
-    OutOfRange = 11,
-    Unimplemented = 12,
-    Internal = 13,
-    Unavailable = 14,
-    DataLoss = 15,
-    Unauthenticated = 16,
-}
-
-impl Default for StatusCode {
-    fn default() -> Self {
-        StatusCode::Ok
-    }
-}
-
-impl From<StatusCode> for u8 {
-    fn from(code: StatusCode) -> Self {
-        code as u8
-    }
-}
-
-impl TryFrom<u8> for StatusCode {
-    type Error = anyhow::Error;
-
-    fn try_from(value: u8) -> Result<Self, Self::Error> {
-        match value {
-            0 => Ok(StatusCode::Ok),
-            1 => Ok(StatusCode::Cancelled),
-            2 => Ok(StatusCode::Unknown),
-            3 => Ok(StatusCode::InvalidArgument),
-            4 => Ok(StatusCode::DeadlineExceeded),
-            5 => Ok(StatusCode::NotFound),
-            6 => Ok(StatusCode::AlreadyExists),
-            7 => Ok(StatusCode::PermissionDenied),
-            8 => Ok(StatusCode::ResourceExhausted),
-            9 => Ok(StatusCode::FailedPrecondition),
-            10 => Ok(StatusCode::Aborted),
-            11 => Ok(StatusCode::OutOfRange),
-            12 => Ok(StatusCode::Unimplemented),
-            13 => Ok(StatusCode::Internal),
-            14 => Ok(StatusCode::Unavailable),
-            15 => Ok(StatusCode::DataLoss),
-            16 => Ok(StatusCode::Unauthenticated),
-            _ => Err(anyhow::anyhow!("Invalid status code: {}", value)),
         }
     }
 }
@@ -264,8 +206,9 @@ pub trait TxEndpoint {
 
     fn discover_servers(&mut self) -> Result<isize>;
     // send a message to a server identified by its index
-    async fn send_message(&self, rx_id: usize, handler_name: &str, msg: RPCData)
-        -> Result<RPCData>;
-    async fn process_response(&self, response: RPCData) -> Result<RPCData>;
+    async fn send_message<T, R>(&self, rx_id: usize, handler_name: &str, input: &T) -> RPCResult<R>
+    where
+        T: Serialize + std::marker::Sync + 'static,
+        R: for<'de> Deserialize<'de>;
     async fn close(&self) -> Result<()>;
 }

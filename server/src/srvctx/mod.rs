@@ -81,11 +81,6 @@ impl ServerContext {
         let (shutdown_tx, shutdown_rx) = oneshot::channel();
         let _ = endpoint.listen(start_listen_tx, shutdown_rx).await?;
         debug!("Endpoint {} is listening now", id);
-        let ready_file = FileUtility::get_pdc_tmp_dir().join(format!("rx_{}_ready.txt", id));
-        // write 'ready' to the ready file
-        tokio::fs::write(&ready_file, "ready")
-            .await
-            .expect("Failed to create ready file");
         let endpoint = Arc::new(TokioMutex::new(endpoint));
         self.endpoints.insert(id.to_string(), endpoint);
         self.endpoint_shutdowns.insert(id.to_string(), shutdown_tx);
@@ -227,19 +222,24 @@ impl ServerContext {
             if let Err(_) = tx.send(()) {
                 warn!("Failed to send shutdown signal to endpoint: {}", id);
             }
-            let ready_file = FileUtility::get_pdc_tmp_dir().join(format!("rx_{}_ready.txt", id));
-            // delete the ready file
-            if let Err(e) = tokio::fs::remove_file(&ready_file).await {
-                warn!("Failed to remove ready file for endpoint {}: {}", id, e);
-            }
 
-            let server_list_path = FileUtility::get_pdc_tmp_dir().join(format!("rx_{}.txt", id));
-            // delete the server list file
-            if let Err(e) = tokio::fs::remove_file(&server_list_path).await {
-                warn!(
-                    "Failed to remove server list file for endpoint {}: {}",
-                    id, e
-                );
+            if self.rank == 0 {
+                let ready_file =
+                    FileUtility::get_pdc_tmp_dir().join(format!("rx_{}_ready.txt", id));
+                // delete the ready file
+                if let Err(e) = tokio::fs::remove_file(&ready_file).await {
+                    warn!("Failed to remove ready file for endpoint {}: {}", id, e);
+                }
+
+                let server_list_path =
+                    FileUtility::get_pdc_tmp_dir().join(format!("rx_{}.txt", id));
+                // delete the server list file
+                if let Err(e) = tokio::fs::remove_file(&server_list_path).await {
+                    warn!(
+                        "Failed to remove server list file for endpoint {}: {}",
+                        id, e
+                    );
+                }
             }
         }
 
