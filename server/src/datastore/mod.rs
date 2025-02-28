@@ -16,6 +16,7 @@ use commons::rpc::RPCData;
 use lazy_static::lazy_static;
 use log::debug;
 use ndarray::SliceInfoElem;
+use rayon::prelude::*;
 use rmp_serde;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU32, AtomicU64};
@@ -58,8 +59,9 @@ pub fn create_objects(data: &mut RPCData) -> HandlerResult {
         .unwrap();
 
     let mut obj_ids: Vec<u128> = Vec::with_capacity(params.len());
-    for param in params {
-        match create_object_internal(param) {
+    if params.len() > 1 {
+        // insert main object first
+        match create_object_internal(params[0].clone()) {
             Ok(obj_id) => obj_ids.push(obj_id),
             Err(e) => {
                 debug!("Failed to create object: {:?}", e);
@@ -67,6 +69,23 @@ pub fn create_objects(data: &mut RPCData) -> HandlerResult {
                     status_code: StatusCode::Internal as u8,
                     message: Some(format!("Failed to create object: {:?}", e)),
                 };
+            }
+        }
+        debug!("Created main object with id: {:?}", obj_ids[0]);
+    }
+    // using rayon to parallelize the creation of remaining objects (sub-objects)
+    let sub_obj_ids: Vec<Result<u128>> = params[1..]
+        .par_iter()
+        .map(|p| create_object_internal(p.clone()))
+        .collect();
+
+    let mut message = None;
+    for id in sub_obj_ids {
+        match id {
+            Ok(obj_id) => obj_ids.push(obj_id),
+            Err(e) => {
+                debug!("Failed to create object: {:?}", e);
+                message = Some(format!("Failed to create object: {:?}", e));
             }
         }
     }
@@ -87,7 +106,7 @@ pub fn create_objects(data: &mut RPCData) -> HandlerResult {
 
     HandlerResult {
         status_code: StatusCode::Ok as u8,
-        message: None,
+        message: message,
     }
 }
 
@@ -115,7 +134,7 @@ pub fn get_object_data(data: &mut RPCData) -> HandlerResult {
             let sub_obj_regions: Option<Vec<(u128, Option<Vec<SliceInfoElem>>)>> =
                 params.sub_obj_regions.map(|sub_regions| {
                     sub_regions
-                        .into_iter()
+                        .into_par_iter()
                         .filter_map(|(name, slices)| {
                             obj.get_child_id_by_name(&name).map(|id| {
                                 (
@@ -221,29 +240,40 @@ pub fn get_object_metadata(data: &mut RPCData) -> HandlerResult {
             }
             Some(SerializableMetaKeySpec::WithObject(map)) => {
                 // loading different sets of attributes for each specified sub-object
-                let sub_obj_ids = store.get_obj_children(params.obj_id).unwrap_or(vec![]);
-                Some(
-                    sub_obj_ids
-                        .iter()
-                        .filter(|(_, obj_name)| map.contains_key(obj_name))
-                        .map(|(id, obj_name)| {
-                            (
-                                id.to_owned(),
-                                obj_name.to_owned(),
-                                store
-                                    .get_named_obj_metadata(
-                                        obj_name,
-                                        map.get(obj_name)
-                                            .unwrap_or(&vec![])
-                                            .iter()
-                                            .map(|s| s.as_str())
-                                            .collect(),
+                let result = store.get_sub_obj_metadata_by_names(params.obj_id, Some(&map));
+                match result {
+                    Some(result) => Some(
+                        result
+                            .into_iter()
+                            .filter_map(|(id, name, metadata)| Some((id, name, metadata)))
+                            .collect(),
+                    ),
+                    None => {
+                        let sub_obj_ids = store.get_obj_children(params.obj_id).unwrap_or(vec![]);
+                        Some(
+                            sub_obj_ids
+                                .iter()
+                                .filter(|(_, obj_name)| map.contains_key(obj_name))
+                                .map(|(id, obj_name)| {
+                                    (
+                                        id.to_owned(),
+                                        obj_name.to_owned(),
+                                        store
+                                            .get_named_obj_metadata(
+                                                obj_name,
+                                                map.get(obj_name)
+                                                    .unwrap_or(&vec![])
+                                                    .iter()
+                                                    .map(|s| s.as_str())
+                                                    .collect(),
+                                            )
+                                            .unwrap_or(HashMap::new()),
                                     )
-                                    .unwrap_or(HashMap::new()),
-                            )
-                        })
-                        .collect(),
-                )
+                                })
+                                .collect(),
+                        )
+                    }
+                }
             }
             None => None,
         };

@@ -27,6 +27,8 @@ env_logger = { workspace = true }
 uuid = { workspace = true }
 num-traits = { version = "0.2.19" }
 fnv = { workspace = true }
+gxhash = { workspace = true }
+
 [build-dependencies]
 tonic-build = { workspace = true }
 

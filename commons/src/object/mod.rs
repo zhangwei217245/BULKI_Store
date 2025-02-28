@@ -2,6 +2,7 @@ pub mod objid;
 pub mod params;
 pub mod types;
 use dashmap::DashMap;
+use gxhash::GxBuildHasher;
 use ndarray::SliceInfoElem;
 
 use anyhow::Result;
@@ -11,6 +12,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::fmt::Debug;
 use std::fs::File;
+// use std::hash::{BuildHasherDefault, RandomState};
 use std::path::Path;
 use types::{MetadataValue, SupportedRustArrayD};
 
@@ -28,11 +30,11 @@ pub struct DataObject {
     /// Optional attached NDArray of any supported type.
     pub array: Option<SupportedRustArrayD>,
     /// Arbitrary metadata attributes.
-    pub metadata: HashMap<String, MetadataValue>,
+    pub metadata: HashMap<String, MetadataValue, GxBuildHasher>,
     /// Nested child DataObjects.
-    pub children: Option<HashSet<(u128, String)>>,
+    pub children: Option<HashSet<(u128, String), GxBuildHasher>>,
     /// The name to ID index for all children.
-    pub child_name_idx: Option<HashMap<String, u128>>,
+    pub child_name_idx: Option<HashMap<String, u128, GxBuildHasher>>,
 }
 
 impl DataObject {
@@ -46,9 +48,11 @@ impl DataObject {
             obj_name_key: params.obj_name_key,
             name: params.obj_name,
             array: params.array_data,
-            metadata: params.initial_metadata.unwrap_or_default(),
-            children: Some(HashSet::new()),
-            child_name_idx: Some(HashMap::new()),
+            metadata: params
+                .initial_metadata
+                .unwrap_or(HashMap::with_hasher(GxBuildHasher::default())),
+            children: Some(HashSet::with_hasher(GxBuildHasher::default())),
+            child_name_idx: Some(HashMap::with_hasher(GxBuildHasher::default())),
         }
     }
 
@@ -174,15 +178,15 @@ impl DataObject {
 
 /// A concurrent DataStore that indexes DataObjects by their u128 IDs using DashMap.
 pub struct DataStore {
-    pub objects: DashMap<u128, DataObject>,
-    pub name_obj_idx: DashMap<String, u128>,
+    pub objects: DashMap<u128, DataObject, GxBuildHasher>,
+    pub name_obj_idx: DashMap<String, u128, GxBuildHasher>,
 }
 impl DataStore {
     /// Create a new, empty DataStore.
     pub fn new() -> Self {
         DataStore {
-            objects: DashMap::new(),
-            name_obj_idx: DashMap::new(),
+            objects: DashMap::with_hasher(GxBuildHasher::default()),
+            name_obj_idx: DashMap::with_hasher(GxBuildHasher::default()),
         }
     }
 
@@ -252,6 +256,40 @@ impl DataStore {
                 .map(|(id, name)| (id.to_owned(), name.to_owned()))
                 .collect(),
         )
+    }
+
+    /// get the obj_children by names
+    pub fn get_sub_obj_metadata_by_names(
+        &self,
+        main_obj_id: u128,
+        sub_obj_meta_keys: Option<&HashMap<String, Vec<String>>>,
+    ) -> Option<Vec<(u128, String, HashMap<String, MetadataValue>)>> {
+        match sub_obj_meta_keys {
+            Some(obj_meta_keys) => {
+                let children_name_index = &self.objects.get(&main_obj_id)?.child_name_idx;
+                match children_name_index {
+                    Some(index) => {
+                        let mut result = Vec::new();
+                        for (name, keys) in obj_meta_keys {
+                            if let Some(id) = index.get(name) {
+                                result.push((
+                                    id.to_owned(),
+                                    name.to_owned(),
+                                    self.get_obj_metadata(
+                                        id.to_owned(),
+                                        keys.iter().map(|k| k.as_str()).collect(),
+                                    )?
+                                    .1,
+                                ));
+                            }
+                        }
+                        Some(result)
+                    }
+                    None => None,
+                }
+            }
+            None => None,
+        }
     }
 
     /// get a group of metadata by keys.
