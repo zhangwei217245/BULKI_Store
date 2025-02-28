@@ -120,7 +120,6 @@ impl DataObject {
     ) -> Option<SupportedRustArrayD> {
         match (self.array.as_ref(), region) {
             (Some(arr), Some(region)) => Some(arr.slice(&region)),
-            (Some(arr), None) => Some(arr.clone()),
             _ => None,
         }
     }
