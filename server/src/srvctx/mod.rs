@@ -222,19 +222,24 @@ impl ServerContext {
             if let Err(_) = tx.send(()) {
                 warn!("Failed to send shutdown signal to endpoint: {}", id);
             }
-            let ready_file = FileUtility::get_pdc_tmp_dir().join(format!("rx_{}_ready.txt", id));
-            // delete the ready file
-            if let Err(e) = tokio::fs::remove_file(&ready_file).await {
-                warn!("Failed to remove ready file for endpoint {}: {}", id, e);
-            }
 
-            let server_list_path = FileUtility::get_pdc_tmp_dir().join(format!("rx_{}.txt", id));
-            // delete the server list file
-            if let Err(e) = tokio::fs::remove_file(&server_list_path).await {
-                warn!(
-                    "Failed to remove server list file for endpoint {}: {}",
-                    id, e
-                );
+            if self.rank == 0 {
+                let ready_file =
+                    FileUtility::get_pdc_tmp_dir().join(format!("rx_{}_ready.txt", id));
+                // delete the ready file
+                if let Err(e) = tokio::fs::remove_file(&ready_file).await {
+                    warn!("Failed to remove ready file for endpoint {}: {}", id, e);
+                }
+
+                let server_list_path =
+                    FileUtility::get_pdc_tmp_dir().join(format!("rx_{}.txt", id));
+                // delete the server list file
+                if let Err(e) = tokio::fs::remove_file(&server_list_path).await {
+                    warn!(
+                        "Failed to remove server list file for endpoint {}: {}",
+                        id, e
+                    );
+                }
             }
         }
 
