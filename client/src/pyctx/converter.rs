@@ -3,7 +3,6 @@ use commons::object::{
     types::{MetadataValue, SerializableSliceInfoElem, SupportedRustArrayD},
 };
 
-use gxhash::GxBuildHasher;
 use ndarray::SliceInfoElem;
 use numpy::{IntoPyArray, PyArrayDyn, PyArrayMethods};
 use pyo3::{
@@ -215,7 +214,7 @@ pub fn convert_pyany_to_metadata_value<'py>(
 /// Convert an optional PyDict wrapped in a Bound into an Option<HashMap<String, MetadataValue>>
 pub fn convert_metadata<'py>(
     metadata: Option<Vec<Option<Bound<'py, PyDict>>>>,
-) -> PyResult<Option<Vec<Option<HashMap<String, MetadataValue, GxBuildHasher>>>>> {
+) -> PyResult<Option<Vec<Option<HashMap<String, MetadataValue>>>>> {
     match metadata {
         None => Ok(None),
         Some(bound) => {
@@ -224,7 +223,7 @@ pub fn convert_metadata<'py>(
                 match item {
                     None => res.push(None),
                     Some(dict) => {
-                        let map = RefCell::new(HashMap::with_hasher(GxBuildHasher::default()));
+                        let map = RefCell::new(HashMap::new());
                         dict.locked_for_each(|key, value| {
                             let mut map_ref = map.borrow_mut();
                             map_ref.insert(
