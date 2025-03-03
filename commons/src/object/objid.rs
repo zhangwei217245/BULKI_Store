@@ -1,4 +1,5 @@
-use fnv::FnvHasher;
+// use fnv::FnvHasher;
+use gxhash::GxHasher;
 use lazy_static::lazy_static;
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
@@ -78,7 +79,7 @@ impl GlobalObjectId {
     }
 
     pub fn with_vnode_id(object_name: &str, vnode_id: Option<u32>) -> Self {
-        let mut hasher = FnvHasher::default();
+        let mut hasher = GxHasher::default();
         object_name.hash(&mut hasher);
         let name_hash = hasher.finish() as u32;
         let timestamp = SystemTime::now()
