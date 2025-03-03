@@ -2,7 +2,6 @@ pub mod objid;
 pub mod params;
 pub mod types;
 use dashmap::DashMap;
-use gxhash::GxBuildHasher;
 use ndarray::SliceInfoElem;
 
 use anyhow::Result;
@@ -30,11 +29,11 @@ pub struct DataObject {
     /// Optional attached NDArray of any supported type.
     pub array: Option<SupportedRustArrayD>,
     /// Arbitrary metadata attributes.
-    pub metadata: HashMap<String, MetadataValue, GxBuildHasher>,
+    pub metadata: HashMap<String, MetadataValue>,
     /// Nested child DataObjects.
-    pub children: Option<HashSet<(u128, String), GxBuildHasher>>,
+    pub children: Option<HashSet<(u128, String)>>,
     /// The name to ID index for all children.
-    pub child_name_idx: Option<HashMap<String, u128, GxBuildHasher>>,
+    pub child_name_idx: Option<HashMap<String, u128>>,
 }
 
 impl DataObject {
@@ -48,11 +47,9 @@ impl DataObject {
             obj_name_key: params.obj_name_key,
             name: params.obj_name,
             array: params.array_data,
-            metadata: params
-                .initial_metadata
-                .unwrap_or(HashMap::with_hasher(GxBuildHasher::default())),
-            children: Some(HashSet::with_hasher(GxBuildHasher::default())),
-            child_name_idx: Some(HashMap::with_hasher(GxBuildHasher::default())),
+            metadata: params.initial_metadata.unwrap_or(HashMap::new()),
+            children: Some(HashSet::new()),
+            child_name_idx: Some(HashMap::new()),
         }
     }
 
@@ -177,15 +174,15 @@ impl DataObject {
 
 /// A concurrent DataStore that indexes DataObjects by their u128 IDs using DashMap.
 pub struct DataStore {
-    pub objects: DashMap<u128, DataObject, GxBuildHasher>,
-    pub name_obj_idx: DashMap<String, u128, GxBuildHasher>,
+    pub objects: DashMap<u128, DataObject>,
+    pub name_obj_idx: DashMap<String, u128>,
 }
 impl DataStore {
     /// Create a new, empty DataStore.
     pub fn new() -> Self {
         DataStore {
-            objects: DashMap::with_hasher(GxBuildHasher::default()),
-            name_obj_idx: DashMap::with_hasher(GxBuildHasher::default()),
+            objects: DashMap::new(),
+            name_obj_idx: DashMap::new(),
         }
     }
 

@@ -1,5 +1,4 @@
 use super::types::*;
-use gxhash::GxBuildHasher;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
@@ -10,7 +9,7 @@ pub struct CreateObjectParams {
     pub obj_name: String,
     pub parent_id: Option<u128>,
     pub obj_name_key: String,
-    pub initial_metadata: Option<HashMap<String, MetadataValue, GxBuildHasher>>,
+    pub initial_metadata: Option<HashMap<String, MetadataValue>>,
     pub array_data: Option<SupportedRustArrayD>,
     pub client_rank: u32, // MPI rank of the client
 }
