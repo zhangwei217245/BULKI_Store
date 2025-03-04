@@ -20,7 +20,6 @@ env_logger = { workspace = true }
 lazy_static = { workspace = true }
 uuid = { workspace = true }
 fnv = { workspace = true }
-gxhash = { workspace = true }
 
 [features]
 default = ["mpi"]
