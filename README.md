@@ -63,7 +63,7 @@ cargo build -p commons -p server --(debug|release)
 ## Building the client
 
 ```bash
-maturin develop
+maturin develop (-r)
 ```
 
 
