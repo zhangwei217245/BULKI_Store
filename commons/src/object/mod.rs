@@ -338,8 +338,8 @@ impl DataStore {
 
     /// Dump all DataObjects to a file in MessagePack format.
     pub fn dump_memorystore_to_file(&self) -> Result<(), anyhow::Error> {
-        // read env var "PDC_DATA_DIR" and use it as the path, the default value should be "./data"
-        let data_dir = std::env::var("PDC_DATA_DIR").unwrap_or("./data".to_string());
+        // read env var "PDC_DATA_LOC" and use it as the path, the default value should be "./data"
+        let data_dir = std::env::var("PDC_DATA_LOC").unwrap_or("./data".to_string());
         // scan data_dir and load every file with .obj extension
         // Create directory if it doesn't exist
         std::fs::create_dir_all(&data_dir)?;
@@ -362,8 +362,8 @@ impl DataStore {
 
     /// Load DataObjects from a MessagePack file and populate the DataStore.
     pub fn load_memorystore_from_file(&self) -> Result<(), anyhow::Error> {
-        // read env var "PDC_DATA_DIR" and use it as the path, the default value should be "./data"
-        let data_dir = std::env::var("PDC_DATA_DIR").unwrap_or("./data".to_string());
+        // read env var "PDC_DATA_LOC" and use it as the path, the default value should be "./data"
+        let data_dir = std::env::var("PDC_DATA_LOC").unwrap_or("./data".to_string());
 
         // test if data_dir exists
         if !Path::new(&data_dir).exists() {
