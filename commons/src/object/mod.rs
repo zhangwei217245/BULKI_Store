@@ -2,6 +2,7 @@ pub mod objid;
 pub mod params;
 pub mod types;
 use dashmap::DashMap;
+use log::debug;
 use ndarray::SliceInfoElem;
 
 use anyhow::Result;
@@ -193,7 +194,17 @@ impl DataStore {
         let obj_name = obj.name.clone();
         // validate if obj_name exists
         if self.name_obj_idx.contains_key(&obj_name) {
-            return Err(anyhow::Error::msg("Object name already exists"));
+            debug!(
+                "Object name already exists: {} , returning the corresponding ID",
+                obj_name
+            );
+            return self
+                .name_obj_idx
+                .get(&obj_name)
+                .map(|id| id.value().to_owned())
+                .ok_or(anyhow::Error::msg(
+                    "Object name exists in name index but the actual ID does not exist.",
+                ));
         }
         // save object
         self.objects.insert(obj_id, obj);
