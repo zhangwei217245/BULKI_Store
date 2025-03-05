@@ -59,37 +59,39 @@ pub fn create_objects(data: &mut RPCData) -> HandlerResult {
         .unwrap();
 
     let mut obj_ids: Vec<u128> = Vec::with_capacity(params.len());
-    if params.len() > 1 {
-        // insert main object first
-        match create_object_internal(params[0].clone()) {
-            Ok(obj_id) => obj_ids.push(obj_id),
-            Err(e) => {
-                debug!("Failed to create object: {:?}", e);
-                return HandlerResult {
-                    status_code: StatusCode::Internal as u8,
-                    message: Some(format!("Failed to create object: {:?}", e)),
-                };
-            }
-        }
-        debug!("Created main object with id: {:?}", obj_ids[0]);
-    }
-    // using rayon to parallelize the creation of remaining objects (sub-objects)
-    let sub_obj_ids: Vec<Result<u128>> = params[1..]
-        .par_iter()
-        .map(|p| create_object_internal(p.clone()))
-        .collect();
-
     let mut message = None;
-    for id in sub_obj_ids {
-        match id {
-            Ok(obj_id) => obj_ids.push(obj_id),
-            Err(e) => {
-                debug!("Failed to create object: {:?}", e);
-                message = Some(format!("Failed to create object: {:?}", e));
+
+    // insert main object first
+    match create_object_internal(params[0].clone()) {
+        Ok(obj_id) => obj_ids.push(obj_id),
+        Err(e) => {
+            message = Some(format!("Failed to create object: {:?}", e));
+            debug!("Failed to create object: {:?}", e);
+            return HandlerResult {
+                status_code: StatusCode::Internal as u8,
+                message,
+            };
+        }
+    }
+    debug!("Created main object with id: {:?}", obj_ids[0]);
+
+    if params.len() > 1 {
+        // using rayon to parallelize the creation of remaining objects (sub-objects)
+        let sub_obj_ids: Vec<Result<u128>> = params[1..]
+            .par_iter()
+            .map(|p| create_object_internal(p.clone()))
+            .collect();
+
+        for id in sub_obj_ids {
+            match id {
+                Ok(obj_id) => obj_ids.push(obj_id),
+                Err(e) => {
+                    debug!("Failed to create object: {:?}", e);
+                    message = Some(format!("Failed to create object: {:?}", e));
+                }
             }
         }
     }
-
     debug!("create_objects: obj_ids length: {:?}", obj_ids.len());
     debug!("create_objects: obj_ids: {:?}", obj_ids);
     // Return the id of the object to the client
@@ -101,9 +103,7 @@ pub fn create_objects(data: &mut RPCData) -> HandlerResult {
             })
             .unwrap(),
     );
-
     debug!("create_objects: {:?}", data.data.as_ref().unwrap().len());
-
     HandlerResult {
         status_code: StatusCode::Ok as u8,
         message: message,
