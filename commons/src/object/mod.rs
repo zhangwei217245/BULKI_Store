@@ -328,12 +328,12 @@ impl DataStore {
     pub fn get_regions_by_obj_ids(
         &self,
         obj_regions: Vec<(u128, Option<Vec<SliceInfoElem>>)>,
-    ) -> Vec<(u128, Option<String>, Option<SupportedRustArrayD>)> {
+    ) -> Vec<(u128, String, Option<SupportedRustArrayD>)> {
         obj_regions
             .into_iter()
             .map(|(id, region)| match self.get(id) {
-                Some(obj) => (id, Some(obj.name), self.get_object_slice(id, region)),
-                None => (id, None, None),
+                Some(obj) => (id, obj.name.clone(), self.get_object_slice(id, region)),
+                None => (id, "".to_string(), None),
             })
             .collect()
     }

@@ -8,7 +8,7 @@ use commons::{
         params::{
             CreateObjectParams, GetObjectMetaParams, GetObjectSliceParams, SerializableMetaKeySpec,
         },
-        types::SerializableSliceInfoElem,
+        types::{ObjectIdentifier, SerializableSliceInfoElem},
     },
     rpc::RPCData,
 };
@@ -176,11 +176,15 @@ pub fn common_resp_proc(response: &mut RPCData) -> HandlerResult {
 }
 
 pub fn get_object_slice_req_proc<'py>(
-    obj_id: Option<u128>,
-    obj_name: Option<String>,
+    obj_id: ObjectIdentifier,
     region: Option<Vec<Bound<'py, PySlice>>>,
     sub_obj_regions: Option<Vec<(String, Vec<Bound<'py, PySlice>>)>>,
 ) -> Result<GetObjectSliceParams> {
+    debug!(
+        "get_object_slice_req_proc: obj_id: {:?}, region: {:?}, sub_obj_regions: {:?}",
+        obj_id, region, sub_obj_regions
+    );
+
     // Convert main region
     let region_slices = match region {
         Some(r) => {
@@ -223,7 +227,6 @@ pub fn get_object_slice_req_proc<'py>(
 
     let get_object_data_params = GetObjectSliceParams {
         obj_id,
-        obj_name,
         region: serializable_region,
         sub_obj_regions: serializable_sub_regions,
     };
@@ -232,14 +235,16 @@ pub fn get_object_slice_req_proc<'py>(
 }
 
 pub fn get_object_metadata_req_proc<'py>(
-    obj_id: Option<u128>,
-    obj_name: Option<String>,
+    obj_id: ObjectIdentifier,
     meta_keys: Option<Vec<String>>,
     sub_meta_keys: Option<MetaKeySpec>,
 ) -> Result<GetObjectMetaParams> {
+    debug!(
+        "get_object_metadata_req_proc: obj_id: {:?}, meta_keys: {:?}, sub_meta_keys: {:?}",
+        obj_id, meta_keys, sub_meta_keys
+    );
     Ok(GetObjectMetaParams {
         obj_id,
-        obj_name,
         meta_keys,
         sub_meta_keys: match sub_meta_keys {
             Some(MetaKeySpec::Simple(keys)) => Some(SerializableMetaKeySpec::Simple(keys)),

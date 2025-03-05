@@ -5,7 +5,7 @@ use commons::object::params::{
     GetObjectMetaParams, GetObjectMetaResponse, GetObjectSliceParams, GetObjectSliceResponse,
     SerializableMetaKeySpec,
 };
-use commons::object::types::SerializableSliceInfoElem;
+use commons::object::types::{ObjectIdentifier, SerializableSliceInfoElem};
 use commons::object::{
     params::CreateObjectParams,
     types::{MetadataValue, SupportedRustArrayD},
@@ -122,22 +122,10 @@ pub fn get_object_data(data: &mut RPCData) -> HandlerResult {
 
     let store = GLOBAL_STORE.read().unwrap();
 
-    // test if both obj_id and obj_name are provided, if both are not provided, we should return with an error
-    if params.obj_id.is_none() && params.obj_name.is_none() {
-        return HandlerResult {
-            status_code: StatusCode::Internal as u8,
-            message: Some("Both obj_id and obj_name are not provided".to_string()),
-        };
-    }
-
-    let obj_id = params.obj_id.unwrap_or_else(|| {
-        store
-            .get_obj_id_by_name(params.obj_name.clone().unwrap().as_str())
-            .unwrap()
-    });
-    let obj_name = params
-        .obj_name
-        .unwrap_or_else(|| store.get(obj_id).unwrap().name.clone());
+    let obj_id = match params.obj_id {
+        ObjectIdentifier::U128(id) => id,
+        ObjectIdentifier::Name(name) => store.get_obj_id_by_name(&name.as_str()).unwrap(),
+    };
 
     // Acquire a read lock on the DataStore.
     let store = GLOBAL_STORE.read().unwrap();
@@ -179,7 +167,7 @@ pub fn get_object_data(data: &mut RPCData) -> HandlerResult {
             };
             let response = GetObjectSliceResponse {
                 obj_id,
-                obj_name,
+                obj_name: obj.name.clone(),
                 array_slice,
                 sub_obj_slices: Some(sub_obj_slices),
             };
@@ -219,19 +207,10 @@ pub fn get_object_metadata(data: &mut RPCData) -> HandlerResult {
         .unwrap();
     let store = GLOBAL_STORE.read().unwrap();
 
-    // test if both obj_id and obj_name are provided, if both are not provided, we should return with an error
-    if params.obj_id.is_none() && params.obj_name.is_none() {
-        return HandlerResult {
-            status_code: StatusCode::Internal as u8,
-            message: Some("Both obj_id and obj_name are not provided".to_string()),
-        };
-    }
-
-    let obj_id = params.obj_id.unwrap_or_else(|| {
-        store
-            .get_obj_id_by_name(params.obj_name.clone().unwrap().as_str())
-            .unwrap()
-    });
+    let obj_id_u128 = match params.obj_id {
+        ObjectIdentifier::U128(id) => id,
+        ObjectIdentifier::Name(name) => store.get_obj_id_by_name(&name.as_str()).unwrap(),
+    };
 
     let key_refs = params
         .meta_keys
@@ -240,14 +219,14 @@ pub fn get_object_metadata(data: &mut RPCData) -> HandlerResult {
         .unwrap_or_default();
 
     let obj_metadata: Option<(String, HashMap<String, MetadataValue>)> =
-        store.get_obj_metadata(obj_id, key_refs);
+        store.get_obj_metadata(obj_id_u128, key_refs);
 
     let (obj_name, metadata) = match obj_metadata {
         Some((obj_name, metadata)) => (obj_name, metadata),
         None => {
             return HandlerResult {
                 status_code: StatusCode::NotFound as u8,
-                message: Some(format!("Object {} not found", obj_id)),
+                message: Some(format!("Object {} not found", &obj_id_u128)),
             }
         }
     };
@@ -256,7 +235,7 @@ pub fn get_object_metadata(data: &mut RPCData) -> HandlerResult {
         match params.sub_meta_keys {
             Some(SerializableMetaKeySpec::Simple(keys)) => {
                 // loading the same set of attributes for all related sub-objects
-                let sub_obj_ids = store.get_obj_children(obj_id).unwrap_or(vec![]);
+                let sub_obj_ids = store.get_obj_children(obj_id_u128).unwrap_or(vec![]);
                 let meta_filter: Vec<&str> = keys.iter().map(|s| s.as_str()).collect();
                 Some(
                     sub_obj_ids
@@ -276,7 +255,7 @@ pub fn get_object_metadata(data: &mut RPCData) -> HandlerResult {
             }
             Some(SerializableMetaKeySpec::WithObject(map)) => {
                 // loading different sets of attributes for each specified sub-object
-                let result = store.get_sub_obj_metadata_by_names(obj_id, Some(&map));
+                let result = store.get_sub_obj_metadata_by_names(obj_id_u128, Some(&map));
                 match result {
                     Some(result) => Some(
                         result
@@ -285,7 +264,7 @@ pub fn get_object_metadata(data: &mut RPCData) -> HandlerResult {
                             .collect(),
                     ),
                     None => {
-                        let sub_obj_ids = store.get_obj_children(obj_id).unwrap_or(vec![]);
+                        let sub_obj_ids = store.get_obj_children(obj_id_u128).unwrap_or(vec![]);
                         Some(
                             sub_obj_ids
                                 .iter()
@@ -315,7 +294,7 @@ pub fn get_object_metadata(data: &mut RPCData) -> HandlerResult {
         };
 
     let result = GetObjectMetaResponse {
-        obj_id: obj_id.clone(),
+        obj_id: obj_id_u128,
         obj_name: obj_name.clone(),
         metadata: Some(metadata),
         sub_obj_metadata: sub_metadata_result,
