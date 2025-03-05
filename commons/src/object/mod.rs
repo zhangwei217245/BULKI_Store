@@ -193,18 +193,16 @@ impl DataStore {
         let parent_obj_id = obj.parent_id;
         let obj_name = obj.name.clone();
         // validate if obj_name exists
-        if self.name_obj_idx.contains_key(&obj_name) {
+        let look_up_result = self
+            .name_obj_idx
+            .get(&obj_name)
+            .map(|id| id.value().to_owned());
+        if look_up_result.is_some() {
             debug!(
                 "Object name already exists: {} , returning the corresponding ID",
                 obj_name
             );
-            return self
-                .name_obj_idx
-                .get(&obj_name)
-                .map(|id| id.value().to_owned())
-                .ok_or(anyhow::Error::msg(
-                    "Object name exists in name index but the actual ID does not exist.",
-                ));
+            return look_up_result.ok_or_else(|| anyhow::Error::msg("Failed to get object ID"));
         }
         // save object
         self.objects.insert(obj_id, obj);
