@@ -2,7 +2,7 @@ pub mod converter;
 use crate::cltctx::{get_server_count, ClientContext};
 
 use commons::err::RPCResult;
-use commons::object::objid::GlobalObjectIdExt;
+use commons::object::objid::{GlobalObjectId, GlobalObjectIdExt};
 use commons::object::params::{
     CreateObjectParams, GetObjectMetaParams, GetObjectMetaResponse, GetObjectSliceParams,
     GetObjectSliceResponse,
@@ -169,20 +169,31 @@ pub fn create_object_impl<'py>(
 
 pub fn get_object_metadata_impl<'py>(
     py: Python<'py>,
-    obj_id: u128,
+    obj_id: Option<u128>,
+    obj_name: Option<String>,
     meta_keys: Option<Vec<String>>,
     sub_meta_keys: Option<MetaKeySpec>,
 ) -> PyResult<Py<PyDict>> {
-    let get_object_metadata_params =
-        super::datastore::get_object_metadata_req_proc(obj_id, meta_keys, sub_meta_keys);
+    let get_object_metadata_params = super::datastore::get_object_metadata_req_proc(
+        obj_id,
+        obj_name.clone(),
+        meta_keys,
+        sub_meta_keys,
+    );
     match get_object_metadata_params {
         Err(_) => Err(PyErr::new::<PyValueError, _>(
             "Failed to create get_object_metadata_params",
         )),
         Ok(params) => {
-            let main_obj_id = params.obj_id;
+            let vnode_id = match (obj_id, obj_name.clone()) {
+                (None, None) => Err(PyErr::new::<PyValueError, _>(
+                    "either obj_id or obj_name must be provided",
+                )),
+                (Some(id), _) => Ok(id.vnode_id()),
+                (_, Some(name)) => Ok(GlobalObjectId::get_name_hash(name.as_str())),
+            }?;
             let result = rpc_call::<GetObjectMetaParams, GetObjectMetaResponse>(
-                main_obj_id.vnode_id() % get_server_count(),
+                vnode_id % get_server_count(),
                 "datastore::get_object_metadata",
                 &params,
             )
@@ -197,20 +208,31 @@ pub fn get_object_metadata_impl<'py>(
 
 pub fn get_object_data_impl<'py>(
     py: Python<'py>,
-    obj_id: u128,
+    obj_id: Option<u128>,
+    obj_name: Option<String>,
     region: Option<Vec<Bound<'py, PySlice>>>,
     sub_obj_regions: Option<Vec<(String, Vec<Bound<'py, PySlice>>)>>,
 ) -> PyResult<Py<PyDict>> {
-    let get_object_data_params =
-        super::datastore::get_object_slice_req_proc(obj_id, region, sub_obj_regions);
+    let get_object_data_params = super::datastore::get_object_slice_req_proc(
+        obj_id,
+        obj_name.clone(),
+        region,
+        sub_obj_regions,
+    );
     match get_object_data_params {
         Err(_) => Err(PyErr::new::<PyValueError, _>(
             "Failed to create object parameters",
         )),
         Ok(params) => {
-            let main_obj_id = params.obj_id;
+            let vnode_id = match (obj_id, obj_name.clone()) {
+                (None, None) => Err(PyErr::new::<PyValueError, _>(
+                    "either obj_id or obj_name must be provided",
+                )),
+                (Some(id), _) => Ok(id.vnode_id()),
+                (_, Some(name)) => Ok(GlobalObjectId::get_name_hash(name.as_str())),
+            }?;
             let result = rpc_call::<GetObjectSliceParams, GetObjectSliceResponse>(
-                main_obj_id.vnode_id() % get_server_count(),
+                vnode_id % get_server_count(),
                 "datastore::get_object_data",
                 &params,
             )

@@ -222,6 +222,13 @@ impl DataStore {
         self.objects.get(&id).map(|entry| entry.clone())
     }
 
+    /// Retrieve a DataObject by its name.
+    pub fn get_obj_id_by_name(&self, name: &str) -> Option<u128> {
+        self.name_obj_idx
+            .get(name)
+            .map(|reference| reference.value().to_owned())
+    }
+
     pub fn get_named_obj_metadata(
         &self,
         obj_name: &str,

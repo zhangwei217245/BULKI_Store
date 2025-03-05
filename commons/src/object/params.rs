@@ -16,7 +16,8 @@ pub struct CreateObjectParams {
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct GetObjectSliceParams {
-    pub obj_id: u128,
+    pub obj_id: Option<u128>,
+    pub obj_name: Option<String>,
     pub region: Option<Vec<SerializableSliceInfoElem>>,
     pub sub_obj_regions: Option<Vec<(String, Option<Vec<SerializableSliceInfoElem>>)>>,
 }
@@ -24,6 +25,7 @@ pub struct GetObjectSliceParams {
 #[derive(Debug, Serialize, Deserialize)]
 pub struct GetObjectSliceResponse {
     pub obj_id: u128,
+    pub obj_name: String,
     pub array_slice: Option<SupportedRustArrayD>,
     pub sub_obj_slices: Option<Vec<(u128, Option<String>, Option<SupportedRustArrayD>)>>,
 }
@@ -36,7 +38,8 @@ pub enum SerializableMetaKeySpec {
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct GetObjectMetaParams {
-    pub obj_id: u128,
+    pub obj_id: Option<u128>,
+    pub obj_name: Option<String>,
     pub meta_keys: Option<Vec<String>>,
     pub sub_meta_keys: Option<SerializableMetaKeySpec>,
 }

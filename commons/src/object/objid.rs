@@ -78,9 +78,7 @@ impl GlobalObjectId {
     }
 
     pub fn with_vnode_id(object_name: &str, vnode_id: Option<u32>) -> Self {
-        let mut hasher = FnvHasher::default();
-        object_name.hash(&mut hasher);
-        let name_hash = hasher.finish() as u32;
+        let name_hash = Self::get_name_hash(object_name);
         let timestamp = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap()
@@ -91,6 +89,12 @@ impl GlobalObjectId {
             name_hash: vnode_id.unwrap_or(name_hash),
             version: 1,
         }
+    }
+
+    pub fn get_name_hash(object_name: &str) -> u32 {
+        let mut hasher = FnvHasher::default();
+        object_name.hash(&mut hasher);
+        hasher.finish() as u32
     }
 }
 
