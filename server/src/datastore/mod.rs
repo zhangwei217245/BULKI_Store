@@ -124,7 +124,15 @@ pub fn get_object_data(data: &mut RPCData) -> HandlerResult {
 
     let obj_id = match params.obj_id {
         ObjectIdentifier::U128(id) => id,
-        ObjectIdentifier::Name(name) => store.get_obj_id_by_name(&name.as_str()).unwrap(),
+        ObjectIdentifier::Name(name) => match store.get_obj_id_by_name(&name.as_str()) {
+            Some(id) => id,
+            None => {
+                return HandlerResult {
+                    status_code: StatusCode::NotFound as u8,
+                    message: Some(format!("Object {} not found", &name)),
+                };
+            }
+        },
     };
 
     // Acquire a read lock on the DataStore.
@@ -209,7 +217,15 @@ pub fn get_object_metadata(data: &mut RPCData) -> HandlerResult {
 
     let obj_id_u128 = match params.obj_id {
         ObjectIdentifier::U128(id) => id,
-        ObjectIdentifier::Name(name) => store.get_obj_id_by_name(&name.as_str()).unwrap(),
+        ObjectIdentifier::Name(name) => match store.get_obj_id_by_name(&name.as_str()) {
+            Some(id) => id,
+            None => {
+                return HandlerResult {
+                    status_code: StatusCode::NotFound as u8,
+                    message: Some(format!("Object {} not found", &name)),
+                };
+            }
+        },
     };
 
     let key_refs = params
