@@ -9,7 +9,7 @@ use commons::object::params::{
 };
 use commons::object::types::{ObjectIdentifier, SupportedRustArrayD};
 use converter::{IntoBoundPyAny, MetaKeySpec, SupportedNumpyArray};
-use log::debug;
+use log::{debug, info};
 use numpy::{
     ndarray::{ArrayD, ArrayViewD, ArrayViewMutD, Axis},
     Complex64,
@@ -162,6 +162,7 @@ pub fn create_object_impl<'py>(
             })?;
             debug!("create_objects: result vector length: {:?}", result.len());
             debug!("create_objects: result vector: {:?}", result);
+            info!("create_objects: result vector: {:?}", result);
             converter::convert_vec_u128_to_py_long(py, result)
         }
     }
@@ -190,6 +191,10 @@ pub fn get_object_metadata_impl<'py>(
                 PyErr::new::<PyValueError, _>(format!("Failed to get object metadata: {}", e))
             })?;
             debug!("get_object_metadata: result: {:?}", result);
+            info!(
+                "get_object_metadata: result: {:?}, {:?}",
+                result.obj_id, result.obj_name
+            );
             converter::convert_get_object_meta_response_to_pydict(py, result)
         }
     }
@@ -218,6 +223,10 @@ pub fn get_object_data_impl<'py>(
                 PyErr::new::<PyValueError, _>(format!("Failed to get object data: {}", e))
             })?;
             // debug!("get_object_data: result vector: {:?}", result);
+            info!(
+                "get_object_data: result: {:?}, {:?}",
+                result.obj_id, result.obj_name
+            );
             converter::convert_get_object_slice_response_to_pydict(py, result)
         }
     }
