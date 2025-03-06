@@ -73,3 +73,7 @@ To install jupyter and configure its kernel with your conda or python environmen
 ```bash
 jupyter kernelspec install --user --name your_env_name --display-name "BULKI Store (Python)"
 ```
+
+After that, you can open `BulkiStore_launcher.ipynb` and `Bulki_Store.ipynb` in jupyter notebook.
+
+Make sure you select the right kernel in jupyter notebook, it has to be the one matches with the env where you have the BULKI Store client installed.
