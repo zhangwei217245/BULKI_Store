@@ -1,3 +1,4 @@
+use super::objid::{GlobalObjectId, GlobalObjectIdExt};
 use ndarray::{ArrayD, IxDyn, SliceInfo, SliceInfoElem};
 use serde::{Deserialize, Serialize};
 
@@ -261,6 +262,22 @@ impl From<SerializableSliceInfoElem> for SliceInfoElem {
                 SliceInfoElem::Slice { start, end, step }
             }
             SerializableSliceInfoElem::NewAxis => SliceInfoElem::NewAxis,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "type", content = "value")]
+pub enum ObjectIdentifier {
+    U128(u128),
+    Name(String),
+}
+
+impl ObjectIdentifier {
+    pub fn vnode_id(&self) -> u32 {
+        match self {
+            ObjectIdentifier::U128(u) => u.vnode_id(),
+            ObjectIdentifier::Name(name) => GlobalObjectId::get_name_hash(name.as_str()),
         }
     }
 }

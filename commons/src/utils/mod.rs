@@ -27,7 +27,7 @@ impl NetworkUtility {
 
 impl FileUtility {
     pub fn get_pdc_tmp_dir() -> PathBuf {
-        env::var_os("PDC_TMP")
+        env::var_os("PDC_TMPDIR")
             .map(PathBuf::from)
             .unwrap_or_else(|| PathBuf::from("./.pdc_tmp"))
     }

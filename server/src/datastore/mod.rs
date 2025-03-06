@@ -5,7 +5,7 @@ use commons::object::params::{
     GetObjectMetaParams, GetObjectMetaResponse, GetObjectSliceParams, GetObjectSliceResponse,
     SerializableMetaKeySpec,
 };
-use commons::object::types::SerializableSliceInfoElem;
+use commons::object::types::{ObjectIdentifier, SerializableSliceInfoElem};
 use commons::object::{
     params::CreateObjectParams,
     types::{MetadataValue, SupportedRustArrayD},
@@ -59,37 +59,39 @@ pub fn create_objects(data: &mut RPCData) -> HandlerResult {
         .unwrap();
 
     let mut obj_ids: Vec<u128> = Vec::with_capacity(params.len());
-    if params.len() > 1 {
-        // insert main object first
-        match create_object_internal(params[0].clone()) {
-            Ok(obj_id) => obj_ids.push(obj_id),
-            Err(e) => {
-                debug!("Failed to create object: {:?}", e);
-                return HandlerResult {
-                    status_code: StatusCode::Internal as u8,
-                    message: Some(format!("Failed to create object: {:?}", e)),
-                };
-            }
-        }
-        debug!("Created main object with id: {:?}", obj_ids[0]);
-    }
-    // using rayon to parallelize the creation of remaining objects (sub-objects)
-    let sub_obj_ids: Vec<Result<u128>> = params[1..]
-        .par_iter()
-        .map(|p| create_object_internal(p.clone()))
-        .collect();
-
     let mut message = None;
-    for id in sub_obj_ids {
-        match id {
-            Ok(obj_id) => obj_ids.push(obj_id),
-            Err(e) => {
-                debug!("Failed to create object: {:?}", e);
-                message = Some(format!("Failed to create object: {:?}", e));
+
+    // insert main object first
+    match create_object_internal(params[0].clone()) {
+        Ok(obj_id) => obj_ids.push(obj_id),
+        Err(e) => {
+            message = Some(format!("Failed to create object: {:?}", e));
+            debug!("Failed to create object: {:?}", e);
+            return HandlerResult {
+                status_code: StatusCode::Internal as u8,
+                message,
+            };
+        }
+    }
+    debug!("Created main object with id: {:?}", obj_ids[0]);
+
+    if params.len() > 1 {
+        // using rayon to parallelize the creation of remaining objects (sub-objects)
+        let sub_obj_ids: Vec<Result<u128>> = params[1..]
+            .par_iter()
+            .map(|p| create_object_internal(p.clone()))
+            .collect();
+
+        for id in sub_obj_ids {
+            match id {
+                Ok(obj_id) => obj_ids.push(obj_id),
+                Err(e) => {
+                    debug!("Failed to create object: {:?}", e);
+                    message = Some(format!("Failed to create object: {:?}", e));
+                }
             }
         }
     }
-
     debug!("create_objects: obj_ids length: {:?}", obj_ids.len());
     debug!("create_objects: obj_ids: {:?}", obj_ids);
     // Return the id of the object to the client
@@ -101,9 +103,7 @@ pub fn create_objects(data: &mut RPCData) -> HandlerResult {
             })
             .unwrap(),
     );
-
     debug!("create_objects: {:?}", data.data.as_ref().unwrap().len());
-
     HandlerResult {
         status_code: StatusCode::Ok as u8,
         message: message,
@@ -120,9 +120,25 @@ pub fn get_object_data(data: &mut RPCData) -> HandlerResult {
         })
         .unwrap();
 
+    let store = GLOBAL_STORE.read().unwrap();
+
+    let obj_id = match params.obj_id {
+        ObjectIdentifier::U128(id) => id,
+        ObjectIdentifier::Name(name) => match store.get_obj_id_by_name(&name.as_str()) {
+            Some(id) => id,
+            None => {
+                return HandlerResult {
+                    status_code: StatusCode::NotFound as u8,
+                    message: Some(format!("Object {} not found", &name)),
+                };
+            }
+        },
+    };
+
     // Acquire a read lock on the DataStore.
     let store = GLOBAL_STORE.read().unwrap();
-    match store.get(params.obj_id) {
+
+    match store.get(obj_id) {
         Some(obj) => {
             // Convert SerializableSliceInfoElem to SliceInfoElem
             let array_slice = obj.get_array_slice(params.region.map(|slices| {
@@ -158,7 +174,8 @@ pub fn get_object_data(data: &mut RPCData) -> HandlerResult {
                 None => vec![],
             };
             let response = GetObjectSliceResponse {
-                obj_id: params.obj_id,
+                obj_id,
+                obj_name: obj.name.clone(),
                 array_slice,
                 sub_obj_slices: Some(sub_obj_slices),
             };
@@ -181,7 +198,7 @@ pub fn get_object_data(data: &mut RPCData) -> HandlerResult {
         }
         None => HandlerResult {
             status_code: StatusCode::NotFound as u8,
-            message: Some(format!("Object {} not found", params.obj_id)),
+            message: Some(format!("Object {} not found", obj_id)),
         },
     }
 }
@@ -197,6 +214,20 @@ pub fn get_object_metadata(data: &mut RPCData) -> HandlerResult {
         })
         .unwrap();
     let store = GLOBAL_STORE.read().unwrap();
+
+    let obj_id_u128 = match params.obj_id {
+        ObjectIdentifier::U128(id) => id,
+        ObjectIdentifier::Name(name) => match store.get_obj_id_by_name(&name.as_str()) {
+            Some(id) => id,
+            None => {
+                return HandlerResult {
+                    status_code: StatusCode::NotFound as u8,
+                    message: Some(format!("Object {} not found", &name)),
+                };
+            }
+        },
+    };
+
     let key_refs = params
         .meta_keys
         .as_ref()
@@ -204,14 +235,14 @@ pub fn get_object_metadata(data: &mut RPCData) -> HandlerResult {
         .unwrap_or_default();
 
     let obj_metadata: Option<(String, HashMap<String, MetadataValue>)> =
-        store.get_obj_metadata(params.obj_id, key_refs);
+        store.get_obj_metadata(obj_id_u128, key_refs);
 
     let (obj_name, metadata) = match obj_metadata {
         Some((obj_name, metadata)) => (obj_name, metadata),
         None => {
             return HandlerResult {
                 status_code: StatusCode::NotFound as u8,
-                message: Some(format!("Object {} not found", params.obj_id)),
+                message: Some(format!("Object {} not found", &obj_id_u128)),
             }
         }
     };
@@ -220,7 +251,7 @@ pub fn get_object_metadata(data: &mut RPCData) -> HandlerResult {
         match params.sub_meta_keys {
             Some(SerializableMetaKeySpec::Simple(keys)) => {
                 // loading the same set of attributes for all related sub-objects
-                let sub_obj_ids = store.get_obj_children(params.obj_id).unwrap_or(vec![]);
+                let sub_obj_ids = store.get_obj_children(obj_id_u128).unwrap_or(vec![]);
                 let meta_filter: Vec<&str> = keys.iter().map(|s| s.as_str()).collect();
                 Some(
                     sub_obj_ids
@@ -240,7 +271,7 @@ pub fn get_object_metadata(data: &mut RPCData) -> HandlerResult {
             }
             Some(SerializableMetaKeySpec::WithObject(map)) => {
                 // loading different sets of attributes for each specified sub-object
-                let result = store.get_sub_obj_metadata_by_names(params.obj_id, Some(&map));
+                let result = store.get_sub_obj_metadata_by_names(obj_id_u128, Some(&map));
                 match result {
                     Some(result) => Some(
                         result
@@ -249,7 +280,7 @@ pub fn get_object_metadata(data: &mut RPCData) -> HandlerResult {
                             .collect(),
                     ),
                     None => {
-                        let sub_obj_ids = store.get_obj_children(params.obj_id).unwrap_or(vec![]);
+                        let sub_obj_ids = store.get_obj_children(obj_id_u128).unwrap_or(vec![]);
                         Some(
                             sub_obj_ids
                                 .iter()
@@ -279,7 +310,7 @@ pub fn get_object_metadata(data: &mut RPCData) -> HandlerResult {
         };
 
     let result = GetObjectMetaResponse {
-        obj_id: params.obj_id,
+        obj_id: obj_id_u128,
         obj_name: obj_name.clone(),
         metadata: Some(metadata),
         sub_obj_metadata: sub_metadata_result,

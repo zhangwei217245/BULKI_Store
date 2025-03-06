@@ -1,6 +1,6 @@
 use commons::object::{
     params::{GetObjectMetaResponse, GetObjectSliceResponse},
-    types::{MetadataValue, SerializableSliceInfoElem, SupportedRustArrayD},
+    types::{MetadataValue, ObjectIdentifier, SerializableSliceInfoElem, SupportedRustArrayD},
 };
 
 use ndarray::SliceInfoElem;
@@ -472,5 +472,37 @@ impl<'py> FromPyObject<'py> for MetaKeySpec {
         Err(PyValueError::new_err(
             "Expected either a list of strings or a tuple (str, list[str])",
         ))
+    }
+}
+
+#[derive(Debug, Clone)]
+pub enum PyObjectIdentifier {
+    U128(u128),
+    Name(String),
+}
+
+impl<'py> FromPyObject<'py> for PyObjectIdentifier {
+    fn extract_bound(ob: &Bound<'py, PyAny>) -> PyResult<Self> {
+        // Try to extract as u128 first
+        if let Ok(id) = ob.extract::<u128>() {
+            return Ok(PyObjectIdentifier::U128(id));
+        }
+
+        if let Ok(s) = ob.extract::<String>() {
+            return Ok(PyObjectIdentifier::Name(s));
+        }
+
+        Err(PyValueError::new_err(
+            "Expected either a u128 number or a str",
+        ))
+    }
+}
+
+impl From<PyObjectIdentifier> for ObjectIdentifier {
+    fn from(value: PyObjectIdentifier) -> Self {
+        match value {
+            PyObjectIdentifier::U128(u) => ObjectIdentifier::U128(u),
+            PyObjectIdentifier::Name(s) => ObjectIdentifier::Name(s),
+        }
     }
 }

@@ -10,7 +10,7 @@ use numpy::{
     Complex64, IntoPyArray, PyArray1, PyArrayDyn, PyArrayMethods, PyReadonlyArray1,
     PyReadonlyArrayDyn, PyReadwriteArray1, PyReadwriteArrayDyn,
 };
-use pyctx::converter::{MetaKeySpec, SupportedNumpyArray};
+use pyctx::converter::{MetaKeySpec, PyObjectIdentifier, SupportedNumpyArray};
 use pyo3::{
     exceptions::PyValueError,
     pymodule,
@@ -89,28 +89,32 @@ fn rust_ext<'py>(m: &Bound<'py, PyModule>) -> PyResult<()> {
         )
     }
 
+    /// Gets the metadata of an object with the given identifier.
+    /// The identifier can be either an object ID of u128 or a name of str.
     #[pyfn(m)]
     #[pyo3(name = "get_object_metadata")]
     #[pyo3(signature = (obj_id, meta_keys=None, sub_meta_keys=None))]
     fn get_object_metadata<'py>(
         py: Python<'py>,
-        obj_id: u128,
+        obj_id: PyObjectIdentifier,
         meta_keys: Option<Vec<String>>,
         sub_meta_keys: Option<MetaKeySpec>,
     ) -> PyResult<Py<PyDict>> {
-        pyctx::get_object_metadata_impl(py, obj_id, meta_keys, sub_meta_keys)
+        pyctx::get_object_metadata_impl(py, obj_id.into(), meta_keys, sub_meta_keys)
     }
 
+    /// Gets the data of an object with the given identifier.
+    /// The identifier can be either an object ID of u128 or a name of str.
     #[pyfn(m)]
     #[pyo3(name = "get_object_data")]
     #[pyo3(signature = (obj_id, region=None, sub_obj_regions=None))]
     fn get_object_data<'py>(
         py: Python<'py>,
-        obj_id: u128,
+        obj_id: PyObjectIdentifier,
         region: Option<Vec<Bound<'py, PySlice>>>,
         sub_obj_regions: Option<Vec<(String, Vec<Bound<'py, PySlice>>)>>,
     ) -> PyResult<Py<PyDict>> {
-        pyctx::get_object_data_impl(py, obj_id, region, sub_obj_regions)
+        pyctx::get_object_data_impl(py, obj_id.into(), region, sub_obj_regions)
     }
 
     ///////////////////////////////////////////////////////////////////////////

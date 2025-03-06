@@ -2,6 +2,7 @@ pub mod objid;
 pub mod params;
 pub mod types;
 use dashmap::DashMap;
+use log::debug;
 use ndarray::SliceInfoElem;
 
 use anyhow::Result;
@@ -192,8 +193,16 @@ impl DataStore {
         let parent_obj_id = obj.parent_id;
         let obj_name = obj.name.clone();
         // validate if obj_name exists
-        if self.name_obj_idx.contains_key(&obj_name) {
-            return Err(anyhow::Error::msg("Object name already exists"));
+        let look_up_result = self
+            .name_obj_idx
+            .get(&obj_name)
+            .map(|id| id.value().to_owned());
+        if look_up_result.is_some() {
+            debug!(
+                "Object name already exists: {} , returning the corresponding ID",
+                obj_name
+            );
+            return look_up_result.ok_or_else(|| anyhow::Error::msg("Failed to get object ID"));
         }
         // save object
         self.objects.insert(obj_id, obj);
@@ -220,6 +229,13 @@ impl DataStore {
     /// Retrieve a DataObject by its u128 ID.
     pub fn get(&self, id: u128) -> Option<DataObject> {
         self.objects.get(&id).map(|entry| entry.clone())
+    }
+
+    /// Retrieve a DataObject by its name.
+    pub fn get_obj_id_by_name(&self, name: &str) -> Option<u128> {
+        self.name_obj_idx
+            .get(name)
+            .map(|reference| reference.value().to_owned())
     }
 
     pub fn get_named_obj_metadata(
@@ -321,12 +337,12 @@ impl DataStore {
     pub fn get_regions_by_obj_ids(
         &self,
         obj_regions: Vec<(u128, Option<Vec<SliceInfoElem>>)>,
-    ) -> Vec<(u128, Option<String>, Option<SupportedRustArrayD>)> {
+    ) -> Vec<(u128, String, Option<SupportedRustArrayD>)> {
         obj_regions
             .into_iter()
             .map(|(id, region)| match self.get(id) {
-                Some(obj) => (id, Some(obj.name), self.get_object_slice(id, region)),
-                None => (id, None, None),
+                Some(obj) => (id, obj.name.clone(), self.get_object_slice(id, region)),
+                None => (id, "".to_string(), None),
             })
             .collect()
     }
@@ -338,8 +354,8 @@ impl DataStore {
 
     /// Dump all DataObjects to a file in MessagePack format.
     pub fn dump_memorystore_to_file(&self) -> Result<(), anyhow::Error> {
-        // read env var "PDC_DATA_DIR" and use it as the path, the default value should be "./data"
-        let data_dir = std::env::var("PDC_DATA_DIR").unwrap_or("./data".to_string());
+        // read env var "PDC_DATA_LOC" and use it as the path, the default value should be "./data"
+        let data_dir = std::env::var("PDC_DATA_LOC").unwrap_or("./data".to_string());
         // scan data_dir and load every file with .obj extension
         // Create directory if it doesn't exist
         std::fs::create_dir_all(&data_dir)?;
@@ -362,8 +378,8 @@ impl DataStore {
 
     /// Load DataObjects from a MessagePack file and populate the DataStore.
     pub fn load_memorystore_from_file(&self) -> Result<(), anyhow::Error> {
-        // read env var "PDC_DATA_DIR" and use it as the path, the default value should be "./data"
-        let data_dir = std::env::var("PDC_DATA_DIR").unwrap_or("./data".to_string());
+        // read env var "PDC_DATA_LOC" and use it as the path, the default value should be "./data"
+        let data_dir = std::env::var("PDC_DATA_LOC").unwrap_or("./data".to_string());
 
         // test if data_dir exists
         if !Path::new(&data_dir).exists() {
