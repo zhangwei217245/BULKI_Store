@@ -268,7 +268,7 @@ pub fn convert_metadata<'py>(
     match metadata {
         None => Ok(None),
         Some(bound) => {
-            let mut res = Vec::new();
+            let mut res = Vec::with_capacity(bound.len());
             for item in bound {
                 match item {
                     None => res.push(None),
@@ -304,7 +304,7 @@ pub fn convert_vec_u128_to_py_long(py: Python, vec: Vec<u128>) -> PyResult<Vec<P
                         num, e
                     ))
                 })
-                .map(|pyint| pyint.clone().unbind())
+                .map(|pyint| pyint.as_unbound().clone_ref(py))
         })
         .collect()
 }
