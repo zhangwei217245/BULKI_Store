@@ -55,18 +55,26 @@ pub fn create_objects_req_proc<'py>(
     sub_obj_data_list: Option<Vec<Option<SupportedNumpyArray<'py>>>>,
 ) -> Option<Vec<CreateObjectParams>> {
     // Convert single metadata dict
-    let major_metadata = crate::pyctx::converter::convert_metadata(Some(vec![metadata]))
+    let major_metadata = {
+        let converted = crate::pyctx::converter::convert_metadata(Some(vec![metadata]))
         .unwrap_or(None)
         .and_then(|mut vec| vec.pop())
         .flatten();
+        converted
+    };
 
     let major_data = match data {
-        Some(array) => Some(array.into_array_type()),
+        Some(array) => {
+            let converted = array.into_array_type();
+            Some(converted)
+        },
         None => None,
     };
 
-    let sub_obj_meta_list =
-        crate::pyctx::converter::convert_metadata(sub_obj_meta_list).unwrap_or(None);
+    let sub_obj_meta_list = {
+        let converted = crate::pyctx::converter::convert_metadata(sub_obj_meta_list).unwrap_or(None);
+        converted
+    };
 
     // Get the name from metadata or generate a random one
     let obj_name = major_metadata

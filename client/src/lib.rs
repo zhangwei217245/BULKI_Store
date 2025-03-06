@@ -325,30 +325,76 @@ fn rust_ext<'py>(m: &Bound<'py, PyModule>) -> PyResult<()> {
         x: SupportedNumpyArray<'py>,
         y: SupportedNumpyArray<'py>,
     ) -> PyResult<Bound<'py, PyAny>> {
-        // Example rule: if either array is F64, convert both to F64.
-        // Otherwise, they must be the same type.
-        if x.is_f64() || y.is_f64() {
-            // Convert both to F64 and then add.
-            let x_f64 = x.cast_to_f64()?;
-            let y_f64 = y.cast_to_f64()?;
-            Ok(
-                pyctx::generic_add(x_f64.readonly().as_array(), y_f64.readonly().as_array())
-                    .into_pyarray(x_f64.py())
-                    .into_any(),
-            )
-        } else {
-            // Otherwise, they should be the same type.
-            match (x, y) {
-                (SupportedNumpyArray::I64(x), SupportedNumpyArray::I64(y)) => Ok(
-                    pyctx::generic_add(x.readonly().as_array(), y.readonly().as_array())
-                        .into_pyarray(x.py())
-                        .into_any(),
-                ),
-                // Add more cases for other same-type operations.
-                _ => Err(PyValueError::new_err(
-                    "Unsupported combination of array types",
-                )),
-            }
+        match (x, y) {
+            // Handle same-type operations directly - no conversions needed
+            (SupportedNumpyArray::I64(x_arr), SupportedNumpyArray::I64(y_arr)) => {
+                let py = x_arr.py();
+                Ok(pyctx::generic_add(x_arr.readonly().as_array(), y_arr.readonly().as_array())
+                    .into_pyarray(py)
+                    .into_any())
+            },
+            (SupportedNumpyArray::F64(x_arr), SupportedNumpyArray::F64(y_arr)) => {
+                let py = x_arr.py();
+                Ok(pyctx::generic_add(x_arr.readonly().as_array(), y_arr.readonly().as_array())
+                    .into_pyarray(py)
+                    .into_any())
+            },
+            
+            // For mixed types where one is F64, only convert the non-F64 one
+            (SupportedNumpyArray::F64(x_arr), y) => {
+                let py = x_arr.py();
+                let y_f64 = y.cast_to_f64()?;
+                let result = pyctx::generic_add(x_arr.readonly().as_array(), y_f64.readonly().as_array())
+                .into_pyarray(py)
+                .into_any();
+                drop(y_f64);
+                Ok(result)
+            },
+            (x, SupportedNumpyArray::F64(y_arr)) => {
+                let py = y_arr.py();
+                let x_f64 = x.cast_to_f64()?;
+                let result = pyctx::generic_add(x_f64.readonly().as_array(), y_arr.readonly().as_array())
+                .into_pyarray(py)
+                .into_any();
+                drop(x_f64);
+                Ok(result)
+            },
+            
+            // Add other same-type cases to avoid unnecessary conversions
+            (SupportedNumpyArray::F32(x_arr), SupportedNumpyArray::F32(y_arr)) => {
+                let py = x_arr.py();
+                Ok(pyctx::generic_add(x_arr.readonly().as_array(), y_arr.readonly().as_array())
+                    .into_pyarray(py)
+                    .into_any())
+            },
+            (SupportedNumpyArray::I32(x_arr), SupportedNumpyArray::I32(y_arr)) => {
+                let py = x_arr.py();
+                Ok(pyctx::generic_add(x_arr.readonly().as_array(), y_arr.readonly().as_array())
+                    .into_pyarray(py)
+                    .into_any())
+            },
+            
+            // Default case - convert both to F64 when they're mixed types
+            (x, y) => {
+                // Get Python context early to avoid borrowing issues
+                let py = match &x {
+                    SupportedNumpyArray::F64(arr) => arr.py(),
+                    _ => match &y {
+                        SupportedNumpyArray::F64(arr) => arr.py(),
+                        _ => return Err(PyValueError::new_err("Unsupported array types")),
+                    },
+                };
+                
+                // Convert both to F64
+                let x_f64 = x.cast_to_f64()?;
+                let y_f64 = y.cast_to_f64()?;
+                let result = pyctx::generic_add(x_f64.readonly().as_array(), y_f64.readonly().as_array())
+                    .into_pyarray(py)
+                    .into_any();
+                drop(x_f64);
+                drop(y_f64);
+                Ok(result)
+            },
         }
     }
 
