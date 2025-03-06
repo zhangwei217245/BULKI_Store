@@ -31,8 +31,8 @@ export LIBCLANG_PATH="$CLANG_DIR/../lib"
 ### For conda users:
 If you are using conda, it's better if you create a new environment:
 ```bash
-conda create --name bulkistore python=3.12
-conda activate bulkistore
+conda create --name your_env_name python=3.12
+conda activate your_env_name
 ```
 And then you can install maturin:
 ```bash
@@ -42,17 +42,10 @@ conda install conda-forge::maturin
 ### For pyenv or virtualenv users:
 Please create a new virtual environment and install maturin:
 ```bash
-python3 -m venv ~/.venv/bulkistore
-source ~/.venv/bulkistore/bin/activate
+python3 -m venv ~/.venv/your_env_name
+source ~/.venv/your_env_name/bin/activate
 pip install maturin
 ```
-
-or if you are using conda, you can just do:
-```bash
-conda activate bulkistore
-conda install conda-forge::maturin
-```
-
 
 ## Building commons and server
 
@@ -67,16 +60,20 @@ maturin develop (-r)
 ```
 
 
-## Running the server
+## Running the server and client
+
+Now, you can run the example in the jupyter notebook we provided.
+
+To start the server and to observe the server debugging logs, you can open `BulkiStore_launcher.ipynb`.
+
+To run the Python Demo, please open `Bulki_Store.ipynb`.
+
+To install jupyter and configure its kernel with your conda or python environment, you can run:
 
 ```bash
-RUST_LOG=debug mpirun -np 4 target/debug/bulkistore-server
+jupyter kernelspec install --user --name your_env_name --display-name "BULKI Store (Python)"
 ```
 
+After that, you can open `BulkiStore_launcher.ipynb` and `Bulki_Store.ipynb` in jupyter notebook.
 
-## Running the client
-
-```bash
-RUST_BACKTRACE=1 RUST_LOG=debug python testbkcobj3D.py
-RUST_BACKTRACE=1 RUST_LOG=debug python testbkcobj5D.py 
-```
+Make sure you select the right kernel in jupyter notebook, it has to be the one matches with the env where you have the BULKI Store client installed.
