@@ -185,9 +185,8 @@ pub fn get_object_data(data: &mut RPCData) -> HandlerResult {
             };
 
             info!(
-                "[Rank {:?}] get_object_data response: {:?}",
-                crate::srvctx::get_rank(),
-                response
+                "[Rank {:?}] get_object_data response",
+                crate::srvctx::get_rank()
             );
 
             data.data = Some(
