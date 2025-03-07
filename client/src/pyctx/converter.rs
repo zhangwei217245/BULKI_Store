@@ -276,7 +276,6 @@ pub fn convert_metadata<'py>(
                 match item {
                     None => res.push(None),
                     Some(dict) => {
-                        info!("RUST: Dict before conversion: {:?}", dict.as_ref());
                         let map = RefCell::new(HashMap::new());
                         dict.locked_for_each(|key, value| {
                             let mut map_ref = map.borrow_mut();
