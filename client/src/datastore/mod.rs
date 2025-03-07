@@ -57,43 +57,43 @@ pub fn create_objects_req_proc<'py>(
     // Convert single metadata dict
     let major_metadata = {
         let converted = crate::pyctx::converter::convert_metadata(Some(vec![metadata]))
-        .unwrap_or(None)
-        .and_then(|mut vec| vec.pop())
-        .flatten();
+            .unwrap_or(None)
+            .and_then(|mut vec| vec.pop())
+            .flatten();
         converted
     };
+
+    // Get the name from metadata or generate a random one
+    let main_obj_name = major_metadata
+        .as_ref()
+        .and_then(|x| x.get(obj_name_key.as_str()).map(|v| v.to_string()))
+        .unwrap_or(format!("obj_{}", generate_random_string()));
+
+    let main_obj_id = commons::object::objid::GlobalObjectId::with_vnode_id(
+        main_obj_name.as_str(),
+        parent_id.map(|id| id.vnode_id()),
+    )
+    .to_u128();
 
     let major_data = match data {
         Some(array) => {
             let converted = array.into_array_type();
             Some(converted)
-        },
+        }
         None => None,
     };
 
     let sub_obj_meta_list = {
-        let converted = crate::pyctx::converter::convert_metadata(sub_obj_meta_list).unwrap_or(None);
+        let converted =
+            crate::pyctx::converter::convert_metadata(sub_obj_meta_list).unwrap_or(None);
         converted
     };
-
-    // Get the name from metadata or generate a random one
-    let obj_name = major_metadata
-        .as_ref()
-        .and_then(|m| m.get(&obj_name_key))
-        .map(|v| v.to_string())
-        .unwrap_or_else(|| format!("obj_{}", generate_random_string()));
-
-    let main_obj_id = commons::object::objid::GlobalObjectId::with_vnode_id(
-        &obj_name,
-        parent_id.map(|id| id.vnode_id()),
-    )
-    .to_u128();
 
     let create_obj_params: Option<Vec<CreateObjectParams>> = match sub_obj_data_list {
         // no array data, this must be a container object
         None => Some(vec![CreateObjectParams {
             obj_id: main_obj_id,
-            obj_name: obj_name,
+            obj_name: main_obj_name.clone(),
             obj_name_key: obj_name_key.clone(),
             parent_id: parent_id,
             initial_metadata: major_metadata,
@@ -107,7 +107,7 @@ pub fn create_objects_req_proc<'py>(
             // Step 1: create the major object first
             let main_object = CreateObjectParams {
                 obj_id: main_obj_id,
-                obj_name: obj_name.clone(),
+                obj_name: main_obj_name.clone(),
                 obj_name_key: obj_name_key.clone(),
                 parent_id: parent_id,
                 initial_metadata: major_metadata,
@@ -118,21 +118,18 @@ pub fn create_objects_req_proc<'py>(
 
             // Step 2: create the sub-objects
             for (i, array) in array_vec.into_iter().enumerate() {
-                let metadata = match sub_obj_meta_list.as_ref() {
+                let sub_metadata = match sub_obj_meta_list.as_ref() {
                     Some(map_list) => map_list[i].to_owned(),
                     None => None,
                 };
 
-                let sub_obj_name = match metadata.as_ref() {
-                    Some(map) => map
-                        .get(&obj_name_key)
-                        .map(|v| v.to_string())
-                        .unwrap_or_else(|| format!("{}/{}", obj_name, i)),
-                    None => format!("{}/{}", obj_name, i),
-                };
+                let sub_obj_name = sub_metadata
+                    .as_ref()
+                    .and_then(|x| x.get(obj_name_key.as_str()).map(|v| v.to_string()))
+                    .unwrap_or(format!("{}/{}", main_obj_name, i));
 
                 let obj_id = commons::object::objid::GlobalObjectId::with_vnode_id(
-                    &sub_obj_name,
+                    sub_obj_name.as_str(),
                     Some(parent_id.unwrap_or_else(|| main_obj_id).vnode_id()),
                 )
                 .to_u128();
@@ -142,7 +139,7 @@ pub fn create_objects_req_proc<'py>(
                     obj_name: sub_obj_name,
                     obj_name_key: obj_name_key.clone(),
                     parent_id: Some(parent_id.unwrap_or_else(|| main_obj_id)),
-                    initial_metadata: metadata,
+                    initial_metadata: sub_metadata,
                     array_data: match array {
                         Some(array) => Some(array.into_array_type()),
                         None => None,

@@ -216,10 +216,7 @@ pub fn convert_metadata_value_to_pyany<'py>(
     }
 }
 
-pub fn convert_pyany_to_metadata_value<'py>(
-    _py: Python<'py>,
-    value: Bound<'py, PyAny>,
-) -> PyResult<MetadataValue> {
+pub fn convert_pyany_to_metadata_value<'py>(value: Bound<'py, PyAny>) -> PyResult<MetadataValue> {
     match value.extract::<i64>() {
         Ok(v) => return Ok(MetadataValue::Int(v)),
         Err(_) => {}
@@ -276,10 +273,8 @@ pub fn convert_metadata<'py>(
                         let map = RefCell::new(HashMap::new());
                         dict.locked_for_each(|key, value| {
                             let mut map_ref = map.borrow_mut();
-                            map_ref.insert(
-                                key.to_string(),
-                                convert_pyany_to_metadata_value(dict.py(), value)?,
-                            );
+                            map_ref
+                                .insert(key.to_string(), convert_pyany_to_metadata_value(value)?);
                             Ok(())
                         })?;
                         res.push(Some(map.into_inner()));
