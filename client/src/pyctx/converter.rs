@@ -3,7 +3,7 @@ use commons::object::{
     types::{MetadataValue, ObjectIdentifier, SerializableSliceInfoElem, SupportedRustArrayD},
 };
 
-use log::info;
+// use log::info;
 use ndarray::SliceInfoElem;
 use numpy::{IntoPyArray, PyArrayDyn, PyArrayMethods, ToPyArray};
 use pyo3::{
