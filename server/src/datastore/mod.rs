@@ -94,9 +94,10 @@ pub fn create_objects(data: &mut RPCData) -> HandlerResult {
     }
     debug!("create_objects: obj_ids length: {:?}", obj_ids.len());
     info!(
-        "[Rank {:?}] create_objects: obj_ids: {:?}",
+        "[Rank {:?}] create_objects: main_obj_id: {:?}, main_obj_name: {:?}",
         crate::srvctx::get_rank(),
-        obj_ids
+        &obj_ids[0],
+        &params[0].obj_name
     );
     // Return the id of the object to the client
     data.data = Some(
@@ -185,8 +186,10 @@ pub fn get_object_data(data: &mut RPCData) -> HandlerResult {
             };
 
             info!(
-                "[Rank {:?}] get_object_data response",
-                crate::srvctx::get_rank()
+                "[Rank {:?}] get_object_data response: obj_id: {:?}, obj_name: {:?}",
+                crate::srvctx::get_rank(),
+                obj_id,
+                obj.name
             );
 
             data.data = Some(
@@ -322,12 +325,10 @@ pub fn get_object_metadata(data: &mut RPCData) -> HandlerResult {
         sub_obj_metadata: sub_metadata_result,
     };
     info!(
-        "[Rank {:?}]get_object_metadata: obj_id: {:?}, obj_name: {:?}, metadata: {:?}, sub_obj_metadata: {:?}",
+        "[Rank {:?}]get_object_metadata: obj_id: {:?}, obj_name: {:?}",
         crate::srvctx::get_rank(),
         obj_id_u128,
-        obj_name,
-        &result.metadata,
-        &result.sub_obj_metadata
+        obj_name
     );
     data.data = Some(
         rmp_serde::to_vec(&result)
