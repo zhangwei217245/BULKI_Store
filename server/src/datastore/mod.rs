@@ -14,7 +14,7 @@ use commons::object::{
 use commons::region::SerializableNDArray;
 use commons::rpc::RPCData;
 use lazy_static::lazy_static;
-use log::debug;
+use log::{debug, info};
 use ndarray::SliceInfoElem;
 use rayon::prelude::*;
 use rmp_serde;
@@ -93,8 +93,8 @@ pub fn create_objects(data: &mut RPCData) -> HandlerResult {
         }
     }
     debug!("create_objects: obj_ids length: {:?}", obj_ids.len());
-    debug!(
-        "[rank{:?}]create_objects: obj_ids: {:?}",
+    info!(
+        "[Rank {:?}] create_objects: obj_ids: {:?}",
         crate::srvctx::get_rank(),
         obj_ids
     );
@@ -184,7 +184,11 @@ pub fn get_object_data(data: &mut RPCData) -> HandlerResult {
                 sub_obj_slices: Some(sub_obj_slices),
             };
 
-            debug!("get_object_data response: {:?}", response);
+            info!(
+                "[Rank {:?}] get_object_data response: {:?}",
+                crate::srvctx::get_rank(),
+                response
+            );
 
             data.data = Some(
                 rmp_serde::to_vec(&response)
@@ -318,8 +322,8 @@ pub fn get_object_metadata(data: &mut RPCData) -> HandlerResult {
         metadata: Some(metadata),
         sub_obj_metadata: sub_metadata_result,
     };
-    debug!(
-        "[rank{:?}]get_object_metadata: obj_id: {:?}, obj_name: {:?}, metadata: {:?}, sub_obj_metadata: {:?}",
+    info!(
+        "[Rank {:?}]get_object_metadata: obj_id: {:?}, obj_name: {:?}, metadata: {:?}, sub_obj_metadata: {:?}",
         crate::srvctx::get_rank(),
         obj_id_u128,
         obj_name,
