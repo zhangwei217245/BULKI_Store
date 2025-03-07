@@ -14,10 +14,12 @@ use pyctx::converter::{MetaKeySpec, PyObjectIdentifier, SupportedNumpyArray};
 use pyo3::{
     exceptions::PyValueError,
     pymodule,
-    types::{PyAnyMethods, PyDict, PyDictMethods, PyInt, PyModule},
+    types::{PyAnyMethods, PyDict, PyDictMethods, PyInt, PyModule, PyString},
     Bound, Py, PyAny, PyObject, PyResult, Python,
 };
 use pyo3::{pyclass, types::PySlice};
+
+const VERSION: &str = "0.1.1";
 
 #[pymodule]
 #[pyo3(name = "bkstore_client")]
@@ -47,6 +49,12 @@ fn rust_ext<'py>(m: &Bound<'py, PyModule>) -> PyResult<()> {
         pyctx::init_py(py)
     }
 
+    #[pyfn(m)]
+    #[pyo3(name = "version")]
+    fn version_py(py: Python<'_>) -> PyResult<Py<PyString>> {
+        let version = PyString::new(py, VERSION).unbind();
+        Ok(version)
+    }
     /// Creates one or more objects with the given parameters.
     ///
     /// # Arguments
@@ -329,51 +337,61 @@ fn rust_ext<'py>(m: &Bound<'py, PyModule>) -> PyResult<()> {
             // Handle same-type operations directly - no conversions needed
             (SupportedNumpyArray::I64(x_arr), SupportedNumpyArray::I64(y_arr)) => {
                 let py = x_arr.py();
-                Ok(pyctx::generic_add(x_arr.readonly().as_array(), y_arr.readonly().as_array())
-                    .into_pyarray(py)
-                    .into_any())
-            },
+                Ok(
+                    pyctx::generic_add(x_arr.readonly().as_array(), y_arr.readonly().as_array())
+                        .into_pyarray(py)
+                        .into_any(),
+                )
+            }
             (SupportedNumpyArray::F64(x_arr), SupportedNumpyArray::F64(y_arr)) => {
                 let py = x_arr.py();
-                Ok(pyctx::generic_add(x_arr.readonly().as_array(), y_arr.readonly().as_array())
-                    .into_pyarray(py)
-                    .into_any())
-            },
-            
+                Ok(
+                    pyctx::generic_add(x_arr.readonly().as_array(), y_arr.readonly().as_array())
+                        .into_pyarray(py)
+                        .into_any(),
+                )
+            }
+
             // For mixed types where one is F64, only convert the non-F64 one
             (SupportedNumpyArray::F64(x_arr), y) => {
                 let py = x_arr.py();
                 let y_f64 = y.cast_to_f64()?;
-                let result = pyctx::generic_add(x_arr.readonly().as_array(), y_f64.readonly().as_array())
-                .into_pyarray(py)
-                .into_any();
+                let result =
+                    pyctx::generic_add(x_arr.readonly().as_array(), y_f64.readonly().as_array())
+                        .into_pyarray(py)
+                        .into_any();
                 drop(y_f64);
                 Ok(result)
-            },
+            }
             (x, SupportedNumpyArray::F64(y_arr)) => {
                 let py = y_arr.py();
                 let x_f64 = x.cast_to_f64()?;
-                let result = pyctx::generic_add(x_f64.readonly().as_array(), y_arr.readonly().as_array())
-                .into_pyarray(py)
-                .into_any();
+                let result =
+                    pyctx::generic_add(x_f64.readonly().as_array(), y_arr.readonly().as_array())
+                        .into_pyarray(py)
+                        .into_any();
                 drop(x_f64);
                 Ok(result)
-            },
-            
+            }
+
             // Add other same-type cases to avoid unnecessary conversions
             (SupportedNumpyArray::F32(x_arr), SupportedNumpyArray::F32(y_arr)) => {
                 let py = x_arr.py();
-                Ok(pyctx::generic_add(x_arr.readonly().as_array(), y_arr.readonly().as_array())
-                    .into_pyarray(py)
-                    .into_any())
-            },
+                Ok(
+                    pyctx::generic_add(x_arr.readonly().as_array(), y_arr.readonly().as_array())
+                        .into_pyarray(py)
+                        .into_any(),
+                )
+            }
             (SupportedNumpyArray::I32(x_arr), SupportedNumpyArray::I32(y_arr)) => {
                 let py = x_arr.py();
-                Ok(pyctx::generic_add(x_arr.readonly().as_array(), y_arr.readonly().as_array())
-                    .into_pyarray(py)
-                    .into_any())
-            },
-            
+                Ok(
+                    pyctx::generic_add(x_arr.readonly().as_array(), y_arr.readonly().as_array())
+                        .into_pyarray(py)
+                        .into_any(),
+                )
+            }
+
             // Default case - convert both to F64 when they're mixed types
             (x, y) => {
                 // Get Python context early to avoid borrowing issues
@@ -384,17 +402,18 @@ fn rust_ext<'py>(m: &Bound<'py, PyModule>) -> PyResult<()> {
                         _ => return Err(PyValueError::new_err("Unsupported array types")),
                     },
                 };
-                
+
                 // Convert both to F64
                 let x_f64 = x.cast_to_f64()?;
                 let y_f64 = y.cast_to_f64()?;
-                let result = pyctx::generic_add(x_f64.readonly().as_array(), y_f64.readonly().as_array())
-                    .into_pyarray(py)
-                    .into_any();
+                let result =
+                    pyctx::generic_add(x_f64.readonly().as_array(), y_f64.readonly().as_array())
+                        .into_pyarray(py)
+                        .into_any();
                 drop(x_f64);
                 drop(y_f64);
                 Ok(result)
-            },
+            }
         }
     }
 
