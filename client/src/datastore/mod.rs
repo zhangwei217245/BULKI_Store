@@ -54,6 +54,7 @@ pub fn create_objects_req_proc<'py>(
     sub_obj_meta_list: Option<Vec<Option<Bound<'py, PyDict>>>>,
     sub_obj_data_list: Option<Vec<Option<SupportedNumpyArray<'py>>>>,
 ) -> Option<Vec<CreateObjectParams>> {
+    info!("RUST: Metadata before conversion: {:?}", metadata.as_ref());
     // Convert single metadata dict
     let major_metadata = {
         let converted = crate::pyctx::converter::convert_metadata(Some(vec![metadata]))
@@ -63,7 +64,10 @@ pub fn create_objects_req_proc<'py>(
         converted
     };
 
-    info!("Major metadata: {:?}", major_metadata.as_ref());
+    info!(
+        "RUST: Major metadata after conversion: {:?}",
+        major_metadata.as_ref()
+    );
 
     // Get the name from metadata or generate a random one
     let main_obj_name = major_metadata
