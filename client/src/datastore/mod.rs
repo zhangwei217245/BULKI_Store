@@ -63,6 +63,8 @@ pub fn create_objects_req_proc<'py>(
         converted
     };
 
+    info!("Major metadata: {:?}", major_metadata);
+
     // Get the name from metadata or generate a random one
     let main_obj_name = major_metadata
         .as_ref()
