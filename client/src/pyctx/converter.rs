@@ -3,6 +3,7 @@ use commons::object::{
     types::{MetadataValue, ObjectIdentifier, SerializableSliceInfoElem, SupportedRustArrayD},
 };
 
+use log::info;
 use ndarray::SliceInfoElem;
 use numpy::{IntoPyArray, PyArrayDyn, PyArrayMethods, ToPyArray};
 use pyo3::{
@@ -212,6 +213,7 @@ pub fn convert_metadata_value_to_pyany<'py>(
         MetadataValue::UIntList(v) => v.into_bound_py_any(py),
         MetadataValue::FloatList(v) => v.into_bound_py_any(py),
         MetadataValue::StringList(v) => v.into_bound_py_any(py),
+        MetadataValue::RangeTuple(v) => v.into_bound_py_any(py),
         MetadataValue::RangeList(v) => v.into_bound_py_any(py),
     }
 }
@@ -253,6 +255,10 @@ pub fn convert_pyany_to_metadata_value<'py>(value: Bound<'py, PyAny>) -> PyResul
         Ok(v) => return Ok(MetadataValue::RangeList(v)),
         Err(_) => {}
     }
+    match value.extract::<(usize, usize)>() {
+        Ok(v) => return Ok(MetadataValue::RangeTuple(v)),
+        Err(_) => {}
+    }
     Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
         "Unsupported metadata value type",
     ))
@@ -270,6 +276,7 @@ pub fn convert_metadata<'py>(
                 match item {
                     None => res.push(None),
                     Some(dict) => {
+                        info!("RUST: Dict before conversion: {:?}", dict.as_ref());
                         let map = RefCell::new(HashMap::new());
                         dict.locked_for_each(|key, value| {
                             let mut map_ref = map.borrow_mut();

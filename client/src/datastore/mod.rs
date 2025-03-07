@@ -12,7 +12,7 @@ use commons::{
     },
     rpc::RPCData,
 };
-use log::{debug, info};
+use log::debug;
 use pyo3::{
     types::{PyDict, PySlice},
     Bound,
@@ -53,21 +53,14 @@ pub fn create_objects_req_proc<'py>(
     data: Option<SupportedNumpyArray<'py>>,
     sub_obj_meta_list: Option<Vec<Option<Bound<'py, PyDict>>>>,
     sub_obj_data_list: Option<Vec<Option<SupportedNumpyArray<'py>>>>,
-) -> Option<Vec<CreateObjectParams>> {
-    info!("RUST: Metadata before conversion: {:?}", metadata.as_ref());
+) -> Result<Vec<CreateObjectParams>> {
     // Convert single metadata dict
     let major_metadata = {
-        let converted = crate::pyctx::converter::convert_metadata(Some(vec![metadata]))
-            .unwrap_or(None)
+        let converted = crate::pyctx::converter::convert_metadata(Some(vec![metadata]))?
             .and_then(|mut vec| vec.pop())
             .flatten();
         converted
     };
-
-    info!(
-        "RUST: Major metadata after conversion: {:?}",
-        major_metadata.as_ref()
-    );
 
     // Get the name from metadata or generate a random one
     let main_obj_name = major_metadata
@@ -90,14 +83,13 @@ pub fn create_objects_req_proc<'py>(
     };
 
     let sub_obj_meta_list = {
-        let converted =
-            crate::pyctx::converter::convert_metadata(sub_obj_meta_list).unwrap_or(None);
+        let converted = { crate::pyctx::converter::convert_metadata(sub_obj_meta_list)? };
         converted
     };
 
-    let create_obj_params: Option<Vec<CreateObjectParams>> = match sub_obj_data_list {
+    let create_obj_params: Result<Vec<CreateObjectParams>> = match sub_obj_data_list {
         // no array data, this must be a container object
-        None => Some(vec![CreateObjectParams {
+        None => Ok(vec![CreateObjectParams {
             obj_id: main_obj_id,
             obj_name: main_obj_name.clone(),
             obj_name_key: obj_name_key.clone(),
@@ -153,7 +145,7 @@ pub fn create_objects_req_proc<'py>(
                     client_rank: get_client_rank(),
                 });
             }
-            Some(params)
+            Ok(params)
         }
     };
     create_obj_params

@@ -136,7 +136,7 @@ pub fn create_object_impl<'py>(
     array_meta_list: Option<Vec<Option<Bound<'py, PyDict>>>>,
     array_data_list: Option<Vec<Option<SupportedNumpyArray<'py>>>>,
 ) -> PyResult<Vec<Py<PyInt>>> {
-    let create_obj_params: Option<Vec<commons::object::params::CreateObjectParams>> =
+    let create_obj_params: Vec<commons::object::params::CreateObjectParams> =
         crate::datastore::create_objects_req_proc(
             obj_name_key,
             parent_id,
@@ -144,28 +144,22 @@ pub fn create_object_impl<'py>(
             data,
             array_meta_list,
             array_data_list,
-        );
-    match create_obj_params {
-        None => Err(PyErr::new::<PyValueError, _>(
-            "Failed to create object parameters",
-        )),
-        Some(params) => {
-            let main_obj_id = params[0].obj_id;
-            // Get binary data from response (assuming response.data contains the binary payload)
-            let result = rpc_call::<Vec<CreateObjectParams>, Vec<u128>>(
-                main_obj_id.vnode_id() % get_server_count(),
-                "datastore::create_objects",
-                &params,
-            )
-            .map_err(|e| {
-                PyErr::new::<PyValueError, _>(format!("Failed to create objects: {}", e))
-            })?;
-            debug!("create_objects: result vector length: {:?}", result.len());
-            debug!("create_objects: result vector: {:?}", result);
-            info!("create_objects: result vector: {:?}", result);
-            converter::convert_vec_u128_to_py_long(py, result)
-        }
-    }
+        )
+        .map_err(|e| {
+            PyErr::new::<PyValueError, _>(format!("Failed to create object parameters: {}", e))
+        })?;
+    let main_obj_id = create_obj_params[0].obj_id;
+    // Get binary data from response (assuming response.data contains the binary payload)
+    let result = rpc_call::<Vec<CreateObjectParams>, Vec<u128>>(
+        main_obj_id.vnode_id() % get_server_count(),
+        "datastore::create_objects",
+        &create_obj_params,
+    )
+    .map_err(|e| PyErr::new::<PyValueError, _>(format!("Failed to create objects: {}", e)))?;
+    debug!("create_objects: result vector length: {:?}", result.len());
+    debug!("create_objects: result vector: {:?}", result);
+    info!("create_objects: result vector: {:?}", result);
+    converter::convert_vec_u128_to_py_long(py, result)
 }
 
 pub fn get_object_metadata_impl<'py>(
