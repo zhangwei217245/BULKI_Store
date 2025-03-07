@@ -93,7 +93,11 @@ pub fn create_objects(data: &mut RPCData) -> HandlerResult {
         }
     }
     debug!("create_objects: obj_ids length: {:?}", obj_ids.len());
-    debug!("create_objects: obj_ids: {:?}", obj_ids);
+    debug!(
+        "[rank{:?}]create_objects: obj_ids: {:?}",
+        crate::srvctx::get_rank(),
+        obj_ids
+    );
     // Return the id of the object to the client
     data.data = Some(
         rmp_serde::to_vec(&obj_ids)
@@ -203,7 +207,6 @@ pub fn get_object_data(data: &mut RPCData) -> HandlerResult {
     }
 }
 
-#[allow(dead_code)]
 /// Get metadata for a DataObject by its ID and metadata keys.
 pub fn get_object_metadata(data: &mut RPCData) -> HandlerResult {
     // Deserialize the ID from the incoming data.
@@ -315,7 +318,14 @@ pub fn get_object_metadata(data: &mut RPCData) -> HandlerResult {
         metadata: Some(metadata),
         sub_obj_metadata: sub_metadata_result,
     };
-
+    debug!(
+        "[rank{:?}]get_object_metadata: obj_id: {:?}, obj_name: {:?}, metadata: {:?}, sub_obj_metadata: {:?}",
+        crate::srvctx::get_rank(),
+        obj_id_u128,
+        obj_name,
+        &result.metadata,
+        &result.sub_obj_metadata
+    );
     data.data = Some(
         rmp_serde::to_vec(&result)
             .map_err(|e| HandlerResult {
