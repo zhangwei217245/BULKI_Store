@@ -19,7 +19,7 @@ use pyo3::{
 };
 use pyo3::{pyclass, types::PySlice};
 
-const VERSION: &str = "0.1.1";
+const VERSION: &str = env!("CARGO_PKG_VERSION");
 
 #[pymodule]
 #[pyo3(name = "bkstore_client")]

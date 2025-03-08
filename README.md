@@ -77,3 +77,32 @@ jupyter kernelspec install --user --name your_env_name --display-name "BULKI Sto
 After that, you can open `BulkiStore_launcher.ipynb` and `Bulki_Store.ipynb` in jupyter notebook.
 
 Make sure you select the right kernel in jupyter notebook, it has to be the one matches with the env where you have the BULKI Store client installed.
+
+
+## Release management
+
+### Make every commit a patch
+
+Please add the following line to your .git/hooks/pre-commit:
+```bash
+source ../../version_precommit.sh
+```
+
+### Syncing client/Cargo.toml version to pyproject.toml
+
+We have prepared a script `release-hooks.sh` that will help you sync the version between Cargo.toml and pyproject.toml.
+
+The script will be executed everytime you release a new version. 
+
+### Cargo Release
+
+Make sure you have cargo-release installed:
+```bash
+cargo install cargo-release
+```
+
+You can release a new patch version by running:
+```bash
+cargo release patch --no-publish
+```
+
