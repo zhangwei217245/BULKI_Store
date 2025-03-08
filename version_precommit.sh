@@ -1,5 +1,5 @@
 #!/bin/bash
-
+pwd
 # Get the current version from root Cargo.toml
 CURRENT_VERSION=$(grep 'version =' Cargo.toml | head -1 | sed 's/version = "\(.*\)"/\1/')
 
