@@ -1,16 +1,12 @@
-use crate::{cltctx::get_client_rank, pyctx::converter::MetaKeySpec};
+use crate::pyctx::converter;
 use anyhow::Result;
-use commons::{
-    err::StatusCode,
-    handler::HandlerResult,
-    object::{
-        objid::GlobalObjectIdExt,
-        params::{
-            CreateObjectParams, GetObjectMetaParams, GetObjectSliceParams, SerializableMetaKeySpec,
-        },
-        types::{ObjectIdentifier, SerializableSliceInfoElem},
+use client::cltctx::get_client_rank;
+use commons::object::{
+    objid::GlobalObjectIdExt,
+    params::{
+        CreateObjectParams, GetObjectMetaParams, GetObjectSliceParams, SerializableMetaKeySpec,
     },
-    rpc::RPCData,
+    types::{ObjectIdentifier, SerializableSliceInfoElem},
 };
 use log::debug;
 use pyo3::{
@@ -53,39 +49,45 @@ pub fn create_objects_req_proc<'py>(
     data: Option<SupportedNumpyArray<'py>>,
     sub_obj_meta_list: Option<Vec<Option<Bound<'py, PyDict>>>>,
     sub_obj_data_list: Option<Vec<Option<SupportedNumpyArray<'py>>>>,
-) -> Option<Vec<CreateObjectParams>> {
+) -> Result<Vec<CreateObjectParams>> {
     // Convert single metadata dict
-    let major_metadata = crate::pyctx::converter::convert_metadata(Some(vec![metadata]))
-        .unwrap_or(None)
-        .and_then(|mut vec| vec.pop())
-        .flatten();
-
-    let major_data = match data {
-        Some(array) => Some(array.into_array_type()),
-        None => None,
+    let major_metadata = {
+        let converted = converter::convert_metadata(Some(vec![metadata]))?
+            .and_then(|mut vec| vec.pop())
+            .flatten();
+        converted
     };
 
-    let sub_obj_meta_list =
-        crate::pyctx::converter::convert_metadata(sub_obj_meta_list).unwrap_or(None);
-
     // Get the name from metadata or generate a random one
-    let obj_name = major_metadata
+    let main_obj_name = major_metadata
         .as_ref()
-        .and_then(|m| m.get(&obj_name_key))
-        .map(|v| v.to_string())
-        .unwrap_or_else(|| format!("obj_{}", generate_random_string()));
+        .and_then(|x| x.get(obj_name_key.as_str()).map(|v| v.to_string()))
+        .unwrap_or(format!("obj_{}", generate_random_string()));
 
     let main_obj_id = commons::object::objid::GlobalObjectId::with_vnode_id(
-        &obj_name,
+        main_obj_name.as_str(),
         parent_id.map(|id| id.vnode_id()),
     )
     .to_u128();
 
-    let create_obj_params: Option<Vec<CreateObjectParams>> = match sub_obj_data_list {
+    let major_data = match data {
+        Some(array) => {
+            let converted = array.into_array_type();
+            Some(converted)
+        }
+        None => None,
+    };
+
+    let sub_obj_meta_list = {
+        let converted = { converter::convert_metadata(sub_obj_meta_list)? };
+        converted
+    };
+
+    let create_obj_params: Result<Vec<CreateObjectParams>> = match sub_obj_data_list {
         // no array data, this must be a container object
-        None => Some(vec![CreateObjectParams {
+        None => Ok(vec![CreateObjectParams {
             obj_id: main_obj_id,
-            obj_name: obj_name,
+            obj_name: main_obj_name.clone(),
             obj_name_key: obj_name_key.clone(),
             parent_id: parent_id,
             initial_metadata: major_metadata,
@@ -99,7 +101,7 @@ pub fn create_objects_req_proc<'py>(
             // Step 1: create the major object first
             let main_object = CreateObjectParams {
                 obj_id: main_obj_id,
-                obj_name: obj_name.clone(),
+                obj_name: main_obj_name.clone(),
                 obj_name_key: obj_name_key.clone(),
                 parent_id: parent_id,
                 initial_metadata: major_metadata,
@@ -110,21 +112,18 @@ pub fn create_objects_req_proc<'py>(
 
             // Step 2: create the sub-objects
             for (i, array) in array_vec.into_iter().enumerate() {
-                let metadata = match sub_obj_meta_list.as_ref() {
+                let sub_metadata = match sub_obj_meta_list.as_ref() {
                     Some(map_list) => map_list[i].to_owned(),
                     None => None,
                 };
 
-                let sub_obj_name = match metadata.as_ref() {
-                    Some(map) => map
-                        .get(&obj_name_key)
-                        .map(|v| v.to_string())
-                        .unwrap_or_else(|| format!("{}/{}", obj_name, i)),
-                    None => format!("{}/{}", obj_name, i),
-                };
+                let sub_obj_name = sub_metadata
+                    .as_ref()
+                    .and_then(|x| x.get(obj_name_key.as_str()).map(|v| v.to_string()))
+                    .unwrap_or(format!("{}/{}", main_obj_name, i));
 
                 let obj_id = commons::object::objid::GlobalObjectId::with_vnode_id(
-                    &sub_obj_name,
+                    sub_obj_name.as_str(),
                     Some(parent_id.unwrap_or_else(|| main_obj_id).vnode_id()),
                 )
                 .to_u128();
@@ -134,7 +133,7 @@ pub fn create_objects_req_proc<'py>(
                     obj_name: sub_obj_name,
                     obj_name_key: obj_name_key.clone(),
                     parent_id: Some(parent_id.unwrap_or_else(|| main_obj_id)),
-                    initial_metadata: metadata,
+                    initial_metadata: sub_metadata,
                     array_data: match array {
                         Some(array) => Some(array.into_array_type()),
                         None => None,
@@ -142,37 +141,10 @@ pub fn create_objects_req_proc<'py>(
                     client_rank: get_client_rank(),
                 });
             }
-            Some(params)
+            Ok(params)
         }
     };
     create_obj_params
-}
-
-pub fn common_resp_proc(response: &mut RPCData) -> HandlerResult {
-    debug!(
-        "Processing response: data length: {:?}",
-        response.data.as_ref().map(|v| v.len()).unwrap_or(0)
-    );
-
-    // If metadata is missing, return error
-    let result_metadata = match response.metadata.as_mut() {
-        Some(metadata) => metadata,
-        None => {
-            return HandlerResult {
-                status_code: StatusCode::Internal as u8,
-                message: Some("Response metadata is missing".to_string()),
-            }
-        }
-    };
-
-    // If handler_result is missing, return error
-    match &result_metadata.handler_result {
-        Some(handler_result) => handler_result.to_owned(),
-        None => HandlerResult {
-            status_code: StatusCode::Internal as u8,
-            message: Some("Handler result is missing".to_string()),
-        },
-    }
 }
 
 pub fn get_object_slice_req_proc<'py>(
@@ -187,9 +159,10 @@ pub fn get_object_slice_req_proc<'py>(
 
     // Convert main region
     let region_slices = match region {
-        Some(r) => {
-            Some(super::pyctx::converter::convert_pyslice_vec_to_rust_slice_vec(r.len(), Some(r))?)
-        }
+        Some(r) => Some(converter::convert_pyslice_vec_to_rust_slice_vec(
+            r.len(),
+            Some(r),
+        )?),
         None => None,
     };
 
@@ -207,11 +180,10 @@ pub fn get_object_slice_req_proc<'py>(
             sub_regions
                 .into_iter()
                 .map(|(name, slices)| {
-                    let slice_elems =
-                        super::pyctx::converter::convert_pyslice_vec_to_rust_serde_slice_vec(
-                            slices.len(),
-                            Some(slices),
-                        );
+                    let slice_elems = converter::convert_pyslice_vec_to_rust_serde_slice_vec(
+                        slices.len(),
+                        Some(slices),
+                    );
                     Ok((
                         name,
                         match slice_elems {
@@ -237,7 +209,7 @@ pub fn get_object_slice_req_proc<'py>(
 pub fn get_object_metadata_req_proc<'py>(
     obj_id: ObjectIdentifier,
     meta_keys: Option<Vec<String>>,
-    sub_meta_keys: Option<MetaKeySpec>,
+    sub_meta_keys: Option<converter::MetaKeySpec>,
 ) -> Result<GetObjectMetaParams> {
     debug!(
         "get_object_metadata_req_proc: obj_id: {:?}, meta_keys: {:?}, sub_meta_keys: {:?}",
@@ -247,8 +219,12 @@ pub fn get_object_metadata_req_proc<'py>(
         obj_id,
         meta_keys,
         sub_meta_keys: match sub_meta_keys {
-            Some(MetaKeySpec::Simple(keys)) => Some(SerializableMetaKeySpec::Simple(keys)),
-            Some(MetaKeySpec::WithObject(map)) => Some(SerializableMetaKeySpec::WithObject(map)),
+            Some(converter::MetaKeySpec::Simple(keys)) => {
+                Some(SerializableMetaKeySpec::Simple(keys))
+            }
+            Some(converter::MetaKeySpec::WithObject(map)) => {
+                Some(SerializableMetaKeySpec::WithObject(map))
+            }
             None => None,
         },
     })

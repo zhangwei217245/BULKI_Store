@@ -3,8 +3,9 @@ use commons::object::{
     types::{MetadataValue, ObjectIdentifier, SerializableSliceInfoElem, SupportedRustArrayD},
 };
 
+// use log::info;
 use ndarray::SliceInfoElem;
-use numpy::{IntoPyArray, PyArrayDyn, PyArrayMethods};
+use numpy::{IntoPyArray, PyArrayDyn, PyArrayMethods, ToPyArray};
 use pyo3::{
     exceptions::PyValueError,
     types::{PyAnyMethods, PyDict, PyDictMethods, PyInt, PyList, PyListMethods, PySlice},
@@ -29,9 +30,9 @@ pub enum SupportedNumpyArray<'py> {
 
 // Example helper implementations.
 impl<'py> SupportedNumpyArray<'py> {
-    pub fn is_f64(&self) -> bool {
-        matches!(self, SupportedNumpyArray::F64(_))
-    }
+    // pub fn is_f64(&self) -> bool {
+    //     matches!(self, SupportedNumpyArray::F64(_))
+    // }
 
     /// Attempt to cast the array to F64.
     /// For arrays already of type F64, it returns self.
@@ -84,43 +85,93 @@ impl<'py> SupportedNumpyArray<'py> {
     pub fn into_array_type(self) -> SupportedRustArrayD {
         match self {
             SupportedNumpyArray::I8(bound) => {
-                let arr = bound.readonly().as_array().to_owned();
+                // Create a readview first to access the array data
+                let readview = bound.readonly();
+                // Get the array from the read view
+                let arr = readview.as_array().to_owned();
+                // Explicitly drop the bound reference to release Python memory earlier
+                drop(bound);
                 SupportedRustArrayD::Int8(arr)
             }
             SupportedNumpyArray::I16(bound) => {
-                let arr = bound.readonly().as_array().to_owned();
+                // Create a readview first to access the array data
+                let readview = bound.readonly();
+                // Get the array from the read view
+                let arr = readview.as_array().to_owned();
+                // Explicitly drop the bound reference to release Python memory earlier
+                drop(bound);
                 SupportedRustArrayD::Int16(arr)
             }
             SupportedNumpyArray::I32(bound) => {
-                let arr = bound.readonly().as_array().to_owned();
+                // Create a readview first to access the array data
+                let readview = bound.readonly();
+                // Get the array from the read view
+                let arr = readview.as_array().to_owned();
+                // Explicitly drop the bound reference to release Python memory earlier
+                drop(bound);
                 SupportedRustArrayD::Int32(arr)
             }
             SupportedNumpyArray::I64(bound) => {
-                let arr = bound.readonly().as_array().to_owned();
+                // Create a readview first to access the array data
+                let readview = bound.readonly();
+                // Get the array from the read view
+                let arr = readview.as_array().to_owned();
+                // Explicitly drop the bound reference to release Python memory earlier
+                drop(bound);
                 SupportedRustArrayD::Int64(arr)
             }
             SupportedNumpyArray::U8(bound) => {
-                let arr = bound.readonly().as_array().to_owned();
+                // Create a readview first to access the array data
+                let readview = bound.readonly();
+                // Get the array from the read view
+                let arr = readview.as_array().to_owned();
+                // Explicitly drop the bound reference to release Python memory earlier
+                drop(bound);
                 SupportedRustArrayD::UInt8(arr)
             }
             SupportedNumpyArray::U16(bound) => {
-                let arr = bound.readonly().as_array().to_owned();
+                // Create a readview first to access the array data
+                let readview = bound.readonly();
+                // Get the array from the read view
+                let arr = readview.as_array().to_owned();
+                // Explicitly drop the bound reference to release Python memory earlier
+                drop(bound);
                 SupportedRustArrayD::UInt16(arr)
             }
             SupportedNumpyArray::U32(bound) => {
-                let arr = bound.readonly().as_array().to_owned();
+                // Create a readview first to access the array data
+                let readview = bound.readonly();
+                // Get the array from the read view
+                let arr = readview.as_array().to_owned();
+                // Explicitly drop the bound reference to release Python memory earlier
+                drop(bound);
                 SupportedRustArrayD::UInt32(arr)
             }
             SupportedNumpyArray::U64(bound) => {
-                let arr = bound.readonly().as_array().to_owned();
+                // Create a readview first to access the array data
+                let readview = bound.readonly();
+                // Get the array from the read view
+                let arr = readview.as_array().to_owned();
+                // Explicitly drop the bound reference to release Python memory earlier
+                drop(bound);
                 SupportedRustArrayD::UInt64(arr)
             }
             SupportedNumpyArray::F32(bound) => {
-                let arr = bound.readonly().as_array().to_owned();
+                // Create a readview first to access the array data
+                let readview = bound.readonly();
+                // Get the array from the read view
+                let arr = readview.as_array().to_owned();
+                // Explicitly drop the bound reference to release Python memory earlier
+                drop(bound);
                 SupportedRustArrayD::Float32(arr)
             }
             SupportedNumpyArray::F64(bound) => {
-                let arr = bound.readonly().as_array().to_owned();
+                // Create a readview first to access the array data
+                let readview = bound.readonly();
+                // Get the array from the read view
+                let arr = readview.as_array().to_owned();
+                // Explicitly drop the bound reference to release Python memory earlier
+                drop(bound);
                 SupportedRustArrayD::Float64(arr)
             }
         }
@@ -134,16 +185,16 @@ pub trait IntoBoundPyAny {
 impl IntoBoundPyAny for SupportedRustArrayD {
     fn into_bound_py_any<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
         match self {
-            SupportedRustArrayD::Int8(a) => Ok(a.to_owned().into_pyarray(py).into_any()),
-            SupportedRustArrayD::Int16(a) => Ok(a.to_owned().into_pyarray(py).into_any()),
-            SupportedRustArrayD::Int32(a) => Ok(a.to_owned().into_pyarray(py).into_any()),
-            SupportedRustArrayD::Int64(a) => Ok(a.to_owned().into_pyarray(py).into_any()),
-            SupportedRustArrayD::UInt8(a) => Ok(a.to_owned().into_pyarray(py).into_any()),
-            SupportedRustArrayD::UInt16(a) => Ok(a.to_owned().into_pyarray(py).into_any()),
-            SupportedRustArrayD::UInt32(a) => Ok(a.to_owned().into_pyarray(py).into_any()),
-            SupportedRustArrayD::UInt64(a) => Ok(a.to_owned().into_pyarray(py).into_any()),
-            SupportedRustArrayD::Float32(a) => Ok(a.to_owned().into_pyarray(py).into_any()),
-            SupportedRustArrayD::Float64(a) => Ok(a.to_owned().into_pyarray(py).into_any()),
+            SupportedRustArrayD::Int8(a) => Ok(a.to_pyarray(py).into_any()),
+            SupportedRustArrayD::Int16(a) => Ok(a.to_pyarray(py).into_any()),
+            SupportedRustArrayD::Int32(a) => Ok(a.to_pyarray(py).into_any()),
+            SupportedRustArrayD::Int64(a) => Ok(a.to_pyarray(py).into_any()),
+            SupportedRustArrayD::UInt8(a) => Ok(a.to_pyarray(py).into_any()),
+            SupportedRustArrayD::UInt16(a) => Ok(a.to_pyarray(py).into_any()),
+            SupportedRustArrayD::UInt32(a) => Ok(a.to_pyarray(py).into_any()),
+            SupportedRustArrayD::UInt64(a) => Ok(a.to_pyarray(py).into_any()),
+            SupportedRustArrayD::Float32(a) => Ok(a.to_pyarray(py).into_any()),
+            SupportedRustArrayD::Float64(a) => Ok(a.to_pyarray(py).into_any()),
             _ => Err(PyErr::new::<PyValueError, _>("Unsupported array type")),
         }
     }
@@ -162,14 +213,12 @@ pub fn convert_metadata_value_to_pyany<'py>(
         MetadataValue::UIntList(v) => v.into_bound_py_any(py),
         MetadataValue::FloatList(v) => v.into_bound_py_any(py),
         MetadataValue::StringList(v) => v.into_bound_py_any(py),
+        MetadataValue::RangeTuple(v) => v.into_bound_py_any(py),
         MetadataValue::RangeList(v) => v.into_bound_py_any(py),
     }
 }
 
-pub fn convert_pyany_to_metadata_value<'py>(
-    _py: Python<'py>,
-    value: Bound<'py, PyAny>,
-) -> PyResult<MetadataValue> {
+pub fn convert_pyany_to_metadata_value<'py>(value: Bound<'py, PyAny>) -> PyResult<MetadataValue> {
     match value.extract::<i64>() {
         Ok(v) => return Ok(MetadataValue::Int(v)),
         Err(_) => {}
@@ -206,6 +255,10 @@ pub fn convert_pyany_to_metadata_value<'py>(
         Ok(v) => return Ok(MetadataValue::RangeList(v)),
         Err(_) => {}
     }
+    match value.extract::<(usize, usize)>() {
+        Ok(v) => return Ok(MetadataValue::RangeTuple(v)),
+        Err(_) => {}
+    }
     Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
         "Unsupported metadata value type",
     ))
@@ -218,7 +271,7 @@ pub fn convert_metadata<'py>(
     match metadata {
         None => Ok(None),
         Some(bound) => {
-            let mut res = Vec::new();
+            let mut res = Vec::with_capacity(bound.len());
             for item in bound {
                 match item {
                     None => res.push(None),
@@ -226,10 +279,8 @@ pub fn convert_metadata<'py>(
                         let map = RefCell::new(HashMap::new());
                         dict.locked_for_each(|key, value| {
                             let mut map_ref = map.borrow_mut();
-                            map_ref.insert(
-                                key.to_string(),
-                                convert_pyany_to_metadata_value(dict.py(), value)?,
-                            );
+                            map_ref
+                                .insert(key.to_string(), convert_pyany_to_metadata_value(value)?);
                             Ok(())
                         })?;
                         res.push(Some(map.into_inner()));
@@ -254,7 +305,7 @@ pub fn convert_vec_u128_to_py_long(py: Python, vec: Vec<u128>) -> PyResult<Vec<P
                         num, e
                     ))
                 })
-                .map(|pyint| pyint.clone().unbind())
+                .map(|pyint| pyint.as_unbound().clone_ref(py))
         })
         .collect()
 }

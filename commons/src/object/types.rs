@@ -13,6 +13,7 @@ pub enum MetadataValue {
     UIntList(Vec<u64>),
     FloatList(Vec<f64>),
     StringList(Vec<String>),
+    RangeTuple((usize, usize)),
     /// For example, container-level "ranges": a list of (start, end) tuples.
     RangeList(Vec<(usize, usize)>),
 }
@@ -40,9 +41,10 @@ impl MetadataValue {
                 .map(|f| f.to_string())
                 .collect::<Vec<_>>()
                 .join(","),
+            MetadataValue::RangeTuple(t) => format!("({}, {})", t.0, t.1),
             MetadataValue::RangeList(r) => r
                 .iter()
-                .map(|(s, e)| format!("{}-{}", s, e))
+                .map(|(s, e)| format!("({}, {})", s, e))
                 .collect::<Vec<_>>()
                 .join(","),
         }
