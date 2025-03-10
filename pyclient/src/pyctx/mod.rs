@@ -1,6 +1,6 @@
 pub mod converter;
 mod proc;
-use client::cltctx::{get_server_count, ClientContext};
+use client::cltctx::{get_client_count, get_client_rank, get_server_count, ClientContext};
 
 use commons::err::RPCResult;
 use commons::object::objid::GlobalObjectIdExt;
@@ -166,7 +166,12 @@ pub fn create_object_impl<'py>(
     .map_err(|e| PyErr::new::<PyValueError, _>(format!("Failed to create objects: {}", e)))?;
     debug!("create_objects: result vector length: {:?}", result.len());
     debug!("create_objects: result vector: {:?}", result);
-    info!("create_objects: result vector: {:?}", result);
+    info!(
+        "[R{}/S{}] create_objects: result vector: {:?}",
+        get_client_rank(),
+        get_client_count(),
+        result
+    );
     converter::convert_vec_u128_to_py_long(py, result)
 }
 
@@ -194,8 +199,11 @@ pub fn get_object_metadata_impl<'py>(
             })?;
             debug!("get_object_metadata: result: {:?}", result);
             info!(
-                "get_object_metadata: result: {:?}, {:?}",
-                result.obj_id, result.obj_name
+                "[R{}/S{}] get_object_metadata: result: {:?}, {:?}",
+                get_client_rank(),
+                get_client_count(),
+                result.obj_id,
+                result.obj_name
             );
             converter::convert_get_object_meta_response_to_pydict(py, result)
         }
@@ -225,8 +233,11 @@ pub fn get_object_data_impl<'py>(
             })?;
             // debug!("get_object_data: result vector: {:?}", result);
             info!(
-                "get_object_data: result: {:?}, {:?}",
-                result.obj_id, result.obj_name
+                "[R{}/S{}] get_object_data: result: {:?}, {:?}",
+                get_client_rank(),
+                get_client_count(),
+                result.obj_id,
+                result.obj_name
             );
             converter::convert_get_object_slice_response_to_pydict(py, result)
         }
