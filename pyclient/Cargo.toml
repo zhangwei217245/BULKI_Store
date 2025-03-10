@@ -4,7 +4,7 @@ version.workspace = true
 edition = "2021"
 
 [package.metadata.release]
-pre-release-hook = ["../release-hooks.sh", "pre-release"]
+# pre-release-hook = ["../release-hooks.sh", "pre-release"]
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [lib]
