@@ -1,5 +1,6 @@
 pub mod converter;
-use crate::cltctx::{get_server_count, ClientContext};
+mod proc;
+use client::cltctx::{get_server_count, ClientContext};
 
 use commons::err::RPCResult;
 use commons::object::objid::GlobalObjectIdExt;
@@ -22,7 +23,7 @@ use pyo3::{
     Bound, PyErr, PyObject, PyResult, Python,
 };
 use serde::{Deserialize, Serialize};
-use std::{cell::RefCell, ops::Add, sync::Arc};
+use std::{cell::RefCell, ops::Add};
 
 thread_local! {
     static RUNTIME: RefCell<Option<tokio::runtime::Runtime>> = RefCell::new(None);
@@ -31,7 +32,7 @@ thread_local! {
     static REQUEST_COUNTER: RefCell<u32> = RefCell::new(0);
 }
 
-pub fn init_py(py: Python<'_>) -> PyResult<()> {
+pub fn init_py<'py>(_py: Python<'py>) -> PyResult<()> {
     // First check if MPI should be initialized
     let universe = {
         #[cfg(feature = "mpi")]
@@ -137,7 +138,7 @@ pub fn create_object_impl<'py>(
     array_data_list: Option<Vec<Option<SupportedNumpyArray<'py>>>>,
 ) -> PyResult<Vec<Py<PyInt>>> {
     let create_obj_params: Vec<commons::object::params::CreateObjectParams> =
-        crate::datastore::create_objects_req_proc(
+        proc::create_objects_req_proc(
             obj_name_key,
             parent_id,
             metadata,
@@ -170,7 +171,7 @@ pub fn get_object_metadata_impl<'py>(
 ) -> PyResult<Py<PyDict>> {
     let vnode_id = obj_id.vnode_id();
     let get_object_metadata_params =
-        super::datastore::get_object_metadata_req_proc(obj_id, meta_keys, sub_meta_keys);
+        proc::get_object_metadata_req_proc(obj_id, meta_keys, sub_meta_keys);
     match get_object_metadata_params {
         Err(_) => Err(PyErr::new::<PyValueError, _>(
             "Failed to create get_object_metadata_params",
@@ -201,8 +202,7 @@ pub fn get_object_data_impl<'py>(
     sub_obj_regions: Option<Vec<(String, Vec<Bound<'py, PySlice>>)>>,
 ) -> PyResult<Py<PyDict>> {
     let vnode_id = obj_id.vnode_id();
-    let get_object_data_params =
-        super::datastore::get_object_slice_req_proc(obj_id, region, sub_obj_regions);
+    let get_object_data_params = proc::get_object_slice_req_proc(obj_id, region, sub_obj_regions);
     match get_object_data_params {
         Err(_) => Err(PyErr::new::<PyValueError, _>(
             "Failed to create object parameters",

@@ -81,19 +81,6 @@ Make sure you select the right kernel in jupyter notebook, it has to be the one 
 
 ## Release management
 
-### Make every commit a patch
-
-Please add the following line to your .git/hooks/pre-commit:
-```bash
-source ../../version_precommit.sh
-```
-
-### Syncing client/Cargo.toml version to pyproject.toml
-
-We have prepared a script `release-hooks.sh` that will help you sync the version between Cargo.toml and pyproject.toml.
-
-The script will be executed everytime you release a new version. 
-
 ### Cargo Release
 
 Make sure you have cargo-release installed:
@@ -101,8 +88,21 @@ Make sure you have cargo-release installed:
 cargo install cargo-release
 ```
 
+
+### Syncing client/Cargo.toml version to pyproject.toml
+
+We have prepared a script `release-hooks.sh` that will help you sync the version between Cargo.toml and pyproject.toml.
+
+The script will be executed everytime you release a new version. 
+
+### Creating a Release Manually
+
 You can release a new patch version by running:
 ```bash
 cargo release patch --no-publish
 ```
 
+## Build with Release
+```bash
+cargo clean; ./quick_build.sh --release
+```

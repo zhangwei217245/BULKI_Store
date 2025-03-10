@@ -1,16 +1,12 @@
-use crate::{cltctx::get_client_rank, pyctx::converter::MetaKeySpec};
+use crate::pyctx::converter;
 use anyhow::Result;
-use commons::{
-    err::StatusCode,
-    handler::HandlerResult,
-    object::{
-        objid::GlobalObjectIdExt,
-        params::{
-            CreateObjectParams, GetObjectMetaParams, GetObjectSliceParams, SerializableMetaKeySpec,
-        },
-        types::{ObjectIdentifier, SerializableSliceInfoElem},
+use client::cltctx::get_client_rank;
+use commons::object::{
+    objid::GlobalObjectIdExt,
+    params::{
+        CreateObjectParams, GetObjectMetaParams, GetObjectSliceParams, SerializableMetaKeySpec,
     },
-    rpc::RPCData,
+    types::{ObjectIdentifier, SerializableSliceInfoElem},
 };
 use log::debug;
 use pyo3::{
@@ -56,7 +52,7 @@ pub fn create_objects_req_proc<'py>(
 ) -> Result<Vec<CreateObjectParams>> {
     // Convert single metadata dict
     let major_metadata = {
-        let converted = crate::pyctx::converter::convert_metadata(Some(vec![metadata]))?
+        let converted = converter::convert_metadata(Some(vec![metadata]))?
             .and_then(|mut vec| vec.pop())
             .flatten();
         converted
@@ -83,7 +79,7 @@ pub fn create_objects_req_proc<'py>(
     };
 
     let sub_obj_meta_list = {
-        let converted = { crate::pyctx::converter::convert_metadata(sub_obj_meta_list)? };
+        let converted = { converter::convert_metadata(sub_obj_meta_list)? };
         converted
     };
 
@@ -151,33 +147,6 @@ pub fn create_objects_req_proc<'py>(
     create_obj_params
 }
 
-pub fn common_resp_proc(response: &mut RPCData) -> HandlerResult {
-    debug!(
-        "Processing response: data length: {:?}",
-        response.data.as_ref().map(|v| v.len()).unwrap_or(0)
-    );
-
-    // If metadata is missing, return error
-    let result_metadata = match response.metadata.as_mut() {
-        Some(metadata) => metadata,
-        None => {
-            return HandlerResult {
-                status_code: StatusCode::Internal as u8,
-                message: Some("Response metadata is missing".to_string()),
-            }
-        }
-    };
-
-    // If handler_result is missing, return error
-    match &result_metadata.handler_result {
-        Some(handler_result) => handler_result.to_owned(),
-        None => HandlerResult {
-            status_code: StatusCode::Internal as u8,
-            message: Some("Handler result is missing".to_string()),
-        },
-    }
-}
-
 pub fn get_object_slice_req_proc<'py>(
     obj_id: ObjectIdentifier,
     region: Option<Vec<Bound<'py, PySlice>>>,
@@ -190,9 +159,10 @@ pub fn get_object_slice_req_proc<'py>(
 
     // Convert main region
     let region_slices = match region {
-        Some(r) => {
-            Some(super::pyctx::converter::convert_pyslice_vec_to_rust_slice_vec(r.len(), Some(r))?)
-        }
+        Some(r) => Some(converter::convert_pyslice_vec_to_rust_slice_vec(
+            r.len(),
+            Some(r),
+        )?),
         None => None,
     };
 
@@ -210,11 +180,10 @@ pub fn get_object_slice_req_proc<'py>(
             sub_regions
                 .into_iter()
                 .map(|(name, slices)| {
-                    let slice_elems =
-                        super::pyctx::converter::convert_pyslice_vec_to_rust_serde_slice_vec(
-                            slices.len(),
-                            Some(slices),
-                        );
+                    let slice_elems = converter::convert_pyslice_vec_to_rust_serde_slice_vec(
+                        slices.len(),
+                        Some(slices),
+                    );
                     Ok((
                         name,
                         match slice_elems {
@@ -240,7 +209,7 @@ pub fn get_object_slice_req_proc<'py>(
 pub fn get_object_metadata_req_proc<'py>(
     obj_id: ObjectIdentifier,
     meta_keys: Option<Vec<String>>,
-    sub_meta_keys: Option<MetaKeySpec>,
+    sub_meta_keys: Option<converter::MetaKeySpec>,
 ) -> Result<GetObjectMetaParams> {
     debug!(
         "get_object_metadata_req_proc: obj_id: {:?}, meta_keys: {:?}, sub_meta_keys: {:?}",
@@ -250,8 +219,12 @@ pub fn get_object_metadata_req_proc<'py>(
         obj_id,
         meta_keys,
         sub_meta_keys: match sub_meta_keys {
-            Some(MetaKeySpec::Simple(keys)) => Some(SerializableMetaKeySpec::Simple(keys)),
-            Some(MetaKeySpec::WithObject(map)) => Some(SerializableMetaKeySpec::WithObject(map)),
+            Some(converter::MetaKeySpec::Simple(keys)) => {
+                Some(SerializableMetaKeySpec::Simple(keys))
+            }
+            Some(converter::MetaKeySpec::WithObject(map)) => {
+                Some(SerializableMetaKeySpec::WithObject(map))
+            }
             None => None,
         },
     })

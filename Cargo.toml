@@ -1,7 +1,6 @@
 [workspace]
-members = ["commons-macros", "commons", "server", "client"]
+members = ["commons-macros", "commons", "server", "client", "pyclient"]
 resolver = "2"
-build = "build/build.rs"
 
 [workspace.package]
 version = "0.1.12"

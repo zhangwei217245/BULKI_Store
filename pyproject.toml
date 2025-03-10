@@ -6,12 +6,12 @@ build-backend = "maturin"
 name = "bkstore_client"
 requires-python = ">=3.7"
 dependencies = ["numpy>=1.20.0", "mpi4py>=3.1.0"]
-version = ""
+version = "0.1.12"
 
 [tool.maturin]
 features = ["pyo3/extension-module"]
 # module-name = "bkstore_client"
-python-source = "client/python/bkstore_client"
+python-source = "pyclient/python/bkstore_client"
 python-packages = ["bkc_object"]
 include = [
     "bkstore_client/__init__.py",
@@ -19,4 +19,4 @@ include = [
     "bkstore_client/bkc_object/helpers.py",
     "bkstore_client/bkc_object/bkcobject.py",
 ]
-manifest-path = "client/Cargo.toml"
+manifest-path = "pyclient/Cargo.toml"

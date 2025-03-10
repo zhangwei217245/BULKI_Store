@@ -20,6 +20,7 @@ lazy_static! {
     static ref SERVER_COUNT: AtomicU32 = AtomicU32::new(0);
 }
 
+#[allow(dead_code)]
 pub fn get_client_rank() -> u32 {
     CLIENT_RANK.load(Ordering::SeqCst)
 }
@@ -27,7 +28,7 @@ pub fn get_client_rank() -> u32 {
 pub fn get_client_count() -> u32 {
     CLIENT_COUNT.load(Ordering::SeqCst)
 }
-
+#[allow(dead_code)]
 pub fn get_server_count() -> u32 {
     SERVER_COUNT.load(Ordering::SeqCst)
 }
@@ -98,6 +99,7 @@ impl ClientContext {
         Ok(())
     }
 
+    #[allow(dead_code)]
     pub async fn ensure_client_initialized(&mut self) -> Result<()> {
         if self.c2s_client.is_none() {
             // Initialize client-server endpoint
