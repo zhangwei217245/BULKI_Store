@@ -5,5 +5,5 @@ maturin develop $1
 
 # if $1 is '--release', let's build that release
 if [ "$1" = "--release" ]; then
-    cargo release patch --no-publish
+    cargo release patch --no-publish --execute
 fi

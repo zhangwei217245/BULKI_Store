@@ -1,7 +1,9 @@
 #!/bin/bash
 
 update_all_versions() {
-    local new_version=$1
+    # Extract version from the workspace Cargo.toml file
+    local new_version=$(grep -A 1 "\[workspace.package\]" ../Cargo.toml | grep "version" | sed 's/version = "\(.*\)"/\1/')
+    echo "Detected workspace version: $new_version"
     
     # Update pyproject.toml
     sed -i '' "s/version = \"[0-9.]*\"/version = \"$new_version\"/" ../pyproject.toml
@@ -12,6 +14,6 @@ update_all_versions() {
 
 case $1 in
     "pre-release")
-        update_all_versions $2
+        update_all_versions
         ;;
 esac
