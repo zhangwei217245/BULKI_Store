@@ -23,6 +23,7 @@ use pyo3::{
     Bound, PyErr, PyObject, PyResult, Python,
 };
 use serde::{Deserialize, Serialize};
+use std::sync::Arc;
 use std::{cell::RefCell, ops::Add};
 
 thread_local! {
@@ -38,7 +39,7 @@ pub fn init_py<'py>(_py: Python<'py>) -> PyResult<()> {
         #[cfg(feature = "mpi")]
         {
             // Try to import mpi4py
-            if let Ok(_mpi4py) = py.import("mpi4py.MPI") {
+            if let Ok(_mpi4py) = _py.import("mpi4py.MPI") {
                 // MPI is available, initialize it
                 match mpi::initialize_with_threading(mpi::Threading::Multiple) {
                     Some((universe, _)) => Some(Arc::new(universe)),
