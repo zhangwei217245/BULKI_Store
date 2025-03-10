@@ -88,6 +88,10 @@ Make sure you have cargo-release installed:
 cargo install cargo-release
 ```
 
+## Build with Release
+```bash
+cargo clean; ./quick_build.sh --build-type=release|debug [--gen-release=patch|minor|major[,execute]]
+```
 
 ### Syncing client/Cargo.toml version to pyproject.toml
 
@@ -102,7 +106,3 @@ You can release a new patch version by running:
 cargo release patch --no-publish
 ```
 
-## Build with Release
-```bash
-cargo clean; ./quick_build.sh --release
-```

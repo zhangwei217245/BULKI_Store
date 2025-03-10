@@ -37,10 +37,10 @@ for arg in "$@"; do
         --gen-release=*)
             IFS=',' read -ra RELEASE_ARGS <<< "${arg#*=}"
             RELEASE_TYPE="${RELEASE_ARGS[0]}"
-            if [ "${RELEASE_ARGS[1]}" = "dry-run" ]; then
-                DRY_RUN="--dry-run"
+            if [ "${RELEASE_ARGS[1]}" = "execute" ]; then
+                RELEASE_EXECUTE="--execute"
             elif [ -n "${RELEASE_ARGS[1]}" ]; then
-                handle_error "Invalid release option. Only 'dry-run' is supported"
+                handle_error "Invalid release option. Only 'execute' is supported"
             fi
             if [ "$RELEASE_TYPE" != "patch" ] && [ "$RELEASE_TYPE" != "minor" ] && [ "$RELEASE_TYPE" != "major" ]; then
                 handle_error "Invalid release type. Must be 'patch', 'minor', or 'major'"
@@ -77,13 +77,13 @@ if [ -n "$RELEASE_TYPE" ]; then
     fi
     
     echo "Performing $RELEASE_TYPE release..."
-    if [ -n "$DRY_RUN" ]; then
+    if [ -z "$RELEASE_EXECUTE" ]; then
         echo "(Dry run mode - no version sync will be performed)"
     fi
     
     # Run cargo release with appropriate flags
     RELEASE_CMD="cargo release $RELEASE_TYPE --no-publish"
-    if [ -z "$DRY_RUN" ]; then
+    if [ -n "$RELEASE_EXECUTE" ]; then
         RELEASE_CMD="$RELEASE_CMD --execute"
     fi
     
@@ -91,7 +91,7 @@ if [ -n "$RELEASE_TYPE" ]; then
     $RELEASE_CMD || handle_error "Release generation failed"
     
     # Version sync is handled by release-hooks.sh via cargo release hooks
-    if [ -z "$DRY_RUN" ]; then
+    if [ -n "$RELEASE_EXECUTE" ]; then
         echo "Version sync will be performed by release-hooks.sh"
     fi
 fi
