@@ -13,7 +13,7 @@ fn main() {
     println!("cargo:rerun-if-changed=build.rs");
 
     // Sync versions between workspace Cargo.toml and pyproject.toml
-    sync_versions();
+    // sync_versions();
 }
 
 fn sync_versions() {
