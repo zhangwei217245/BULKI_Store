@@ -87,6 +87,10 @@ impl ClientContext {
             }
             CLIENT_RANK.store(self.rank as u32, Ordering::SeqCst);
             CLIENT_COUNT.store(self.size as u32, Ordering::SeqCst);
+            info!(
+                "[MPI Enabled]Client rank: {}, Client count: {}",
+                self.rank, self.size
+            );
         }
         #[cfg(not(feature = "mpi"))]
         {
@@ -95,6 +99,10 @@ impl ClientContext {
             self.size = 1;
             CLIENT_RANK.store(self.rank as u32, Ordering::SeqCst);
             CLIENT_COUNT.store(self.size as u32, Ordering::SeqCst);
+            info!(
+                "[MPI Disabled]Client rank: {}, Client count: {}",
+                self.rank, self.size
+            );
         }
         Ok(())
     }

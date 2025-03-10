@@ -59,6 +59,12 @@ pub fn init_py<'py>(_py: Python<'py>) -> PyResult<()> {
         }
     };
 
+    if universe.is_some() {
+        info!("Running pyclient with MPI");
+    } else {
+        info!("Running pyclient without MPI");
+    }
+
     // Initialize context using our new datastore function
     let mut context = ClientContext::new();
 
