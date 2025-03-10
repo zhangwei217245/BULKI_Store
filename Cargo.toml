@@ -36,13 +36,7 @@ num-traits = { version = "0.2.19" }
 tokio-stream = { version = "0.1.17", features = ["net"] }
 ordered-float = "5.0.0"
 thread_local = "1.1.4"
-numpy = "0.23.0"
-pyo3 = { version = "0.23.5", features = [
-    "extension-module",
-    "abi3-py37",
-    "abi3",
-    "generate-import-lib",
-] }
+
 
 [workspace.features]
 default = ["mpi"]

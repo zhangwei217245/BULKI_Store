@@ -15,12 +15,6 @@ crate-type = ["cdylib"]
 client = { path = "../client" }
 commons = { path = "../commons" }
 tokio = { workspace = true }
-pyo3 = { workspace = true, features = [
-    "extension-module",
-    "abi3-py37",
-    "abi3",
-    "generate-import-lib",
-] }
 once_cell = { workspace = true }
 rand = { workspace = true }
 log = { workspace = true }
@@ -30,12 +24,18 @@ mpi = { workspace = true, optional = true }
 msgpack-numpy = { workspace = true }
 env_logger = { workspace = true }
 thread_local = { workspace = true }
-numpy = { workspace = true }
 ordered-float = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
 lazy_static = { workspace = true }
 fnv = { workspace = true }
 rayon = { workspace = true }
+numpy = "0.23.0"
+pyo3 = { version = "0.23.5", features = [
+    "extension-module",
+    "abi3-py37",
+    "abi3",
+    "generate-import-lib",
+] }
 
 
 [build-dependencies]

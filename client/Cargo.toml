@@ -26,14 +26,7 @@ ndarray = { workspace = true }
 mpi = { workspace = true, optional = true }
 msgpack-numpy = { workspace = true }
 env_logger = { workspace = true }
-pyo3 = { workspace = true, features = [
-    "extension-module",
-    "abi3-py37",
-    "abi3",
-    "generate-import-lib",
-] }
 thread_local = { workspace = true }
-numpy = { workspace = true }
 ordered-float = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
 lazy_static = { workspace = true }
