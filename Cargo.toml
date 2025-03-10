@@ -12,11 +12,11 @@ mpi = { version = "0.8.0" }
 log = { version = "0.4.26" }
 anyhow = { version = "1.0.97" }
 rmp-serde = { version = "1.1" }
-serde = { version = "1.0.218", features = ["derive"] }
+serde = { version = "1.0.219", features = ["derive"] }
 rand = { version = "0.9.0" }
 ndarray = { version = "0.16.1" }
 msgpack-numpy = "0.1.3"
-syn = { version = "2.0.99", features = ["full"] }
+syn = { version = "2.0.100", features = ["full"] }
 quote = "1.0.39"
 proc-macro2 = "1.0.94"
 inventory = "0.3.20"
@@ -25,33 +25,14 @@ tokio = { version = "1.44.0", features = ["full"] }
 hostname = "0.4.0"
 tonic = { version = "0.12.3", features = ["gzip", "transport"] }
 prost = { version = "0.13.5" }
-env_logger = "0.11.6"
+env_logger = "0.11.7"
 async-trait = "0.1.87"
 http = "1.2.0"
 tonic-build = "0.12.3"
 rayon = "1.8.0"
-once_cell = "1.20.3"
+once_cell = "1.21.0"
 fnv = "1.0.7"
 num-traits = { version = "0.2.19" }
 tokio-stream = { version = "0.1.17", features = ["net"] }
 ordered-float = "5.0.0"
 thread_local = "1.1.4"
-
-
-[workspace.features]
-default = ["mpi"]
-mpi = ["dep:mpi"]
-
-[profile.release]
-lto = true
-strip = true
-opt-level = 3
-
-[profile.dev]
-opt-level = 0
-
-[profile.test]
-opt-level = 0
-
-[profile.bench]
-opt-level = 3
