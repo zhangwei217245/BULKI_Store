@@ -106,3 +106,21 @@ You can release a new patch version by running:
 cargo release patch --no-publish
 ```
 
+## Note on Perlmutter
+
+### Module to load:
+
+To use the python client, and to run the server properly, you need to load the llvm Program Environment:
+```bash
+module load PrgEnv-llvm
+```
+
+However, after doing this, your mpi4py from the NERSC default conda env will not work since it was compiled with mpich with PrgEnv-gnu. 
+
+You need to reinstall mpi4py with mpich under PrgEnv-llvm.
+
+```bash
+MPICC="cc -shared" pip install --force-reinstall --no-cache-dir --no-binary=mpi4py mpi4py==3.1.5
+```
+
+Note that the python version should be the same as the one NERSC is using for the default mpi4py.

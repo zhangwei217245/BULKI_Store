@@ -44,12 +44,12 @@ pub fn init_py<'py>(_py: Python<'py>) -> PyResult<()> {
                 match mpi::initialize_with_threading(mpi::Threading::Multiple) {
                     Some((universe, _)) => Some(Arc::new(universe)),
                     None => {
-                        debug!("MPI initialization failed");
+                        info!("mpi4py found but Rust mpi initialization failed");
                         None
                     }
                 }
             } else {
-                debug!("mpi4py not found, running without MPI");
+                info!("mpi4py not found, running without MPI");
                 None
             }
         }
