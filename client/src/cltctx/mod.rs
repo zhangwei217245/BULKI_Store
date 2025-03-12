@@ -235,7 +235,9 @@ impl ClientContext {
         // we should call a MPI barrier if mpi is enabled here
         #[cfg(feature = "mpi")]
         {
-            self.world.as_ref().unwrap().barrier();
+            if let Some(world) = &self.world {
+                world.barrier();
+            }
         }
 
         if let Ok(total_duration) = start_time.elapsed() {
