@@ -2,6 +2,7 @@ use anyhow::Result;
 use async_trait::async_trait;
 #[cfg(feature = "mpi")]
 use mpi::topology::SimpleCommunicator;
+#[cfg(feature = "mpi")]
 use mpi::traits::Communicator;
 use serde::{Deserialize, Serialize};
 use std::{default::Default, sync::Arc};

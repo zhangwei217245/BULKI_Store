@@ -55,7 +55,17 @@ pub struct GrpcTX {
 }
 
 impl GrpcRX {
+    #[cfg(feature = "mpi")]
     pub fn new(rpc_id: String, world: Option<Arc<SimpleCommunicator>>) -> Self {
+        Self {
+            context: RxContext::new(rpc_id, world),
+            port: 0,
+            hostname: String::new(),
+            rx_id: 0,
+        }
+    }
+    #[cfg(not(feature = "mpi"))]
+    pub fn new(rpc_id: String, world: Option<()>) -> Self {
         Self {
             context: RxContext::new(rpc_id, world),
             port: 0,
@@ -72,12 +82,21 @@ impl GrpcTX {
     const KEEPALIVE_TIMEOUT: Duration = Duration::from_secs(10);
     // const MAX_CONCURRENT_REQUESTS: usize = 1000;
 
+    #[cfg(feature = "mpi")]
     pub fn new(rpc_id: String, world: Option<Arc<SimpleCommunicator>>) -> Self {
         Self {
             context: TxContext::new(rpc_id, world),
             connections: DashMap::new(),
         }
     }
+    #[cfg(not(feature = "mpi"))]
+    pub fn new(rpc_id: String, world: Option<()>) -> Self {
+        Self {
+            context: TxContext::new(rpc_id, world),
+            connections: DashMap::new(),
+        }
+    }
+
     async fn check_connection_health(&self, channel: &Channel) -> bool {
         // Send an empty message just to check if connection is alive
         let metadata = RPCMetadata {

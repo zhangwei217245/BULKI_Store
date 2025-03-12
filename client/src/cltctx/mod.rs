@@ -5,14 +5,17 @@ use commons::rpc::grpc::GrpcTX;
 use commons::rpc::TxEndpoint;
 use lazy_static::lazy_static;
 use log::{debug, info};
+#[cfg(feature = "mpi")]
 use mpi::environment::Universe;
 #[cfg(feature = "mpi")]
 use mpi::topology::SimpleCommunicator;
 #[cfg(feature = "mpi")]
 use mpi::traits::*;
+#[cfg(feature = "mpi")]
+use std::sync::Arc;
+
 use serde::{Deserialize, Serialize};
 use std::sync::atomic::{AtomicU32, Ordering};
-use std::sync::Arc;
 
 lazy_static! {
     static ref CLIENT_RANK: AtomicU32 = AtomicU32::new(0);
@@ -59,54 +62,55 @@ pub struct BenchmarkStats {
 impl ClientContext {
     pub fn new() -> Self {
         Self {
+            #[cfg(feature = "mpi")]
             universe: None,
+            #[cfg(feature = "mpi")]
+            world: None,
+            #[cfg(not(feature = "mpi"))]
             world: None,
             rank: 0,
             size: 1,
             c2s_client: None,
         }
     }
-
+    #[cfg(feature = "mpi")]
     pub async fn initialize(&mut self, universe: Option<Arc<Universe>>) -> Result<()> {
-        #[cfg(feature = "mpi")]
-        {
-            if let Some(universe) = universe {
-                // Store the universe first
-                self.universe = Some(universe.clone());
-                // Then get the world communicator
-                let world = self.universe.as_ref().unwrap().world();
-                self.world = Some(Arc::new(world));
-                // Initialize MPI-related fields
-                if let Some(world) = &self.world {
-                    self.rank = world.rank() as usize;
-                    self.size = world.size() as usize;
-                }
-            } else {
-                self.rank = 0;
-                self.size = 1;
+        if let Some(universe) = universe {
+            // Store the universe first
+            self.universe = Some(universe.clone());
+            // Then get the world communicator
+            let world = self.universe.as_ref().unwrap().world();
+            self.world = Some(Arc::new(world));
+            // Initialize MPI-related fields
+            if let Some(world) = &self.world {
+                self.rank = world.rank() as usize;
+                self.size = world.size() as usize;
             }
-            CLIENT_RANK.store(self.rank as u32, Ordering::SeqCst);
-            CLIENT_COUNT.store(self.size as u32, Ordering::SeqCst);
-            info!(
-                "[MPI Enabled]Client rank: {}, Client count: {}",
-                self.rank, self.size
-            );
-        }
-        #[cfg(not(feature = "mpi"))]
-        {
-            self.world = Some(());
+        } else {
             self.rank = 0;
             self.size = 1;
-            CLIENT_RANK.store(self.rank as u32, Ordering::SeqCst);
-            CLIENT_COUNT.store(self.size as u32, Ordering::SeqCst);
-            info!(
-                "[MPI Disabled]Client rank: {}, Client count: {}",
-                self.rank, self.size
-            );
         }
+        CLIENT_RANK.store(self.rank as u32, Ordering::SeqCst);
+        CLIENT_COUNT.store(self.size as u32, Ordering::SeqCst);
+        info!(
+            "[MPI Enabled] Client rank: {}, Client count: {}",
+            self.rank, self.size
+        );
         Ok(())
     }
-
+    #[cfg(not(feature = "mpi"))]
+    pub async fn initialize(&mut self, _: Option<()>) -> Result<()> {
+        self.world = Some(());
+        self.rank = 0;
+        self.size = 1;
+        CLIENT_RANK.store(self.rank as u32, Ordering::SeqCst);
+        CLIENT_COUNT.store(self.size as u32, Ordering::SeqCst);
+        info!(
+            "[MPI Disabled]Client rank: {}, Client count: {}",
+            self.rank, self.size
+        );
+        Ok(())
+    }
     #[allow(dead_code)]
     pub async fn ensure_client_initialized(&mut self) -> Result<()> {
         if self.c2s_client.is_none() {
@@ -125,11 +129,19 @@ impl ClientContext {
         }
         Ok(())
     }
+    #[cfg(feature = "mpi")]
     #[allow(dead_code)]
     pub fn initialize_blocking(&mut self, universe: Option<Arc<Universe>>) -> Result<()> {
         tokio::runtime::Runtime::new()
             .unwrap()
             .block_on(self.initialize(universe))
+    }
+    #[cfg(not(feature = "mpi"))]
+    #[allow(dead_code)]
+    pub fn initialize_blocking(&mut self) -> Result<()> {
+        tokio::runtime::Runtime::new()
+            .unwrap()
+            .block_on(self.initialize(None))
     }
 
     #[allow(dead_code)]
