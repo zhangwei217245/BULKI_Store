@@ -4,7 +4,7 @@
 BUILD_TYPE="debug"
 RELEASE_TYPE=""
 DRY_RUN=""
-FEATURES=""
+FEATURES="mpi"
 
 # Function to print usage
 print_usage() {
