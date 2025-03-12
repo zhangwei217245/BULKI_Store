@@ -63,8 +63,8 @@ if [ "$BUILD_TYPE" = "release" ]; then
 fi
 
 # Build all crates except pyclient with the appropriate flags
-echo "Building workspace with build type: $BUILD_TYPE"
-cargo build --workspace --exclude pyclient $BUILD_FLAGS || handle_error "Workspace build failed"
+echo "Building server with build type: $BUILD_TYPE"
+cargo build -p commons -p server $BUILD_FLAGS || handle_error "Server build failed"
 
 # Build pyclient with maturin using the appropriate flags
 echo "Building pyclient with maturin"
