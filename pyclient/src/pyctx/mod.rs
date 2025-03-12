@@ -10,7 +10,9 @@ use commons::object::params::{
 };
 use commons::object::types::{ObjectIdentifier, SupportedRustArrayD};
 use converter::{IntoBoundPyAny, MetaKeySpec, SupportedNumpyArray};
-use log::{debug, error, info, warn};
+
+use log::{debug, info};
+#[cfg(feature = "mpi")]
 use mpi::environment::Universe;
 #[cfg(feature = "mpi")]
 use mpi::traits::*;
@@ -18,7 +20,7 @@ use numpy::{
     ndarray::{ArrayD, ArrayViewD, ArrayViewMutD, Axis},
     Complex64,
 };
-use pyo3::types::{PyAnyMethods, PyInt};
+use pyo3::types::PyInt;
 use pyo3::Py;
 use pyo3::{
     exceptions::PyValueError,
@@ -26,7 +28,8 @@ use pyo3::{
     Bound, PyErr, PyObject, PyResult, Python,
 };
 use serde::{Deserialize, Serialize};
-use std::sync::Arc;
+// #[cfg(feature = "mpi")]
+// use std::sync::Arc;
 use std::{cell::RefCell, ops::Add};
 
 thread_local! {
@@ -38,7 +41,7 @@ thread_local! {
 
 pub fn init_py<'py>(_py: Python<'py>) -> PyResult<()> {
     // First check if MPI should be initialized
-    let universe: Option<Arc<Universe>> = {
+    let universe = {
         #[cfg(feature = "mpi")]
         {
             // Try to check if mpi4py is imported.
