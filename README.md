@@ -124,3 +124,55 @@ MPICC="cc -shared" pip install --force-reinstall --no-cache-dir --no-binary=mpi4
 ```
 
 Note that the python version should be the same as the one NERSC is using for the default mpi4py.
+
+
+### Compatibility with MPI
+
+On Perlmutter, the default cray-pe is PrgEnv-gnu. Therefore, we'd better compile our Rust code with PrgEnv-gnu. 
+
+Here is the way to do it. 
+
+First, you have to make sure that, if you are working with mpi4py, check its library:
+
+```python
+from mpi4py import MPI
+
+print("MPI Library Version:", MPI.Get_library_version())
+print("MPI Vendor:", MPI.get_vendor())
+```
+
+If you see the following, it means you are working with mpich with PrgEnv-gnu:
+
+```
+>>> print("MPI Library Version:", MPI.Get_library_version())
+MPI Library Version: MPI VERSION    : CRAY MPICH version 8.1.30.8 (ANL base 3.4a2)
+MPI BUILD INFO : Sat Jun 01  4:44 2024 (git hash 69863f7)
+
+>>> print("MPI Vendor:", MPI.get_vendor())
+MPI Vendor: ('MPICH', (3, 4, 0))
+```
+
+If you are not seeing the above, or seeing that your mpi4py is compiled with another MPI, say the llvm version, you can recompile you mpi4py with the mpich under PrgEnv-gnu. 
+
+```bash
+module load PrgEnv-gnu
+module load cray-mpich
+pip install --force-reinstall --no-cache-dir --no-binary=mpi4py mpi4py==3.1.5
+```
+
+Now, what you have to do is, if you have set MPICXX or CXX environment variables, you have to unset them:
+```bash
+unset MPICXX
+unset CXX
+```
+
+And then, you can compile your Rust code with PrgEnv-gnu.
+
+```bash
+export CC=cc
+export MPICC=cc
+export MPI_LIB_DIR=$(dirname $(cc --cray-print-opts=libs | sed 's/-L//;s/ .*//'))
+export MPI_INCLUDE_DIR=$(dirname $(cc --cray-print-opts=includes | sed 's/-I//;s/ .*//'))
+cargo clean; cargo build -p commons -p server --release; maturin develop --release
+```
+
