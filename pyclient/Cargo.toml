@@ -40,6 +40,7 @@ pyo3 = { version = "0.23.5", features = [
 
 [features]
 default = []
+# default = ["mpi"]
 mpi = ["dep:mpi", "commons/mpi"]
 
 [build-dependencies]

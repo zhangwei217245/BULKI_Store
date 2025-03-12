@@ -12,10 +12,6 @@ use commons::object::types::{ObjectIdentifier, SupportedRustArrayD};
 use converter::{IntoBoundPyAny, MetaKeySpec, SupportedNumpyArray};
 
 use log::{debug, info};
-#[cfg(feature = "mpi")]
-use mpi::environment::Universe;
-#[cfg(feature = "mpi")]
-use mpi::traits::*;
 use numpy::{
     ndarray::{ArrayD, ArrayViewD, ArrayViewMutD, Axis},
     Complex64,
@@ -44,11 +40,14 @@ pub fn init_py<'py>(_py: Python<'py>) -> PyResult<()> {
     let universe = {
         #[cfg(feature = "mpi")]
         {
+            // use mpi::environment::Universe;
+            // use mpi::traits::*;
+            use pyo3::types::PyAnyMethods;
+            use std::sync::Arc;
             // Try to check if mpi4py is imported.
             match _py.import("mpi4py.MPI") {
                 Ok(mpi4py) => {
                     info!("mpi4py found, checking MPI initialization status...");
-
                     // CRITICAL: Check if MPI is already initialized by mpi4py
                     let is_initialized = mpi4py
                         .getattr("Is_initialized")
@@ -66,8 +65,15 @@ pub fn init_py<'py>(_py: Python<'py>) -> PyResult<()> {
                     }
                 }
                 Err(_) => {
-                    info!("mpi4py not found, running without MPI");
-                    None
+                    info!("mpi4py not found, try to initialize MPI from Rust");
+                    match mpi::initialize_with_threading(mpi::Threading::Multiple) {
+                        Some((universe, _)) => Some(Arc::new(universe)),
+                        None => {
+                            use log::error;
+                            error!("Failed to initialize MPI from Rust");
+                            None
+                        }
+                    }
                 }
             }
         }
