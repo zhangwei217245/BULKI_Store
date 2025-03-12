@@ -148,7 +148,7 @@ impl ClientContext {
     pub fn get_size(&self) -> usize {
         self.size
     }
-
+    #[allow(dead_code)]
     pub async fn send_message<T, R>(
         &self,
         server_rank: usize,
@@ -169,103 +169,103 @@ impl ClientContext {
             ))
         }
     }
-    #[allow(dead_code)]
-    pub async fn benchmark_rpc(
-        &self,
-        num_requests: usize,
-        data_len: usize,
-    ) -> Result<BenchmarkStats> {
-        let mut stats = BenchmarkStats {
-            total_requests: num_requests,
-            successful_requests: 0,
-            failed_requests: 0,
-            total_duration_ms: 0,
-            min_latency_ms: u128::MAX,
-            max_latency_ms: 0,
-            avg_latency_ms: 0.0,
-        };
+    // #[allow(dead_code)]
+    // pub async fn benchmark_rpc(
+    //     &self,
+    //     num_requests: usize,
+    //     data_len: usize,
+    // ) -> Result<BenchmarkStats> {
+    //     let mut stats = BenchmarkStats {
+    //         total_requests: num_requests,
+    //         successful_requests: 0,
+    //         failed_requests: 0,
+    //         total_duration_ms: 0,
+    //         min_latency_ms: u128::MAX,
+    //         max_latency_ms: 0,
+    //         avg_latency_ms: 0.0,
+    //     };
 
-        // prepare data
-        let data = vec![1; data_len];
+    //     // prepare data
+    //     let data = vec![1; data_len];
 
-        // calculate the number of requests each client rank should send
-        let size = self.get_size();
-        let rank = self.get_rank();
-        let base_requests = num_requests / size;
-        let remainder = num_requests % size;
-        let num_requests = if rank < remainder {
-            base_requests + 1
-        } else {
-            base_requests
-        };
+    //     // calculate the number of requests each client rank should send
+    //     let size = self.get_size();
+    //     let rank = self.get_rank();
+    //     let base_requests = num_requests / size;
+    //     let remainder = num_requests % size;
+    //     let num_requests = if rank < remainder {
+    //         base_requests + 1
+    //     } else {
+    //         base_requests
+    //     };
 
-        debug!(
-            "Rank {} will send {} requests (base={}, remainder={})",
-            rank, num_requests, base_requests, remainder
-        );
+    //     debug!(
+    //         "Rank {} will send {} requests (base={}, remainder={})",
+    //         rank, num_requests, base_requests, remainder
+    //     );
 
-        let start_time = std::time::SystemTime::now();
+    //     let start_time = std::time::SystemTime::now();
 
-        for i in 0..base_requests {
-            let request_start = std::time::SystemTime::now();
-            let server_rank = i % self.get_server_count();
-            match self
-                .send_message::<Vec<u8>, Vec<u8>>(server_rank, "health::HealthCheck::check", &data)
-                .await
-            {
-                Ok(_) => {
-                    stats.successful_requests += 1;
-                    if let Ok(duration) = request_start.elapsed() {
-                        let latency = duration.as_millis();
-                        stats.min_latency_ms = stats.min_latency_ms.min(latency);
-                        stats.max_latency_ms = stats.max_latency_ms.max(latency);
-                        stats.total_duration_ms += latency;
-                    }
-                }
-                Err(_) => {
-                    stats.failed_requests += 1;
-                }
-            }
-        }
+    //     for i in 0..base_requests {
+    //         let request_start = std::time::SystemTime::now();
+    //         let server_rank = i % self.get_server_count();
+    //         match self
+    //             .send_message::<Vec<u8>, Vec<u8>>(server_rank, "health::HealthCheck::check", &data)
+    //             .await
+    //         {
+    //             Ok(_) => {
+    //                 stats.successful_requests += 1;
+    //                 if let Ok(duration) = request_start.elapsed() {
+    //                     let latency = duration.as_millis();
+    //                     stats.min_latency_ms = stats.min_latency_ms.min(latency);
+    //                     stats.max_latency_ms = stats.max_latency_ms.max(latency);
+    //                     stats.total_duration_ms += latency;
+    //                 }
+    //             }
+    //             Err(_) => {
+    //                 stats.failed_requests += 1;
+    //             }
+    //         }
+    //     }
 
-        if stats.successful_requests > 0 {
-            stats.avg_latency_ms =
-                stats.total_duration_ms as f64 / stats.successful_requests as f64;
-        }
-        // we should call a MPI barrier if mpi is enabled here
-        #[cfg(feature = "mpi")]
-        {
-            if let Some(world) = &self.world {
-                world.barrier();
-            }
-        }
+    //     if stats.successful_requests > 0 {
+    //         stats.avg_latency_ms =
+    //             stats.total_duration_ms as f64 / stats.successful_requests as f64;
+    //     }
+    //     // we should call a MPI barrier if mpi is enabled here
+    //     #[cfg(feature = "mpi")]
+    //     {
+    //         if let Some(world) = &self.world {
+    //             world.barrier();
+    //         }
+    //     }
 
-        if let Ok(total_duration) = start_time.elapsed() {
-            stats.total_duration_ms = total_duration.as_millis();
-        }
+    //     if let Ok(total_duration) = start_time.elapsed() {
+    //         stats.total_duration_ms = total_duration.as_millis();
+    //     }
 
-        Ok(stats)
-    }
+    //     Ok(stats)
+    // }
 }
 
-impl BenchmarkStats {
-    #[allow(dead_code)]
-    pub fn print_stats(&self) {
-        let tps = if self.total_duration_ms > 0 {
-            (self.successful_requests as f64 * 1000.0) / self.total_duration_ms as f64
-        } else {
-            0.0
-        };
-        println!(
-            "total={} success={} failed={} duration={} min={} max={} avg={} tps={:.2}",
-            self.total_requests,
-            self.successful_requests,
-            self.failed_requests,
-            self.total_duration_ms,
-            self.min_latency_ms,
-            self.max_latency_ms,
-            self.avg_latency_ms,
-            tps
-        );
-    }
-}
+// impl BenchmarkStats {
+//     #[allow(dead_code)]
+//     pub fn print_stats(&self) {
+//         let tps = if self.total_duration_ms > 0 {
+//             (self.successful_requests as f64 * 1000.0) / self.total_duration_ms as f64
+//         } else {
+//             0.0
+//         };
+//         println!(
+//             "total={} success={} failed={} duration={} min={} max={} avg={} tps={:.2}",
+//             self.total_requests,
+//             self.successful_requests,
+//             self.failed_requests,
+//             self.total_duration_ms,
+//             self.min_latency_ms,
+//             self.max_latency_ms,
+//             self.avg_latency_ms,
+//             tps
+//         );
+//     }
+// }

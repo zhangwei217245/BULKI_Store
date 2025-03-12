@@ -20,11 +20,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     context.initialize(universe).await?;
     debug!("Client running on MPI process {}", context.get_rank());
 
-    let num_requests = 1000;
-    let data_len = 1000;
-    context
-        .benchmark_rpc(num_requests, data_len)
-        .await?
-        .print_stats();
+    // let num_requests = 1000;
+    // let data_len = 1000;
+    // context
+    //     .benchmark_rpc(num_requests, data_len)
+    //     .await?
+    //     .print_stats();
     Ok(())
 }

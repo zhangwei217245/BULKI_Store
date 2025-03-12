@@ -10,12 +10,15 @@ use commons::object::params::{
 };
 use commons::object::types::{ObjectIdentifier, SupportedRustArrayD};
 use converter::{IntoBoundPyAny, MetaKeySpec, SupportedNumpyArray};
-use log::{debug, info, warn};
+use log::{debug, error, info, warn};
+use mpi::environment::Universe;
+#[cfg(feature = "mpi")]
+use mpi::traits::*;
 use numpy::{
     ndarray::{ArrayD, ArrayViewD, ArrayViewMutD, Axis},
     Complex64,
 };
-use pyo3::types::PyInt;
+use pyo3::types::{PyAnyMethods, PyInt};
 use pyo3::Py;
 use pyo3::{
     exceptions::PyValueError,
@@ -35,28 +38,34 @@ thread_local! {
 
 pub fn init_py<'py>(_py: Python<'py>) -> PyResult<()> {
     // First check if MPI should be initialized
-    let universe = {
+    let universe: Option<Arc<Universe>> = {
         #[cfg(feature = "mpi")]
         {
-            // Try to import mpi4py
-            if let Ok(_mpi4py) = _py.import("mpi4py.MPI") {
-                // MPI is available, initialize it
-                match mpi::initialize_with_threading(mpi::Threading::Multiple) {
-                    Some((universe, _)) => Some(Arc::new(universe)),
-                    None => {
-                        warn!("mpi4py found but Rust mpi initialization with threading failed, let's try default initializing");
-                        match mpi::initialize() {
-                            Some(universe) => Some(Arc::new(universe)),
-                            None => {
-                                warn!("mpi4py found but eventually even the default MPI initialization failed.");
-                                None
-                            }
-                        }
+            // Try to check if mpi4py is imported.
+            match _py.import("mpi4py.MPI") {
+                Ok(mpi4py) => {
+                    info!("mpi4py found, checking MPI initialization status...");
+
+                    // CRITICAL: Check if MPI is already initialized by mpi4py
+                    let is_initialized = mpi4py
+                        .getattr("Is_initialized")
+                        .and_then(|f| f.call0())
+                        .and_then(|r| r.extract::<bool>())
+                        .unwrap_or(false);
+
+                    match is_initialized {
+                        true => None,
+                        false => Some(Arc::new(
+                            mpi::initialize_with_threading(mpi::Threading::Multiple)
+                                .unwrap()
+                                .0,
+                        )),
                     }
                 }
-            } else {
-                warn!("mpi4py not found, running without MPI");
-                None
+                Err(_) => {
+                    info!("mpi4py not found, running without MPI");
+                    None
+                }
             }
         }
         #[cfg(not(feature = "mpi"))]
