@@ -10,7 +10,7 @@ use commons::object::params::{
 };
 use commons::object::types::{ObjectIdentifier, SupportedRustArrayD};
 use converter::{IntoBoundPyAny, MetaKeySpec, SupportedNumpyArray};
-use log::{debug, info};
+use log::{debug, info, warn};
 use numpy::{
     ndarray::{ArrayD, ArrayViewD, ArrayViewMutD, Axis},
     Complex64,
@@ -44,12 +44,18 @@ pub fn init_py<'py>(_py: Python<'py>) -> PyResult<()> {
                 match mpi::initialize_with_threading(mpi::Threading::Multiple) {
                     Some((universe, _)) => Some(Arc::new(universe)),
                     None => {
-                        info!("mpi4py found but Rust mpi initialization failed");
-                        None
+                        warn!("mpi4py found but Rust mpi initialization with threading failed, let's try default initializing");
+                        match mpi::initialize() {
+                            Some(universe) => Some(Arc::new(universe)),
+                            None => {
+                                warn!("mpi4py found but eventually even the default MPI initialization failed.");
+                                None
+                            }
+                        }
                     }
                 }
             } else {
-                info!("mpi4py not found, running without MPI");
+                warn!("mpi4py not found, running without MPI");
                 None
             }
         }
