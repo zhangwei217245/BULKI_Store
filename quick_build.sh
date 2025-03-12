@@ -4,6 +4,7 @@
 BUILD_TYPE="debug"
 RELEASE_TYPE=""
 DRY_RUN=""
+FEATURES=""
 
 # Function to print usage
 print_usage() {
@@ -34,6 +35,9 @@ for arg in "$@"; do
                 handle_error "Invalid build type. Must be 'debug' or 'release'"
             fi
             ;;
+        --features=*)
+            FEATURES="${arg#*=}"
+            ;;
         --gen-release=*)
             IFS=',' read -ra RELEASE_ARGS <<< "${arg#*=}"
             RELEASE_TYPE="${RELEASE_ARGS[0]}"
@@ -62,9 +66,15 @@ if [ "$BUILD_TYPE" = "release" ]; then
     BUILD_FLAGS="--release"
 fi
 
+# Assume we are using the default PrgEnv-gnu for cray-mpich.
+export CC=cc
+export MPICC=cc
+export MPI_LIB_DIR=$(dirname $(cc --cray-print-opts=libs | sed 's/-L//;s/ .*//'))
+export MPI_INCLUDE_DIR=$(dirname $(cc --cray-print-opts=includes | sed 's/-I//;s/ .*//'))
+
 # Build all crates except pyclient with the appropriate flags
 echo "Building server with build type: $BUILD_TYPE"
-cargo build -p commons -p server $BUILD_FLAGS || handle_error "Server build failed"
+cargo build -p commons -p server $BUILD_FLAGS --features "mpi" || handle_error "Server build failed"
 
 # Build pyclient with maturin using the appropriate flags
 echo "Building pyclient with maturin"
