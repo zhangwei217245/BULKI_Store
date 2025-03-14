@@ -35,7 +35,7 @@ rayon = { workspace = true }
 
 
 [features]
-default = []
+default = ["mpi"]
 mpi = ["dep:mpi", "commons/mpi"]
 
 

@@ -32,5 +32,5 @@ fnv = { workspace = true }
 tonic-build = { workspace = true }
 
 [features]
-default = []
+default = ["mpi"]
 mpi = ["dep:mpi"]
