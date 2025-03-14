@@ -5,7 +5,32 @@
 MPICH 4.0+ is required.
 protobuf 3.19.4+ is required.
 
-## Compile on Perlmutter
+### Prepare Compilation Environment on Perlmutter
+
+If you don't have Rust installed, please follow this instruction to install Rust first:
+
+https://www.rust-lang.org/tools/install. 
+
+
+On Perlmutter, the default mpich is with PrgEnv-gnu, and if you are using PrgEnv-gnu, Rust bindgen will not be able to find libclang.so and cannot generate the C bindings. 
+
+So you would have to load the PrgEnv-llvm module, get the path of clang and libclang, and set the environment variables for LIBCLANG_PATH. 
+
+After getting LIBCLANG_PATH, we switch back go PrgEnv-gnu, and also ensure that we load cray-mpich. And now we can set the environment variables for CC and MPICC.
+
+
+```bash
+module load PrgEnv-llvm
+CLANG_PATH=$(which clang)
+CLANG_DIR=$(dirname "$CLANG_PATH")
+export LIBCLANG_PATH="$CLANG_DIR/../lib"
+module swap PrgEnv-llvm PrgEnv-gnu
+module load cray-mpich
+export CC=cc
+export MPICC=cc
+export MPI_LIB_DIR=$(dirname $(cc --cray-print-opts=libs | sed 's/-L//;s/ .*//'))
+export MPI_INCLUDE_DIR=$(dirname $(cc --cray-print-opts=includes | sed 's/-I//;s/ .*//'))
+```
 
 Make sure you have protobuf installed, and you have to set the following environment variables:
 
@@ -13,22 +38,10 @@ Make sure you have protobuf installed, and you have to set the following environ
 export PROTOC=/path/to/protoc
 ```
 
-If you don't have rust, please follow this instruction to install rust first:
-
-https://www.rust-lang.org/tools/install
+### Install maturin and python related dependencies
 
 
-```bash
-module load PrgEnv-llvm/1.0
-export CC=$(which clang)
-CLANG_DIR=$(dirname "$CC")
-export LIBCLANG_PATH="$CLANG_DIR/../lib"
-```
-
-## Install maturin and python related dependencies
-
-
-### For conda users:
+#### For conda users:
 If you are using conda, it's better if you create a new environment:
 ```bash
 conda create --name your_env_name python=3.12
@@ -39,7 +52,7 @@ And then you can install maturin:
 conda install conda-forge::maturin
 ```
 
-### For pyenv or virtualenv users:
+#### For pyenv or virtualenv users:
 Please create a new virtual environment and install maturin:
 ```bash
 python3 -m venv ~/.venv/your_env_name
@@ -105,74 +118,3 @@ You can release a new patch version by running:
 ```bash
 cargo release patch --no-publish
 ```
-
-## Note on Perlmutter
-
-### Module to load:
-
-To use the python client, and to run the server properly, you need to load the llvm Program Environment:
-```bash
-module load PrgEnv-llvm
-```
-
-However, after doing this, your mpi4py from the NERSC default conda env will not work since it was compiled with mpich with PrgEnv-gnu. 
-
-You need to reinstall mpi4py with mpich under PrgEnv-llvm.
-
-```bash
-MPICC="cc -shared" pip install --force-reinstall --no-cache-dir --no-binary=mpi4py mpi4py==3.1.5
-```
-
-Note that the python version should be the same as the one NERSC is using for the default mpi4py.
-
-
-### Compatibility with MPI
-
-On Perlmutter, the default cray-pe is PrgEnv-gnu. Therefore, we'd better compile our Rust code with PrgEnv-gnu. 
-
-Here is the way to do it. 
-
-First, you have to make sure that, if you are working with mpi4py, check its library:
-
-```python
-from mpi4py import MPI
-
-print("MPI Library Version:", MPI.Get_library_version())
-print("MPI Vendor:", MPI.get_vendor())
-```
-
-If you see the following, it means you are working with mpich with PrgEnv-gnu:
-
-```
->>> print("MPI Library Version:", MPI.Get_library_version())
-MPI Library Version: MPI VERSION    : CRAY MPICH version 8.1.30.8 (ANL base 3.4a2)
-MPI BUILD INFO : Sat Jun 01  4:44 2024 (git hash 69863f7)
-
->>> print("MPI Vendor:", MPI.get_vendor())
-MPI Vendor: ('MPICH', (3, 4, 0))
-```
-
-If you are not seeing the above, or seeing that your mpi4py is compiled with another MPI, say the llvm version, you can recompile you mpi4py with the mpich under PrgEnv-gnu. 
-
-```bash
-module load PrgEnv-gnu
-module load cray-mpich
-pip install --force-reinstall --no-cache-dir --no-binary=mpi4py mpi4py==3.1.5
-```
-
-Now, what you have to do is, if you have set MPICXX or CXX environment variables, you have to unset them:
-```bash
-unset MPICXX
-unset CXX
-```
-
-And then, you can compile your Rust code with PrgEnv-gnu.
-
-```bash
-export CC=cc
-export MPICC=cc
-export MPI_LIB_DIR=$(dirname $(cc --cray-print-opts=libs | sed 's/-L//;s/ .*//'))
-export MPI_INCLUDE_DIR=$(dirname $(cc --cray-print-opts=includes | sed 's/-I//;s/ .*//'))
-cargo clean; cargo build -p commons -p server --release; maturin develop --release
-```
-
