@@ -353,31 +353,32 @@ impl DataStore {
     }
 
     /// Dump all DataObjects to a file in MessagePack format.
-    pub fn dump_memorystore_to_file(&self) -> Result<(), anyhow::Error> {
+    pub fn dump_memorystore_to_file(&self, rank: u32) -> Result<(), anyhow::Error> {
         // read env var "PDC_DATA_LOC" and use it as the path, the default value should be "./data"
         let data_dir = std::env::var("PDC_DATA_LOC").unwrap_or("./data".to_string());
         // scan data_dir and load every file with .obj extension
         // Create directory if it doesn't exist
         std::fs::create_dir_all(&data_dir)?;
-        // file name format should be {data_dir}/objects_id.obj
+        // file name format should be {data_dir}/rank/objects_id.obj
         let objs: Vec<DataObject> = self.objects.iter().map(|entry| entry.clone()).collect();
         for obj in objs {
-            obj.save_to_file(&data_dir)?;
+            obj.save_to_file(&format!("{}/{}", data_dir, rank))?;
         }
-        // write name_obj_idx to file
-        let filename = format!("{}/name_obj.idx", data_dir);
-        let mut file = File::create(filename)?;
-        let name_idx_map: HashMap<String, u128> = self
-            .name_obj_idx
-            .iter()
-            .map(|entry| (entry.key().clone(), *entry.value()))
-            .collect();
-        encode::write(&mut file, &name_idx_map)?;
+        // FIXME: no need for an index file here. We can rebuild it when loading objects.
+        // // write name_obj_idx to file
+        // let filename = format!("{}/name_obj.idx", data_dir);
+        // let mut file = File::create(filename)?;
+        // let name_idx_map: HashMap<String, u128> = self
+        //     .name_obj_idx
+        //     .iter()
+        //     .map(|entry| (entry.key().clone(), *entry.value()))
+        //     .collect();
+        // rmp_serde::encode::write(&mut file, &name_idx_map)?;
         Ok(())
     }
 
     /// Load DataObjects from a MessagePack file and populate the DataStore.
-    pub fn load_memorystore_from_file(&self) -> Result<(), anyhow::Error> {
+    pub fn load_memorystore_from_file(&self, rank: u32) -> Result<(), anyhow::Error> {
         // read env var "PDC_DATA_LOC" and use it as the path, the default value should be "./data"
         let data_dir = std::env::var("PDC_DATA_LOC").unwrap_or("./data".to_string());
 

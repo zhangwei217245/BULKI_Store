@@ -56,12 +56,28 @@ pub fn init_py<'py>(_py: Python<'py>) -> PyResult<()> {
                         .unwrap_or(false);
 
                     match is_initialized {
-                        true => None,
-                        false => Some(Arc::new(
-                            mpi::initialize_with_threading(mpi::Threading::Multiple)
-                                .unwrap()
-                                .0,
-                        )),
+                        true => {
+                            info!("MPI already initialized by mpi4py, try to initialize from Rust, if not successful, will treat as single process");
+                            match mpi::initialize_with_threading(mpi::Threading::Multiple) {
+                                Some((universe, _)) => Some(Arc::new(universe)),
+                                None => {
+                                    use log::error;
+                                    error!("Failed to initialize MPI from Rust, will treat as single process");
+                                    None
+                                }
+                            }
+                        }
+                        false => {
+                            info!("MPI not initialized by mpi4py, try to initialize from Rust, if not successful, will treat as single process");
+                            match mpi::initialize_with_threading(mpi::Threading::Multiple) {
+                                Some((universe, _)) => Some(Arc::new(universe)),
+                                None => {
+                                    use log::error;
+                                    error!("Failed to initialize MPI from Rust, will treat as single process");
+                                    None
+                                }
+                            }
+                        }
                     }
                 }
                 Err(_) => {

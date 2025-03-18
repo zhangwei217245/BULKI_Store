@@ -3,7 +3,8 @@ use commons::err::StatusCode;
 use commons::handler::HandlerResult;
 use commons::rpc::grpc::GrpcTX;
 use commons::rpc::RPCData;
-use log::debug;
+use commons::utils::TimeUtility;
+use log::{debug, info};
 use std::sync::Arc;
 
 #[allow(dead_code)]
@@ -15,7 +16,11 @@ pub fn common_resp_proc(response: &mut RPCData) -> HandlerResult {
 
     // If metadata is missing, return error
     let result_metadata = match response.metadata.as_mut() {
-        Some(metadata) => metadata,
+        Some(metadata) => {
+            info!("Request issued time: {:?}, received time: {:?}, processing duration: {:?}, response received time: {:?}", 
+            metadata.request_issued_time, metadata.request_received_time, metadata.processing_duration_us, TimeUtility::get_timestamp_ms());
+            metadata
+        }
         None => {
             return HandlerResult {
                 status_code: StatusCode::Internal as u8,

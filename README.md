@@ -29,7 +29,7 @@ module load cray-mpich
 export CC=cc
 export MPICC=cc
 export MPI_LIB_DIR=$(dirname $(cc --cray-print-opts=libs | sed 's/-L//;s/ .*//'))
-export MPI_INCLUDE_DIR=$(dirname $(cc --cray-print-opts=includes | sed 's/-I//;s/ .*//'))
+export MPI_INCLUDE_DIR=$(dirname $(cc --cray-print-opts=cflags | sed 's/-I//;s/ .*//'))
 ```
 
 Make sure you have protobuf installed, and you have to set the following environment variables:
