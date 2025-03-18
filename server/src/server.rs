@@ -8,11 +8,18 @@ mod srvctx;
 use anyhow::Result;
 use env_logger;
 use srvctx::ServerContext;
+use std::time::Instant;
 
 fn close_resources() -> Result<()> {
-    // TODO: calling resource close functions
-    println!("Closing resources");
-    Ok(())
+    // TODO: calling resource close function
+    let timer = Instant::now();
+    println!("Closing resources, checkpointing data...");
+    let checkpoint_result = datastore::dump_memory_store();
+    println!(
+        "Finished checkpointing in {} seconds",
+        timer.elapsed().as_secs()
+    );
+    return checkpoint_result;
 }
 
 #[tokio::main]
@@ -33,6 +40,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     server_context.initialize(universe).await?;
 
     info!("BulkiStore server {} starting...", server_context.rank);
+
+    info!("Server rank: {}", server_context.rank);
+    info!("Server size: {}", server_context.size);
+    info!("Loading Data...");
+    let timer = Instant::now();
+    datastore::load_memory_store()?;
+    info!("Data loaded in {} seconds", timer.elapsed().as_secs());
 
     // Start the RX endpoints (c2s and s2s)
     server_context.start_endpoints().await?;
