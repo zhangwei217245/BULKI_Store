@@ -218,6 +218,7 @@ impl GrpcBulkistore for GrpcRX {
     ) -> Result<tonic::Response<RpcMessage>, tonic::Status> {
         let request = request.into_inner();
 
+        let start_time = TimeUtility::get_timestamp_ms();
         // Deserialize the binary_data back into RPCData
         let rpc_data = match rmp_serde::from_slice::<RPCData>(&request.binary_data) {
             Ok(data) => data,
@@ -228,6 +229,10 @@ impl GrpcBulkistore for GrpcRX {
                 )))
             }
         };
+        info!(
+            "Request deserialization time: {} ms",
+            TimeUtility::get_timestamp_ms() - start_time
+        );
 
         // Call respond and await its result
         let response = self
@@ -235,9 +240,15 @@ impl GrpcBulkistore for GrpcRX {
             .await
             .map_err(|e| tonic::Status::internal(format!("Failed to process request: {}", e)))?;
 
+        let response_start_time = TimeUtility::get_timestamp_ms();
         // Serialize the response back to binary format
         let binary_response = rmp_serde::to_vec(&response)
             .map_err(|e| tonic::Status::internal(format!("Failed to serialize response: {}", e)))?;
+
+        info!(
+            "Response serialization time: {} ms",
+            TimeUtility::get_timestamp_ms() - response_start_time
+        );
 
         // Create the RpcMessage response
         Ok(tonic::Response::new(RpcMessage {
@@ -438,7 +449,7 @@ impl RxEndpoint for GrpcRX {
         let start_time = Instant::now();
         // update the received time in the metadata
         if let Some(metadata) = &mut msg.metadata {
-            metadata.request_received_time = TimeUtility::get_timestamp_ms();
+            metadata.request_received_time = TimeUtility::get_timestamp_us();
         }
 
         let mut result = self
@@ -570,7 +581,7 @@ impl TxEndpoint for GrpcTX {
             client_rank: self.context.rank as u32,
             server_rank: rx_id as u32,
             request_id: rand::rng().random::<u64>(),
-            request_issued_time: TimeUtility::get_timestamp_ms(),
+            request_issued_time: TimeUtility::get_timestamp_us(),
             request_received_time: 0,
             processing_duration_us: None,
             message_type: MessageType::Request,

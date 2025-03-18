@@ -13,6 +13,20 @@ impl TimeUtility {
         let since_epoch = now.duration_since(UNIX_EPOCH).expect("Time went backwards");
         since_epoch.as_millis() as u64
     }
+
+    #[allow(dead_code)]
+    pub fn get_timestamp_us() -> u64 {
+        let now = SystemTime::now();
+        let since_epoch = now.duration_since(UNIX_EPOCH).expect("Time went backwards");
+        since_epoch.as_micros() as u64
+    }
+
+    #[allow(dead_code)]
+    pub fn get_timestamp_ns() -> u64 {
+        let now = SystemTime::now();
+        let since_epoch = now.duration_since(UNIX_EPOCH).expect("Time went backwards");
+        since_epoch.as_nanos() as u64
+    }
 }
 
 impl NetworkUtility {
