@@ -13,6 +13,7 @@ use std::collections::{HashMap, HashSet};
 use std::fmt::Debug;
 use std::fs::File;
 // use std::hash::{BuildHasherDefault, RandomState};
+use objid::GlobalObjectIdExt;
 use std::path::Path;
 use types::{MetadataValue, SupportedRustArrayD};
 
@@ -353,16 +354,16 @@ impl DataStore {
     }
 
     /// Dump all DataObjects to a file in MessagePack format.
-    pub fn dump_memorystore_to_file(&self, rank: u32) -> Result<(), anyhow::Error> {
+    pub fn dump_memorystore_to_file(&self, _rank: u32) -> Result<(), anyhow::Error> {
         // read env var "PDC_DATA_LOC" and use it as the path, the default value should be "./data"
         let data_dir = std::env::var("PDC_DATA_LOC").unwrap_or("./data".to_string());
         // scan data_dir and load every file with .obj extension
         // Create directory if it doesn't exist
         std::fs::create_dir_all(&data_dir)?;
-        // file name format should be {data_dir}/rank/objects_id.obj
+        // file name format should be {data_dir}/objects_id.obj
         let objs: Vec<DataObject> = self.objects.iter().map(|entry| entry.clone()).collect();
         for obj in objs {
-            obj.save_to_file(&format!("{}/{}", data_dir, rank))?;
+            obj.save_to_file(&format!("{}/{}.obj", data_dir, obj.id))?;
         }
         // FIXME: no need for an index file here. We can rebuild it when loading objects.
         // // write name_obj_idx to file
@@ -378,7 +379,11 @@ impl DataStore {
     }
 
     /// Load DataObjects from a MessagePack file and populate the DataStore.
-    pub fn load_memorystore_from_file(&self, rank: u32) -> Result<(), anyhow::Error> {
+    pub fn load_memorystore_from_file(
+        &self,
+        server_rank: u32,
+        server_count: u32,
+    ) -> Result<(), anyhow::Error> {
         // read env var "PDC_DATA_LOC" and use it as the path, the default value should be "./data"
         let data_dir = std::env::var("PDC_DATA_LOC").unwrap_or("./data".to_string());
 
@@ -395,22 +400,37 @@ impl DataStore {
             let entry = entry?;
             let path = entry.path();
 
-            // check if it is idx file and we can load the name_obj.idx file
-            if path.is_file() && path.extension().and_then(|s| s.to_str()) == Some("idx") {
-                // Open and read the file
-                let name_idx_map: HashMap<String, u128> =
-                    rmp_serde::decode::from_read(File::open(path.to_str().unwrap())?)?;
-                for (name, id) in name_idx_map {
-                    self.name_obj_idx.insert(name, id);
-                }
-                continue;
-            }
+            // FIXME: we do not need to load the idx file here.
+            // // check if it is idx file and we can load the name_obj.idx file
+            // if path.is_file() && path.extension().and_then(|s| s.to_str()) == Some("idx") {
+            //     // Open and read the file
+            //     let name_idx_map: HashMap<String, u128> =
+            //         rmp_serde::decode::from_read(File::open(path.to_str().unwrap())?)?;
+            //     for (name, id) in name_idx_map {
+            //         self.name_obj_idx.insert(name, id);
+            //     }
+            //     continue;
+            // }
 
             // Check if it's a file and has .obj extension
             if path.is_file() && path.extension().and_then(|s| s.to_str()) == Some("obj") {
+                let mut vnode_id_checked = false;
+                // check the file name, since the file name is {id}.obj, we need to get the vnode id from the id in the file name
+                if let Some(id_str) = path.file_name().and_then(|s| s.to_str()?.split('.').next()) {
+                    let vnode_id = id_str.parse::<u128>()?.vnode_id();
+                    if vnode_id % server_count != server_rank {
+                        continue;
+                    }
+                    vnode_id_checked = true;
+                }
                 // Open and read the file
                 let obj = DataObject::load_from_file(path.to_str().unwrap())?;
                 let obj_id = obj.id;
+                if !vnode_id_checked {
+                    if obj_id.vnode_id() % server_count != server_rank {
+                        continue;
+                    }
+                }
                 let obj_name = obj.name.clone();
                 // insert into objects and name_obj_idx
                 self.objects.insert(obj_id, obj);

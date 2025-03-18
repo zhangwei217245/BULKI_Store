@@ -284,6 +284,13 @@ pub fn get_object_data_impl<'py>(
     }
 }
 
+pub fn force_checkpointing_impl<'py>(py: Python<'py>) -> PyResult<Py<PyInt>> {
+    rpc_call::<(), ()>(0, "datastore::force_checkpointing", &()).map_err(|e| {
+        PyErr::new::<PyValueError, _>(format!("Failed to force checkpointing: {}", e))
+    })?;
+    Ok(PyInt::new(py, 0).unbind())
+}
+
 pub fn times_two_impl<'py>(py: Python<'py>, x: SupportedNumpyArray<'py>) -> PyResult<PyObject> {
     let input = x.into_array_type();
 

@@ -17,8 +17,8 @@ pub fn common_resp_proc(response: &mut RPCData) -> HandlerResult {
     // If metadata is missing, return error
     let result_metadata = match response.metadata.as_mut() {
         Some(metadata) => {
-            info!("Request issued time: {:?}, received time: {:?}, processing duration: {:?}, response received time: {:?}", 
-            metadata.request_issued_time, metadata.request_received_time, metadata.processing_duration_us, TimeUtility::get_timestamp_ms());
+            info!("Request id: {:?}, handler name: {:?}, issued time: {:?}, received time: {:?}, processing duration: {:?}, response received time: {:?}", 
+            metadata.request_id, metadata.handler_name, metadata.request_issued_time, metadata.request_received_time, metadata.processing_duration_us, TimeUtility::get_timestamp_ms());
             metadata
         }
         None => {
@@ -48,7 +48,8 @@ pub fn register_handlers(tx: &mut GrpcTX) -> Result<()> {
             .register("datastore::times_two", common_resp_proc)
             .register("datastore::create_objects", common_resp_proc)
             .register("datastore::get_object_data", common_resp_proc)
-            .register("datastore::get_object_metadata", common_resp_proc);
+            .register("datastore::get_object_metadata", common_resp_proc)
+            .register("datastore::force_checkpointing", common_resp_proc);
         Ok(())
     } else {
         Err(anyhow::anyhow!("Handler dispatcher not initialized"))

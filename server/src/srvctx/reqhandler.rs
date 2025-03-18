@@ -29,7 +29,11 @@ pub fn register_handlers(rx: &mut GrpcRX) -> Result<()> {
                 crate::datastore::update_metadata,
             )
             .register("datastore::update_array", crate::datastore::update_array)
-            .register("datastore::delete_object", crate::datastore::delete_object);
+            .register("datastore::delete_object", crate::datastore::delete_object)
+            .register(
+                "datastore::force_checkpointing",
+                crate::datastore::force_checkpointing,
+            );
         Ok(())
     } else {
         Err(anyhow::anyhow!("Handler dispatcher not initialized"))

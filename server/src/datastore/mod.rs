@@ -22,6 +22,8 @@ use std::collections::HashMap;
 use std::sync::atomic::{AtomicU32, AtomicU64};
 use std::sync::{Arc, RwLock};
 
+use crate::srvctx::{get_rank, get_size};
+
 // Global DataStore instance using the standard RwLock.
 lazy_static! {
     pub static ref GLOBAL_STORE: Arc<RwLock<DataStore>> = Arc::new(RwLock::new(DataStore::new()));
@@ -553,6 +555,33 @@ pub fn get_regions_by_obj_ids(data: &mut RPCData) -> HandlerResult {
         status_code: StatusCode::Ok as u8,
         message: None,
     }
+}
+
+pub fn force_checkpointing(_data: &mut RPCData) -> HandlerResult {
+    let result = dump_memory_store();
+    if result.is_err() {
+        return HandlerResult {
+            status_code: StatusCode::Internal as u8,
+            message: Some(format!(
+                "Failed to dump memory store: {}",
+                result.unwrap_err()
+            )),
+        };
+    }
+    HandlerResult {
+        status_code: StatusCode::Ok as u8,
+        message: None,
+    }
+}
+
+pub fn dump_memory_store() -> Result<()> {
+    let store = GLOBAL_STORE.write().unwrap();
+    store.dump_memorystore_to_file(get_rank())
+}
+
+pub fn load_memory_store() -> Result<()> {
+    let store = GLOBAL_STORE.write().unwrap();
+    store.load_memorystore_from_file(get_rank(), get_size())
 }
 
 // Async versions of the benchmark functions

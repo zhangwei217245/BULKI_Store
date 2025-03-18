@@ -122,6 +122,13 @@ fn rust_ext<'py>(m: &Bound<'py, PyModule>) -> PyResult<()> {
         pyctx::get_object_data_impl(py, obj_id.into(), region, sub_obj_regions)
     }
 
+    /// Forces a checkpoint of the memory store.
+    #[pyfn(m)]
+    #[pyo3(name = "force_checkpointing")]
+    fn force_checkpointing<'py>(py: Python<'py>) -> PyResult<Py<PyInt>> {
+        pyctx::force_checkpointing_impl(py)
+    }
+
     ///////////////////////////////////////////////////////////////////////////
     //     Ok(())
     // }
