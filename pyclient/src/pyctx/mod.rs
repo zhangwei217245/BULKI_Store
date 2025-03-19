@@ -17,12 +17,12 @@ use numpy::{
     Complex64,
 };
 use pyo3::types::PyInt;
-use pyo3::Py;
 use pyo3::{
     exceptions::PyValueError,
     types::{PyDict, PySlice},
     Bound, PyErr, PyObject, PyResult, Python,
 };
+use pyo3::{IntoPyObjectExt, Py, PyAny};
 use serde::{Deserialize, Serialize};
 // #[cfg(feature = "mpi")]
 // use std::sync::Arc;
@@ -284,11 +284,20 @@ pub fn get_object_data_impl<'py>(
     }
 }
 
-pub fn force_checkpointing_impl<'py>(py: Python<'py>) -> PyResult<Py<PyInt>> {
-    rpc_call::<(), ()>(0, "datastore::force_checkpointing", &()).map_err(|e| {
-        PyErr::new::<PyValueError, _>(format!("Failed to force checkpointing: {}", e))
-    })?;
-    Ok(PyInt::new(py, 0).unbind())
+pub fn force_checkpointing_impl<'py>(py: Python<'py>) -> PyResult<Py<PyAny>> {
+    let args = ("client".to_string(), 0);
+    let mut results = Vec::new();
+    for i in 0..get_server_count() {
+        let result = rpc_call::<(String, u32), u32>(i, "datastore::force_checkpointing", &args)
+            .map_err(|e| {
+                PyErr::new::<PyValueError, _>(format!("Failed to force checkpointing: {}", e))
+            })?;
+        results.push(result);
+    }
+
+    Ok(results
+        .into_bound_py_any(py)
+        .and_then(|rst| Ok(rst.unbind()))?)
 }
 
 pub fn times_two_impl<'py>(py: Python<'py>, x: SupportedNumpyArray<'py>) -> PyResult<PyObject> {

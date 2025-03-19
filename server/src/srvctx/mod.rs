@@ -1,7 +1,9 @@
 use anyhow::Result;
+use commons::err::RPCResult;
 use commons::rpc::grpc::{GrpcRX, GrpcTX};
 use commons::rpc::{RxEndpoint, TxEndpoint};
 use commons::utils::FileUtility;
+use futures;
 use lazy_static::lazy_static;
 use log::{debug, info, warn};
 #[cfg(feature = "mpi")]
@@ -10,9 +12,10 @@ use mpi::{
     topology::{Communicator, SimpleCommunicator},
     traits::CommunicatorCollectives,
 };
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU32, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, RwLock};
 use tokio::sync::{oneshot, Mutex as TokioMutex};
 mod reqhandler;
 mod resphandler;
@@ -20,6 +23,17 @@ mod resphandler;
 lazy_static! {
     static ref PROCESS_RANK: AtomicU32 = AtomicU32::new(0);
     static ref PROCESS_SIZE: AtomicU32 = AtomicU32::new(1);
+    // Global S2S client that can be accessed from any thread
+    static ref GLOBAL_S2S_CLIENT: RwLock<Option<GrpcTX>> = RwLock::new(None);
+    static ref RUNTIME: RwLock<Option<tokio::runtime::Runtime>> = {
+        match tokio::runtime::Runtime::new() {
+            Ok(rt) => RwLock::new(Some(rt)),
+            Err(e) => {
+                eprintln!("Failed to create Tokio runtime: {}", e);
+                RwLock::new(None)
+            }
+        }
+    };
 }
 
 #[allow(dead_code)]
@@ -30,6 +44,42 @@ pub fn get_rank() -> u32 {
 #[allow(dead_code)]
 pub fn get_size() -> u32 {
     PROCESS_SIZE.load(Ordering::SeqCst)
+}
+
+#[allow(dead_code)]
+pub fn server_rpc_call<T, R>(srv_id: u32, method_name: &str, input: &T) -> RPCResult<R>
+where
+    T: Serialize + std::marker::Sync + Send + Clone + 'static,
+    R: for<'de> Deserialize<'de> + Send + 'static,
+{
+    // Get global client
+    match GLOBAL_S2S_CLIENT.read() {
+        Ok(guard) => {
+            if let Some(client) = guard.as_ref() {
+                // Clone input for the new thread
+                let input_clone = input.clone();
+                let method_name_clone = method_name.to_string();
+
+                // Create a channel for the result
+                futures::executor::block_on(async {
+                    client
+                        .send_message::<T, R>(srv_id as usize, &method_name_clone, &input_clone)
+                        .await
+                })
+            } else {
+                return Err(commons::err::RpcErr::new(
+                    commons::err::StatusCode::Internal,
+                    "S2S client not initialized",
+                ));
+            }
+        }
+        Err(_) => {
+            return Err(commons::err::RpcErr::new(
+                commons::err::StatusCode::Internal,
+                "Failed to acquire read lock on S2S client",
+            ));
+        }
+    }
 }
 
 pub struct ServerContext {
@@ -45,7 +95,6 @@ pub struct ServerContext {
     pub c2s_endpoint: Option<GrpcRX>,
     // RxEndpoint for server-server communication
     pub s2s_endpoint: Option<GrpcRX>,
-    pub s2s_client: Option<GrpcTX>,
     endpoints: HashMap<String, Arc<TokioMutex<GrpcRX>>>,
     endpoint_shutdowns: HashMap<String, oneshot::Sender<()>>,
 }
@@ -66,7 +115,6 @@ impl ServerContext {
             universe: None,
             c2s_endpoint: None,
             s2s_endpoint: None,
-            s2s_client: None,
             endpoints: HashMap::new(),
             endpoint_shutdowns: HashMap::new(),
         }
@@ -204,8 +252,10 @@ impl ServerContext {
         let mut s2s_client = GrpcTX::new("s2s".to_string(), self.world.clone());
         s2s_client.initialize(resphandler::register_handlers)?;
         s2s_client.discover_servers()?;
-        self.s2s_client = Some(s2s_client);
-
+        // Also set global client for other threads to access
+        if let Ok(mut global_client) = GLOBAL_S2S_CLIENT.write() {
+            *global_client = Some(s2s_client);
+        }
         Ok(())
     }
 
@@ -254,6 +304,20 @@ impl ServerContext {
         // Clear endpoints
         self.endpoints.clear();
 
+        // Clean up global resources
+        clear_global_resources();
+
         Ok(())
+    }
+}
+
+/// Clear global resources
+///
+/// This ensures proper cleanup of resources across platforms.
+/// Particularly important for proper MPI finalization on Perlmutter.
+pub fn clear_global_resources() {
+    // Clear global S2S client
+    if let Ok(mut global_client) = GLOBAL_S2S_CLIENT.write() {
+        *global_client = None;
     }
 }

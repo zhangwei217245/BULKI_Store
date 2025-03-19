@@ -9,6 +9,7 @@ tonic = { workspace = true }
 prost = { workspace = true }
 tokio = { workspace = true }
 hostname = { workspace = true }
+serde = { workspace = true, features = ["derive"] }
 rmp-serde = { workspace = true }
 rayon = { workspace = true }
 log = { workspace = true }
@@ -20,6 +21,7 @@ env_logger = { workspace = true }
 lazy_static = { workspace = true }
 uuid = { workspace = true }
 fnv = { workspace = true }
+futures = { workspace = true }
 
 [features]
 default = ["mpi"]

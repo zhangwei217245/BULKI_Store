@@ -155,10 +155,10 @@ impl GrpcTX {
         let server_addr = server_addresses[rx_id].as_str();
         let endpoint = format!("http://{}", server_addr);
 
-        info!("[TX Rank {}] got endpoint {}", self.context.rank, endpoint);
+        debug!("[TX Rank {}] got endpoint {}", self.context.rank, endpoint);
 
         // Use Tonic's advanced channel features
-        let channel = Channel::builder(endpoint.parse().unwrap())
+        let channel = match Channel::builder(endpoint.parse().unwrap())
             .connect_timeout(Self::CONNECT_TIMEOUT)
             .tcp_keepalive(Some(Self::KEEPALIVE_INTERVAL))
             // .tcp_nodelay(true) // Disable Nagle's algorithm for better latency
@@ -166,7 +166,12 @@ impl GrpcTX {
             .keep_alive_timeout(Self::KEEPALIVE_TIMEOUT)
             .connect()
             .await
-            .unwrap();
+        {
+            Ok(channel) => channel,
+            Err(e) => {
+                return Err(anyhow::anyhow!("Failed to connect to {}: {}", endpoint, e));
+            }
+        };
 
         info!("[TX Rank {}] Connected to RX {}", self.context.rank, rx_id);
 

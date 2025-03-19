@@ -1,3 +1,5 @@
+#[allow(unused_imports)]
+use crate::srvctx::{get_rank, get_size, server_rpc_call};
 use anyhow::Result;
 use commons::err::StatusCode;
 use commons::handler::HandlerResult;
@@ -22,15 +24,12 @@ use std::collections::HashMap;
 use std::sync::atomic::{AtomicU32, AtomicU64};
 use std::sync::{Arc, RwLock};
 
-use crate::srvctx::{get_rank, get_size};
-
 // Global DataStore instance using the standard RwLock.
 lazy_static! {
     pub static ref GLOBAL_STORE: Arc<RwLock<DataStore>> = Arc::new(RwLock::new(DataStore::new()));
     static ref SEQUENCE_COUNTER: AtomicU32 = AtomicU32::new(0);
     static ref LAST_TIMESTAMP: AtomicU64 = AtomicU64::new(0);
 }
-
 /// Initialize the global DataStore.
 /// Synchronous version: no async/await.
 pub fn init_datastore() -> HandlerResult {
@@ -557,17 +556,65 @@ pub fn get_regions_by_obj_ids(data: &mut RPCData) -> HandlerResult {
     }
 }
 
-pub fn force_checkpointing(_data: &mut RPCData) -> HandlerResult {
-    let result = dump_memory_store();
-    if result.is_err() {
-        return HandlerResult {
+pub fn force_checkpointing(data: &mut RPCData) -> HandlerResult {
+    let request: (String, u32) = rmp_serde::from_slice(&data.data.as_ref().unwrap())
+        .map_err(|e| HandlerResult {
             status_code: StatusCode::Internal as u8,
-            message: Some(format!(
-                "Failed to dump memory store: {}",
-                result.unwrap_err()
-            )),
-        };
+            message: Some(format!("Failed to deserialize input: {}", e)),
+        })
+        .unwrap();
+    info!("force_checkpointing request: {:?}", request);
+    if request.0 == "server" {
+        let result = dump_memory_store();
+        if result.is_ok() {
+            data.data = Some(rmp_serde::to_vec(&1u32).unwrap());
+        } else {
+            data.data = Some(rmp_serde::to_vec(&0u32).unwrap());
+            return HandlerResult {
+                status_code: StatusCode::Internal as u8,
+                message: Some(format!(
+                    "Failed to dump memory store: {}",
+                    result.unwrap_err()
+                )),
+            };
+        }
+    } else if request.0 == "client" {
+        // Send checkpointing request to all servers
+        let mut total_success = 0;
+        for i in 0..get_size() {
+            info!(
+                "[R{}/S{}] Force checkpointing to server {}",
+                get_rank(),
+                get_size(),
+                i
+            );
+            if i == get_rank() {
+                if let Ok(_) = dump_memory_store() {
+                    total_success += 1;
+                }
+            } else {
+                // Send checkpointing request to server i
+                // let input = (String::from("server"), get_rank());
+                // let rst = server_rpc_call::<(String, u32), u32>(i, "force_checkpointing", &input);
+                // if rst.is_ok() {
+                //     total_success += 1;
+                // }
+            }
+        }
+        // if total_success == get_size() {
+        data.data = Some(rmp_serde::to_vec(&total_success).unwrap());
+        // } else {
+        //     data.data = Some(rmp_serde::to_vec(&0u32).unwrap());
+        //     return HandlerResult {
+        //         status_code: StatusCode::Internal as u8,
+        //         message: Some(format!(
+        //             "Failed to checkpoint all servers: {}",
+        //             total_success
+        //         )),
+        //     };
+        // }
     }
+
     HandlerResult {
         status_code: StatusCode::Ok as u8,
         message: None,
@@ -576,7 +623,7 @@ pub fn force_checkpointing(_data: &mut RPCData) -> HandlerResult {
 
 pub fn dump_memory_store() -> Result<()> {
     let store = GLOBAL_STORE.write().unwrap();
-    store.dump_memorystore_to_file(get_rank())
+    store.dump_memorystore_to_file(get_rank(), get_size())
 }
 
 pub fn load_memory_store() -> Result<()> {

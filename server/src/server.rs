@@ -7,16 +7,21 @@ mod health;
 mod srvctx;
 use anyhow::Result;
 use env_logger;
-use srvctx::ServerContext;
+use srvctx::{get_rank, get_size, ServerContext};
 use std::time::Instant;
 
 fn close_resources() -> Result<()> {
-    // TODO: calling resource close function
     let timer = Instant::now();
-    println!("Closing resources, checkpointing data...");
+    info!(
+        "[R{}/S{}] Closing resources, checkpointing data...",
+        get_rank(),
+        get_size()
+    );
     let checkpoint_result = datastore::dump_memory_store();
-    println!(
-        "Finished checkpointing in {} seconds",
+    info!(
+        "[R{}/S{}] Finished checkpointing in {} seconds",
+        get_rank(),
+        get_size(),
         timer.elapsed().as_secs()
     );
     return checkpoint_result;
@@ -37,51 +42,51 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Create and initialize server context
     let mut server_context = ServerContext::new();
+
+    // Initialize with MPI universe - critical for Perlmutter
     server_context.initialize(universe).await?;
+    info!("[R{}/S{}] Server initialized", get_rank(), get_size());
 
-    info!("BulkiStore server {} starting...", server_context.rank);
+    // Start the RX endpoints before wrapping in Arc
+    futures::executor::block_on(async { server_context.start_endpoints().await })?;
+    info!("[R{}/S{}] Server endpoints started", get_rank(), get_size());
 
-    info!("Server rank: {}", server_context.rank);
-    info!("Server size: {}", server_context.size);
-    info!("Loading Data...");
+    info!("[R{}/S{}] Loading Data...", get_rank(), get_size());
     let timer = Instant::now();
     datastore::load_memory_store()?;
-    info!("Data loaded in {} seconds", timer.elapsed().as_secs());
+    info!(
+        "[R{}/S{}] Data loaded in {} seconds",
+        get_rank(),
+        get_size(),
+        timer.elapsed().as_secs()
+    );
 
-    // Start the RX endpoints (c2s and s2s)
-    server_context.start_endpoints().await?;
-    info!("Server endpoints started");
-
-    // Wait for either Ctrl+C or SIGTERM
+    // Handle shutdown signals with proper MPI cleanup
     #[cfg(unix)]
     {
         let mut terminate =
             tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())?;
         tokio::select! {
             _ = tokio::signal::ctrl_c() => {
-                info!("Received Ctrl+C signal");
-                // Shutdown all endpoints
+                info!("[R{}/S{}] Received Ctrl+C signal", get_rank(), get_size());
                 server_context.shutdown(|| async { close_resources() }).await?;
-                debug!("Server shutdown complete");
+                debug!("[R{}/S{}] Server shutdown complete", get_rank(), get_size());
             }
             _ = terminate.recv() => {
-                info!("Received SIGTERM signal");
-                // Shutdown all endpoints
+                info!("[R{}/S{}] Received SIGTERM signal", get_rank(), get_size());
                 server_context.shutdown(|| async { close_resources() }).await?;
-                debug!("Server shutdown complete");
+                debug!("[R{}/S{}] Server shutdown complete", get_rank(), get_size());
             }
         }
     }
-
     #[cfg(not(unix))]
     {
         tokio::signal::ctrl_c().await?;
-        info!("Received Ctrl+C signal");
-        // Shutdown all endpoints
+        info!("[R{}/S{}] Received Ctrl+C signal", get_rank(), get_size());
         server_context
             .shutdown(|| async { close_resources() })
             .await?;
-        debug!("Server shutdown complete");
+        debug!("[R{}/S{}] Server shutdown complete", get_rank(), get_size());
     }
 
     Ok(())

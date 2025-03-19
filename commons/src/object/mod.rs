@@ -2,19 +2,17 @@ pub mod objid;
 pub mod params;
 pub mod types;
 use dashmap::DashMap;
-use log::debug;
+use log::{debug, info};
 use ndarray::SliceInfoElem;
 
 use anyhow::Result;
+use objid::GlobalObjectIdExt;
 use params::CreateObjectParams;
 use rmp_serde::encode;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::fmt::Debug;
 use std::fs::File;
-// use std::hash::{BuildHasherDefault, RandomState};
-use objid::GlobalObjectIdExt;
-use std::path::Path;
 use types::{MetadataValue, SupportedRustArrayD};
 
 /// A DataObject that can own an NDArray of various numeric types
@@ -151,12 +149,10 @@ impl DataObject {
         self.metadata.get(key).cloned()
     }
 
-    pub fn save_to_file(&self, path: &str) -> std::io::Result<()> {
+    pub fn save_to_file(&self, dir_path: &str) -> std::io::Result<()> {
         // Create directory if it doesn't exist
-        std::fs::create_dir_all(&path)?;
-        // file name format should be {data_dir}/{id}.obj
-        let filename = format!("{}/{}.obj", path, self.id);
-        let mut file = File::create(filename)?;
+        std::fs::create_dir_all(dir_path)?;
+        let mut file = File::create(&format!("{}/{}.obj", dir_path, self.id))?;
         encode::write(&mut file, &self)
             .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
         Ok(())
@@ -354,17 +350,18 @@ impl DataStore {
     }
 
     /// Dump all DataObjects to a file in MessagePack format.
-    pub fn dump_memorystore_to_file(&self, _rank: u32) -> Result<(), anyhow::Error> {
-        // read env var "PDC_DATA_LOC" and use it as the path, the default value should be "./data"
-        let data_dir = std::env::var("PDC_DATA_LOC").unwrap_or("./data".to_string());
+    pub fn dump_memorystore_to_file(&self, _rank: u32, _size: u32) -> Result<(), anyhow::Error> {
+        info!("[R{}/S{}] Dumping memory store to file", _rank, _size);
+        // read env var "PDC_DATA_LOC" and use it as the path, the default value should be "./.bulkistore_data"
+        let data_dir = std::env::var("PDC_DATA_LOC").unwrap_or("./.bulkistore_data".to_string());
         // scan data_dir and load every file with .obj extension
         // Create directory if it doesn't exist
         std::fs::create_dir_all(&data_dir)?;
         // file name format should be {data_dir}/objects_id.obj
-        let objs: Vec<DataObject> = self.objects.iter().map(|entry| entry.clone()).collect();
-        for obj in objs {
-            obj.save_to_file(&format!("{}/{}.obj", data_dir, obj.id))?;
-        }
+        self.objects
+            .iter()
+            .map(|entry| entry.clone())
+            .for_each(|x| x.save_to_file(data_dir.as_str()).unwrap_or(()));
         // FIXME: no need for an index file here. We can rebuild it when loading objects.
         // // write name_obj_idx to file
         // let filename = format!("{}/name_obj.idx", data_dir);
@@ -375,6 +372,7 @@ impl DataStore {
         //     .map(|entry| (entry.key().clone(), *entry.value()))
         //     .collect();
         // rmp_serde::encode::write(&mut file, &name_idx_map)?;
+        info!("[R{}/S{}] DONE WITH MEMORY STORE DUMP", _rank, _size);
         Ok(())
     }
 
@@ -384,16 +382,11 @@ impl DataStore {
         server_rank: u32,
         server_count: u32,
     ) -> Result<(), anyhow::Error> {
-        // read env var "PDC_DATA_LOC" and use it as the path, the default value should be "./data"
-        let data_dir = std::env::var("PDC_DATA_LOC").unwrap_or("./data".to_string());
+        // read env var "PDC_DATA_LOC" and use it as the path, the default value should be "./.bulkistore_data"
+        let data_dir = std::env::var("PDC_DATA_LOC").unwrap_or("./.bulkistore_data".to_string());
 
-        // test if data_dir exists
-        if !Path::new(&data_dir).exists() {
-            return Err(anyhow::Error::msg(format!(
-                "Data directory {} does not exist",
-                data_dir
-            )));
-        }
+        // Create directory if it doesn't exist
+        std::fs::create_dir_all(&data_dir)?;
 
         // Walk through the directory and find all .obj files
         for entry in std::fs::read_dir(data_dir)? {
