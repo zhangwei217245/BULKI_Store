@@ -67,11 +67,12 @@ impl RPCUtility {
         let result_metadata = match response.metadata.as_mut() {
             Some(metadata) => {
                 let current_time = TimeUtility::get_timestamp_us();
+                let request_transfer = metadata.request_received_time - metadata.request_issued_time;
                 info!("Request id: {:?}, handler name: {:?}, request-transfer: {:?}  processing-duration: {:?}  calculated-response-transfer: {:?}  total-time: {:?}", 
                 metadata.request_id, metadata.handler_name, 
-                metadata.request_received_time - metadata.request_issued_time, // request-transfer
+                request_transfer, // request-transfer
                 metadata.processing_duration_us, // processing duration without serde
-                current_time - (metadata.processing_duration_us.unwrap_or(0) + metadata.request_received_time - metadata.request_issued_time), // calculated response-transfer
+                current_time - (metadata.request_issued_time + metadata.processing_duration_us.unwrap_or(0) + request_transfer), // calculated response-transfer
                 current_time - metadata.request_issued_time); // total time.
                 metadata
             }
