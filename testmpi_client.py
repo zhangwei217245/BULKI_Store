@@ -35,7 +35,7 @@ if len(sys.argv) > 1 and sys.argv[1] == "--create":
     )
     print(f"Rank {rank} object metadata: {obj_metadata}")
     obj_data = client.get_object_data(
-        obj_ids[0], region=[slice(0, rank), slice(0, rank)]
+        obj_ids[0], region=[slice(0, rank), slice(0, rank)], sim_data=True
     )
     print(f"Rank {rank} read object data: {obj_data}")
 
@@ -50,6 +50,6 @@ else:
     )
     print(f"Rank {rank} object metadata: {obj_metadata}")
     obj_data = client.get_object_data(
-        f"test_obj_{rank}", region=[slice(0, rank), slice(0, rank)]
+        f"test_obj_{rank}", region=[slice(0, rank), slice(0, rank)], sim_data=True
     )
     print(f"Rank {rank} read object data: {obj_data}")

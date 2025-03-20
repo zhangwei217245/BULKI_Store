@@ -260,6 +260,7 @@ pub fn get_object_data_impl<'py>(
     obj_id: ObjectIdentifier,
     region: Option<Vec<Bound<'py, PySlice>>>,
     sub_obj_regions: Option<Vec<(String, Vec<Bound<'py, PySlice>>)>>,
+    sim_data: bool,
 ) -> PyResult<Py<PyDict>> {
     let timer = Instant::now();
     let vnode_id = obj_id.vnode_id();
@@ -269,14 +270,21 @@ pub fn get_object_data_impl<'py>(
             "Failed to create object parameters",
         )),
         Ok(params) => {
-            let result = rpc_call::<GetObjectSliceParams, GetObjectSliceResponse>(
-                vnode_id % get_server_count(),
-                "datastore::get_object_data",
-                &params,
-            )
-            .map_err(|e| {
-                PyErr::new::<PyValueError, _>(format!("Failed to get object data: {}", e))
-            })?;
+            let result = match sim_data {
+                // generate random data based on given region/sub-region
+                true => proc::gen_sim_data(params).map_err(|e| {
+                    PyErr::new::<PyValueError, _>(format!("Failed to get object data: {}", e))
+                }),
+                false => rpc_call::<GetObjectSliceParams, GetObjectSliceResponse>(
+                    vnode_id % get_server_count(),
+                    "datastore::get_object_data",
+                    &params,
+                )
+                .map_err(|e| {
+                    PyErr::new::<PyValueError, _>(format!("Failed to get object data: {}", e))
+                }),
+            }?;
+
             // debug!("get_object_data: result vector: {:?}", result);
             info!(
                 "[R{}/S{}] get_object_data: result: {:?}, {:?} in {:?}ms",
