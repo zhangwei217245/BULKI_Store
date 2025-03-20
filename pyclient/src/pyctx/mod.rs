@@ -58,8 +58,8 @@ pub fn init_py<'py>(_py: Python<'py>) -> PyResult<()> {
                     match is_initialized {
                         true => {
                             info!("MPI already initialized by mpi4py, try to initialize from Rust, if not successful, will treat as single process");
-                            match mpi::initialize_with_threading(mpi::Threading::Multiple) {
-                                Some((universe, _)) => Some(Arc::new(universe)),
+                            match mpi::initialize() {
+                                Some(universe) => Some(Arc::new(universe)),
                                 None => {
                                     use log::error;
                                     error!("Failed to initialize MPI from Rust, will treat as single process");
@@ -255,6 +255,7 @@ pub fn get_object_data_impl<'py>(
     obj_id: ObjectIdentifier,
     region: Option<Vec<Bound<'py, PySlice>>>,
     sub_obj_regions: Option<Vec<(String, Vec<Bound<'py, PySlice>>)>>,
+    client_rank: Option<u32>,
 ) -> PyResult<Py<PyDict>> {
     let vnode_id = obj_id.vnode_id();
     let get_object_data_params = proc::get_object_slice_req_proc(obj_id, region, sub_obj_regions);

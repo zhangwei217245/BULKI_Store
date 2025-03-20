@@ -95,7 +95,7 @@ pub fn create_objects(data: &mut RPCData) -> HandlerResult {
     }
     debug!("create_objects: obj_ids length: {:?}", obj_ids.len());
     debug!(
-        "[Rank {:?}] create_objects: main_obj_id: {:?}, main_obj_name: {:?}",
+        "[RX Rank {:?}] create_objects: main_obj_id: {:?}, main_obj_name: {:?}",
         crate::srvctx::get_rank(),
         &obj_ids[0],
         &params[0].obj_name
@@ -125,6 +125,12 @@ pub fn get_object_data(data: &mut RPCData) -> HandlerResult {
             message: Some(format!("Failed to deserialize id: {}", e)),
         })
         .unwrap();
+
+    info!(
+        "[RX Rank {:?}] get_object_data: from client {:?}",
+        crate::srvctx::get_rank(),
+        data.metadata.as_ref().unwrap().client_rank
+    );
 
     let store = GLOBAL_STORE.read().unwrap();
 
@@ -187,7 +193,7 @@ pub fn get_object_data(data: &mut RPCData) -> HandlerResult {
             };
 
             debug!(
-                "[Rank {:?}] get_object_data response: obj_id: {:?}, obj_name: {:?}",
+                "[RX Rank {:?}] get_object_data response: obj_id: {:?}, obj_name: {:?}",
                 crate::srvctx::get_rank(),
                 obj_id,
                 obj.name
@@ -326,7 +332,7 @@ pub fn get_object_metadata(data: &mut RPCData) -> HandlerResult {
         sub_obj_metadata: sub_metadata_result,
     };
     debug!(
-        "[Rank {:?}]get_object_metadata: obj_id: {:?}, obj_name: {:?}",
+        "[RX Rank {:?}] get_object_metadata: obj_id: {:?}, obj_name: {:?}",
         crate::srvctx::get_rank(),
         obj_id_u128,
         obj_name
