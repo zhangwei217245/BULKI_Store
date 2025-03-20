@@ -3,7 +3,6 @@ use commons::err::RPCResult;
 use commons::rpc::grpc::{GrpcRX, GrpcTX};
 use commons::rpc::{RxEndpoint, TxEndpoint};
 use commons::utils::FileUtility;
-use futures;
 use lazy_static::lazy_static;
 use log::{debug, info, warn};
 #[cfg(feature = "mpi")]
@@ -24,7 +23,13 @@ lazy_static! {
     static ref PROCESS_RANK: AtomicU32 = AtomicU32::new(0);
     static ref PROCESS_SIZE: AtomicU32 = AtomicU32::new(1);
     // Global S2S client that can be accessed from any thread
-    static ref GLOBAL_S2S_CLIENT: RwLock<Option<GrpcTX>> = RwLock::new(None);
+    // Initialize s2s client
+    static ref GLOBAL_S2S_CLIENT: RwLock<Option<GrpcTX>> = {
+        let mut s2s_client = GrpcTX::new("s2s".to_string(), None);
+        let _ = s2s_client.initialize(resphandler::register_handlers);
+        let _ = s2s_client.discover_servers();
+        RwLock::new(Some(s2s_client))
+    };
     static ref RUNTIME: RwLock<Option<tokio::runtime::Runtime>> = {
         match tokio::runtime::Runtime::new() {
             Ok(rt) => RwLock::new(Some(rt)),
@@ -47,7 +52,7 @@ pub fn get_size() -> u32 {
 }
 
 #[allow(dead_code)]
-pub fn server_rpc_call<T, R>(srv_id: u32, method_name: &str, input: &T) -> RPCResult<R>
+pub async fn server_rpc_call<T, R>(srv_id: u32, method_name: &str, input: &T) -> RPCResult<R>
 where
     T: Serialize + std::marker::Sync + Send + Clone + 'static,
     R: for<'de> Deserialize<'de> + Send + 'static,
@@ -60,12 +65,9 @@ where
                 let input_clone = input.clone();
                 let method_name_clone = method_name.to_string();
 
-                // Create a channel for the result
-                futures::executor::block_on(async {
-                    client
-                        .send_message::<T, R>(srv_id as usize, &method_name_clone, &input_clone)
-                        .await
-                })
+                client
+                    .send_message::<T, R>(srv_id as usize, &method_name_clone, &input_clone)
+                    .await
             } else {
                 return Err(commons::err::RpcErr::new(
                     commons::err::StatusCode::Internal,
@@ -248,14 +250,7 @@ impl ServerContext {
         }
 
         debug!("s2s ready file found: {}", ready_file.display());
-        // Initialize s2s client
-        let mut s2s_client = GrpcTX::new("s2s".to_string(), self.world.clone());
-        s2s_client.initialize(resphandler::register_handlers)?;
-        s2s_client.discover_servers()?;
-        // Also set global client for other threads to access
-        if let Ok(mut global_client) = GLOBAL_S2S_CLIENT.write() {
-            *global_client = Some(s2s_client);
-        }
+        // ?
         Ok(())
     }
 
