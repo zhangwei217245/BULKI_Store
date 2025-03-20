@@ -173,7 +173,7 @@ impl GrpcTX {
             }
         };
 
-        info!("[TX Rank {}] Connected to RX {}", self.context.rank, rx_id);
+        debug!("[TX Rank {}] Connected to RX {}", self.context.rank, rx_id);
 
         self.connections.insert(rx_id, channel);
 
@@ -364,7 +364,7 @@ impl RxEndpoint for GrpcRX {
             self.context.rank,
             self.context.server_addresses.as_ref().unwrap()[self.context.rank]
         );
-        info!(target:"server", "[Rank {}] Server info: {}", self.context.rank, server_info);
+        debug!(target:"server", "[Rank {}] Server info: {}", self.context.rank, server_info);
 
         // Broadcast server info to all ranks
         // Convert string to bytes for MPI communication
@@ -513,7 +513,7 @@ impl TxEndpoint for GrpcTX {
     }
     fn discover_servers(&mut self) -> Result<isize> {
         let pdc_tmp_dir = FileUtility::get_pdc_tmp_dir();
-        info!("Getting PDC tmp dir: {}", pdc_tmp_dir.display());
+        debug!("Getting PDC tmp dir: {}", pdc_tmp_dir.display());
 
         // Wait for ready file to be created
         let ready_file = pdc_tmp_dir.join(format!("rx_{}_ready.txt", self.context.rpc_id));

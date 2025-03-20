@@ -206,7 +206,7 @@ pub fn create_object_impl<'py>(
     .map_err(|e| PyErr::new::<PyValueError, _>(format!("Failed to create objects: {}", e)))?;
     debug!("create_objects: result vector length: {:?}", result.len());
     debug!("create_objects: result vector: {:?}", result);
-    info!(
+    debug!(
         "[R{}/S{}] create_objects: result vector: {:?}",
         get_client_rank(),
         get_client_count(),
@@ -238,7 +238,7 @@ pub fn get_object_metadata_impl<'py>(
                 PyErr::new::<PyValueError, _>(format!("Failed to get object metadata: {}", e))
             })?;
             debug!("get_object_metadata: result: {:?}", result);
-            info!(
+            debug!(
                 "[R{}/S{}] get_object_metadata: result: {:?}, {:?}",
                 get_client_rank(),
                 get_client_count(),
@@ -272,7 +272,7 @@ pub fn get_object_data_impl<'py>(
                 PyErr::new::<PyValueError, _>(format!("Failed to get object data: {}", e))
             })?;
             // debug!("get_object_data: result vector: {:?}", result);
-            info!(
+            debug!(
                 "[R{}/S{}] get_object_data: result: {:?}, {:?}",
                 get_client_rank(),
                 get_client_count(),

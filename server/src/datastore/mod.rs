@@ -94,7 +94,7 @@ pub fn create_objects(data: &mut RPCData) -> HandlerResult {
         }
     }
     debug!("create_objects: obj_ids length: {:?}", obj_ids.len());
-    info!(
+    debug!(
         "[Rank {:?}] create_objects: main_obj_id: {:?}, main_obj_name: {:?}",
         crate::srvctx::get_rank(),
         &obj_ids[0],
@@ -186,7 +186,7 @@ pub fn get_object_data(data: &mut RPCData) -> HandlerResult {
                 sub_obj_slices: Some(sub_obj_slices),
             };
 
-            info!(
+            debug!(
                 "[Rank {:?}] get_object_data response: obj_id: {:?}, obj_name: {:?}",
                 crate::srvctx::get_rank(),
                 obj_id,
@@ -325,7 +325,7 @@ pub fn get_object_metadata(data: &mut RPCData) -> HandlerResult {
         metadata: Some(metadata),
         sub_obj_metadata: sub_metadata_result,
     };
-    info!(
+    debug!(
         "[Rank {:?}]get_object_metadata: obj_id: {:?}, obj_name: {:?}",
         crate::srvctx::get_rank(),
         obj_id_u128,

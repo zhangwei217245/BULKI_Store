@@ -67,7 +67,7 @@ impl RPCUtility {
         let result_metadata = match response.metadata.as_mut() {
             Some(metadata) => {
                 info!("Request id: {:?}, handler name: {:?}, issued time: {:?}, received time: {:?}, processing duration: {:?}, response received time: {:?}", 
-            metadata.request_id, metadata.handler_name, metadata.request_issued_time, metadata.request_received_time, metadata.processing_duration_us, TimeUtility::get_timestamp_ms());
+                metadata.request_id, metadata.handler_name, metadata.request_issued_time, metadata.request_received_time, metadata.processing_duration_us, TimeUtility::get_timestamp_ms());
                 metadata
             }
             None => {

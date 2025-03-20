@@ -116,12 +116,12 @@ impl ClientContext {
         if self.c2s_client.is_none() {
             // Initialize client-server endpoint
             let mut c2s_client = GrpcTX::new("c2s".to_string(), self.world.clone());
-            info!("Initializing client-server endpoint");
+            debug!("Initializing client-server endpoint");
             c2s_client.initialize(resphandler::register_handlers)?;
-            info!("Client-server endpoint initialized");
+            debug!("Client-server endpoint initialized");
             let server_count = c2s_client.discover_servers()?;
             SERVER_COUNT.store(server_count as u32, Ordering::SeqCst);
-            info!(
+            debug!(
                 "{:?} Servers discovered",
                 SERVER_COUNT.load(Ordering::SeqCst)
             );

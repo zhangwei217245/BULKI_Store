@@ -51,7 +51,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     futures::executor::block_on(async { server_context.start_endpoints().await })?;
     info!("[R{}/S{}] Server endpoints started", get_rank(), get_size());
 
-    info!("[R{}/S{}] Loading Data...", get_rank(), get_size());
+    debug!("[R{}/S{}] Loading Data...", get_rank(), get_size());
     let timer = Instant::now();
     datastore::load_memory_store()?;
     info!(
