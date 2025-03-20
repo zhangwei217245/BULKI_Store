@@ -278,7 +278,7 @@ pub fn get_object_data_impl<'py>(
                 PyErr::new::<PyValueError, _>(format!("Failed to get object data: {}", e))
             })?;
             // debug!("get_object_data: result vector: {:?}", result);
-            debug!(
+            info!(
                 "[R{}/S{}] get_object_data: result: {:?}, {:?} in {:?}ms",
                 get_client_rank(),
                 get_client_count(),
