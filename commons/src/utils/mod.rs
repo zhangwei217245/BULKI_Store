@@ -66,8 +66,13 @@ impl RPCUtility {
         // If metadata is missing, return error
         let result_metadata = match response.metadata.as_mut() {
             Some(metadata) => {
-                info!("Request id: {:?}, handler name: {:?}, issued time: {:?}, received time: {:?}, processing duration: {:?}, response received time: {:?}", 
-                metadata.request_id, metadata.handler_name, metadata.request_issued_time, metadata.request_received_time, metadata.processing_duration_us, TimeUtility::get_timestamp_ms());
+                let current_time = TimeUtility::get_timestamp_us();
+                info!("Request id: {:?}, handler name: {:?}, request-transfer: {:?}  processing-duration: {:?}  calculated-response-transfer: {:?}  total-time: {:?}", 
+                metadata.request_id, metadata.handler_name, 
+                metadata.request_received_time - metadata.request_issued_time, // request-transfer
+                metadata.processing_duration_us, // processing duration without serde
+                current_time - (metadata.processing_duration_us.unwrap_or(0) + metadata.request_received_time - metadata.request_issued_time), // calculated response-transfer
+                current_time - metadata.request_issued_time); // total time.
                 metadata
             }
             None => {
