@@ -24,6 +24,7 @@ use pyo3::{
 };
 use pyo3::{IntoPyObjectExt, Py, PyAny};
 use serde::{Deserialize, Serialize};
+use std::time::Instant;
 // #[cfg(feature = "mpi")]
 // use std::sync::Arc;
 use std::{cell::RefCell, ops::Add};
@@ -184,6 +185,7 @@ pub fn create_object_impl<'py>(
     array_meta_list: Option<Vec<Option<Bound<'py, PyDict>>>>,
     array_data_list: Option<Vec<Option<SupportedNumpyArray<'py>>>>,
 ) -> PyResult<Vec<Py<PyInt>>> {
+    let timer = Instant::now();
     let create_obj_params: Vec<commons::object::params::CreateObjectParams> =
         proc::create_objects_req_proc(
             obj_name_key,
@@ -206,11 +208,12 @@ pub fn create_object_impl<'py>(
     .map_err(|e| PyErr::new::<PyValueError, _>(format!("Failed to create objects: {}", e)))?;
     debug!("create_objects: result vector length: {:?}", result.len());
     debug!("create_objects: result vector: {:?}", result);
-    debug!(
-        "[R{}/S{}] create_objects: result vector: {:?}",
+    info!(
+        "[R{}/S{}] create_objects: result vector: {:?} in {:?}ms",
         get_client_rank(),
         get_client_count(),
-        result
+        result,
+        timer.elapsed().as_millis()
     );
     converter::convert_vec_u128_to_py_long(py, result)
 }
@@ -221,6 +224,7 @@ pub fn get_object_metadata_impl<'py>(
     meta_keys: Option<Vec<String>>,
     sub_meta_keys: Option<MetaKeySpec>,
 ) -> PyResult<Py<PyDict>> {
+    let timer = Instant::now();
     let vnode_id = obj_id.vnode_id();
     let get_object_metadata_params =
         proc::get_object_metadata_req_proc(obj_id, meta_keys, sub_meta_keys);
@@ -238,12 +242,13 @@ pub fn get_object_metadata_impl<'py>(
                 PyErr::new::<PyValueError, _>(format!("Failed to get object metadata: {}", e))
             })?;
             debug!("get_object_metadata: result: {:?}", result);
-            debug!(
-                "[R{}/S{}] get_object_metadata: result: {:?}, {:?}",
+            info!(
+                "[R{}/S{}] get_object_metadata: result: {:?}, {:?} in {:?}ms",
                 get_client_rank(),
                 get_client_count(),
                 result.obj_id,
-                result.obj_name
+                result.obj_name,
+                timer.elapsed().as_millis()
             );
             converter::convert_get_object_meta_response_to_pydict(py, result)
         }
@@ -256,6 +261,7 @@ pub fn get_object_data_impl<'py>(
     region: Option<Vec<Bound<'py, PySlice>>>,
     sub_obj_regions: Option<Vec<(String, Vec<Bound<'py, PySlice>>)>>,
 ) -> PyResult<Py<PyDict>> {
+    let timer = Instant::now();
     let vnode_id = obj_id.vnode_id();
     let get_object_data_params = proc::get_object_slice_req_proc(obj_id, region, sub_obj_regions);
     match get_object_data_params {
@@ -273,11 +279,12 @@ pub fn get_object_data_impl<'py>(
             })?;
             // debug!("get_object_data: result vector: {:?}", result);
             debug!(
-                "[R{}/S{}] get_object_data: result: {:?}, {:?}",
+                "[R{}/S{}] get_object_data: result: {:?}, {:?} in {:?}ms",
                 get_client_rank(),
                 get_client_count(),
                 result.obj_id,
-                result.obj_name
+                result.obj_name,
+                timer.elapsed().as_millis()
             );
             converter::convert_get_object_slice_response_to_pydict(py, result)
         }
