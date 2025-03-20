@@ -74,7 +74,12 @@ impl ClientContext {
         }
     }
     #[cfg(feature = "mpi")]
-    pub async fn initialize(&mut self, universe: Option<Arc<Universe>>) -> Result<()> {
+    pub async fn initialize(
+        &mut self,
+        universe: Option<Arc<Universe>>,
+        rank: Option<u32>,
+        size: Option<u32>,
+    ) -> Result<()> {
         if let Some(universe) = universe {
             // Store the universe first
             self.universe = Some(universe.clone());
@@ -87,8 +92,8 @@ impl ClientContext {
                 self.size = world.size() as usize;
             }
         } else {
-            self.rank = 0;
-            self.size = 1;
+            self.rank = rank.unwrap_or(0) as usize;
+            self.size = size.unwrap_or(1) as usize;
         }
         CLIENT_RANK.store(self.rank as u32, Ordering::SeqCst);
         CLIENT_COUNT.store(self.size as u32, Ordering::SeqCst);
@@ -129,22 +134,8 @@ impl ClientContext {
         }
         Ok(())
     }
-    #[cfg(feature = "mpi")]
-    #[allow(dead_code)]
-    pub fn initialize_blocking(&mut self, universe: Option<Arc<Universe>>) -> Result<()> {
-        tokio::runtime::Runtime::new()
-            .unwrap()
-            .block_on(self.initialize(universe))
-    }
-    #[cfg(not(feature = "mpi"))]
-    #[allow(dead_code)]
-    pub fn initialize_blocking(&mut self) -> Result<()> {
-        tokio::runtime::Runtime::new()
-            .unwrap()
-            .block_on(self.initialize(None))
-    }
 
-    #[allow(dead_code)]
+    // #[allow(dead_code)]
     pub fn get_server_count(&self) -> usize {
         self.c2s_client
             .as_ref()
@@ -152,15 +143,15 @@ impl ClientContext {
             .map(|addresses| addresses.len())
             .unwrap_or(0)
     }
-    #[allow(dead_code)]
+    // #[allow(dead_code)]
     pub fn get_rank(&self) -> usize {
         self.rank
     }
-    #[allow(dead_code)]
+    // #[allow(dead_code)]
     pub fn get_size(&self) -> usize {
         self.size
     }
-    #[allow(dead_code)]
+    // #[allow(dead_code)]
     pub async fn send_message<T, R>(
         &self,
         server_rank: usize,

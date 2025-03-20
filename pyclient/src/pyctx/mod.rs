@@ -35,7 +35,7 @@ thread_local! {
     static REQUEST_COUNTER: RefCell<u32> = RefCell::new(0);
 }
 
-pub fn init_py<'py>(_py: Python<'py>) -> PyResult<()> {
+pub fn init_py<'py>(_py: Python<'py>, rank: Option<u32>, size: Option<u32>) -> PyResult<()> {
     // First check if MPI should be initialized
     let universe = {
         #[cfg(feature = "mpi")]
@@ -123,7 +123,7 @@ pub fn init_py<'py>(_py: Python<'py>) -> PyResult<()> {
         // Initialize context with MPI if available
         rt.as_ref()
             .unwrap()
-            .block_on(context.initialize(universe))
+            .block_on(context.initialize(universe, rank, size))
             .map_err(|e| {
                 PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!(
                     "Failed to initialize context: {}",
@@ -255,7 +255,6 @@ pub fn get_object_data_impl<'py>(
     obj_id: ObjectIdentifier,
     region: Option<Vec<Bound<'py, PySlice>>>,
     sub_obj_regions: Option<Vec<(String, Vec<Bound<'py, PySlice>>)>>,
-    client_rank: Option<u32>,
 ) -> PyResult<Py<PyDict>> {
     let vnode_id = obj_id.vnode_id();
     let get_object_data_params = proc::get_object_slice_req_proc(obj_id, region, sub_obj_regions);
