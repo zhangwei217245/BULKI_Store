@@ -178,8 +178,8 @@ impl GrpcTX {
         self.connections.insert(rx_id, channel);
 
         let client = GrpcBulkistoreClient::new(self.connections.get(&rx_id).unwrap().clone())
-            // .send_compressed(CompressionEncoding::Gzip)
-            // .accept_compressed(CompressionEncoding::Gzip)
+            .send_compressed(CompressionEncoding::Zstd)
+            .accept_compressed(CompressionEncoding::Zstd)
             .max_decoding_message_size(MAX_DECODING_MESSAGE_SIZE)
             .max_encoding_message_size(MAX_ENCODING_MESSAGE_SIZE);
 
@@ -317,9 +317,9 @@ impl RxEndpoint for GrpcRX {
                             .add_service(
                                 GrpcBulkistoreServer::from_arc(service)
                                     .max_decoding_message_size(MAX_DECODING_MESSAGE_SIZE)
-                                    .max_encoding_message_size(MAX_ENCODING_MESSAGE_SIZE),
-                                // .accept_compressed(CompressionEncoding::Gzip)
-                                // .send_compressed(CompressionEncoding::Gzip),
+                                    .max_encoding_message_size(MAX_ENCODING_MESSAGE_SIZE)
+                                    .accept_compressed(CompressionEncoding::Zstd)
+                                    .send_compressed(CompressionEncoding::Zstd),
                             )
                             // add as a dev-dependency the crate `tokio-stream` with feature `net` enabled
                             .serve_with_incoming_shutdown(
