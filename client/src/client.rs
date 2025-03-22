@@ -4,6 +4,7 @@ use std::sync::Arc;
 use cltctx::ClientContext;
 // use commons::rpc::{MessageType, RPCData, RPCMetadata};
 use log::debug;
+use mpi::traits::Communicator;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -17,7 +18,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let universe = None;
 
     let mut context = ClientContext::new();
-    context.initialize(universe).await?;
+    let (rank, size) = match &universe {
+        Some(universe) => (
+            Some(universe.world().rank() as u32),
+            Some(universe.world().size() as u32),
+        ),
+        None => (Some(0), Some(1)),
+    };
+
+    context.initialize(universe, rank, size).await?;
     debug!("Client running on MPI process {}", context.get_rank());
 
     // let num_requests = 1000;
