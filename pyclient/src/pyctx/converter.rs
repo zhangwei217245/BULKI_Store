@@ -390,7 +390,7 @@ pub fn convert_pyslice_vec_to_rust_slice_vec<'py>(
 pub fn convert_get_object_slice_response_to_pydict<'py>(
     py: Python<'py>,
     response: GetObjectSliceResponse,
-) -> PyResult<Py<PyDict>> {
+) -> PyResult<Bound<'py, PyDict>> {
     let dict = PyDict::new(py);
     dict.set_item(
         "array_slice",
@@ -446,14 +446,13 @@ pub fn convert_get_object_slice_response_to_pydict<'py>(
         None => None,
     };
     dict.set_item("sub_obj_slices", sub_slices)?;
-    // debug!("Converted response: {:?}", dict);
-    Ok(dict.into())
+    Ok(dict)
 }
 
 pub fn convert_get_object_meta_response_to_pydict<'py>(
     py: Python<'py>,
     response: GetObjectMetaResponse,
-) -> PyResult<Py<PyDict>> {
+) -> PyResult<Bound<'py, PyDict>> {
     let dict = PyDict::new(py);
 
     // Convert obj_id to Python int
@@ -489,10 +488,10 @@ pub fn convert_get_object_meta_response_to_pydict<'py>(
     } else {
         dict.set_item("sub_obj_metadata", py.None())?;
     }
-    Ok(dict.into())
+    Ok(dict)
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum MetaKeySpec {
     Simple(Vec<String>),
     WithObject(HashMap<String, Vec<String>>),

@@ -16,7 +16,7 @@ use numpy::{
     ndarray::{ArrayD, ArrayViewD, ArrayViewMutD, Axis},
     Complex64,
 };
-use pyo3::types::PyInt;
+use pyo3::types::{PyDictMethods, PyInt};
 use pyo3::{
     exceptions::PyValueError,
     types::{PyDict, PySlice},
@@ -24,6 +24,7 @@ use pyo3::{
 };
 use pyo3::{IntoPyObjectExt, Py, PyAny};
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::time::Instant;
 // #[cfg(feature = "mpi")]
 // use std::sync::Arc;
@@ -34,6 +35,7 @@ thread_local! {
     static CONTEXT: RefCell<Option<ClientContext>> = RefCell::new(None);
     // request counter:
     static REQUEST_COUNTER: RefCell<u32> = RefCell::new(0);
+
 }
 
 pub fn init_py<'py>(_py: Python<'py>, rank: Option<u32>, size: Option<u32>) -> PyResult<()> {
@@ -251,8 +253,56 @@ pub fn get_object_metadata_impl<'py>(
                 timer.elapsed().as_millis()
             );
             converter::convert_get_object_meta_response_to_pydict(py, result)
+                .map(|dict| dict.into())
         }
     }
+}
+
+pub fn get_multiple_object_metadata_impl<'py>(
+    py: Python<'py>,
+    obj_ids: Vec<ObjectIdentifier>,
+    arr_meta_keys: Option<Vec<Vec<String>>>,
+    arr_sub_meta_keys: Option<Vec<MetaKeySpec>>,
+) -> PyResult<Py<PyDict>> {
+    // group obj_ids by vnode_id
+    let mut grouped_request = HashMap::new();
+    for (i, obj_id) in obj_ids.iter().enumerate() {
+        let meta_keys = arr_meta_keys.as_ref().map(|v| v[i].clone());
+        let sub_meta_keys = arr_sub_meta_keys.as_ref().map(|v| v[i].clone());
+        let get_object_metadata_params =
+            proc::get_object_metadata_req_proc(obj_id.clone(), meta_keys, sub_meta_keys).unwrap();
+        grouped_request
+            .entry(obj_id.vnode_id())
+            .or_insert_with(Vec::new)
+            .push(get_object_metadata_params);
+    }
+
+    // get metadata for each vnode_id
+    let results = PyDict::new(py);
+    for (vnode_id, obj_meta_params) in grouped_request {
+        let result = rpc_call::<Vec<GetObjectMetaParams>, Vec<GetObjectMetaResponse>>(
+            vnode_id % get_server_count(),
+            "datastore::get_multiple_object_metadata",
+            &obj_meta_params,
+        )
+        .map_err(|e| {
+            PyErr::new::<PyValueError, _>(format!("Failed to get multiple object metadata: {}", e))
+        })?;
+        for response in result {
+            let obj_id = response.obj_id;
+            let obj_name = response.obj_name.clone();
+            let result_dict = converter::convert_get_object_meta_response_to_pydict(py, response)?;
+            match &obj_ids[0] {
+                ObjectIdentifier::U128(_id) => {
+                    results.set_item(obj_id, result_dict)?;
+                }
+                ObjectIdentifier::Name(_name) => {
+                    results.set_item(obj_name, result_dict)?;
+                }
+            };
+        }
+    }
+    Ok(results.into())
 }
 
 pub fn get_object_data_impl<'py>(
@@ -295,8 +345,55 @@ pub fn get_object_data_impl<'py>(
                 timer.elapsed().as_millis()
             );
             converter::convert_get_object_slice_response_to_pydict(py, result)
+                .map(|dict| dict.into())
         }
     }
+}
+
+pub fn get_multiple_object_data_impl<'py>(
+    py: Python<'py>,
+    obj_ids: Vec<ObjectIdentifier>,
+    arr_regions: Option<Vec<Vec<Bound<'py, PySlice>>>>,
+    arr_sub_obj_regions: Option<Vec<Vec<(String, Vec<Bound<'py, PySlice>>)>>>,
+) -> PyResult<Py<PyDict>> {
+    let mut grouped_request = HashMap::new();
+    for (i, obj_id) in obj_ids.iter().enumerate() {
+        let regions = arr_regions.as_ref().map(|v| v[i].clone());
+        let sub_obj_regions = arr_sub_obj_regions.as_ref().map(|v| v[i].clone());
+        let get_object_data_params =
+            proc::get_object_slice_req_proc(obj_id.clone(), regions, sub_obj_regions).unwrap();
+        grouped_request
+            .entry(obj_id.vnode_id())
+            .or_insert_with(Vec::new)
+            .push(get_object_data_params);
+    }
+
+    // get metadata for each vnode_id
+    let results = PyDict::new(py);
+    for (vnode_id, obj_data_params) in grouped_request {
+        let result = rpc_call::<Vec<GetObjectSliceParams>, Vec<GetObjectSliceResponse>>(
+            vnode_id % get_server_count(),
+            "datastore::get_multiple_object_data",
+            &obj_data_params,
+        )
+        .map_err(|e| {
+            PyErr::new::<PyValueError, _>(format!("Failed to get multiple object metadata: {}", e))
+        })?;
+        for response in result {
+            let obj_id = response.obj_id;
+            let obj_name = response.obj_name.clone();
+            let result_dict = converter::convert_get_object_slice_response_to_pydict(py, response)?;
+            match &obj_ids[0] {
+                ObjectIdentifier::U128(_id) => {
+                    results.set_item(obj_id, result_dict)?;
+                }
+                ObjectIdentifier::Name(_name) => {
+                    results.set_item(obj_name, result_dict)?;
+                }
+            };
+        }
+    }
+    Ok(results.into())
 }
 
 pub fn force_checkpointing_impl<'py>(py: Python<'py>) -> PyResult<Py<PyAny>> {

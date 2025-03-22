@@ -116,40 +116,18 @@ pub fn create_objects(data: &mut RPCData) -> HandlerResult {
     }
 }
 
-/// Get a DataObject by its ID.
-pub fn get_object_data(data: &mut RPCData) -> HandlerResult {
-    // Deserialize the ID from the incoming data.
-    let params: GetObjectSliceParams = rmp_serde::from_slice(&data.data.as_ref().unwrap())
-        .map_err(|e| HandlerResult {
-            status_code: StatusCode::Internal as u8,
-            message: Some(format!("Failed to deserialize id: {}", e)),
-        })
-        .unwrap();
-
-    info!(
-        "[RX Rank {:?}] get_object_data: from client {:?}",
-        crate::srvctx::get_rank(),
-        data.metadata.as_ref().unwrap().client_rank
-    );
-
+fn get_single_object_data(params: GetObjectSliceParams) -> Result<GetObjectSliceResponse> {
     let store = GLOBAL_STORE.read().unwrap();
 
     let obj_id = match params.obj_id {
-        ObjectIdentifier::U128(id) => id,
+        ObjectIdentifier::U128(id) => Ok(id),
         ObjectIdentifier::Name(name) => match store.get_obj_id_by_name(&name.as_str()) {
-            Some(id) => id,
-            None => {
-                return HandlerResult {
-                    status_code: StatusCode::NotFound as u8,
-                    message: Some(format!("Object {} not found", &name)),
-                };
-            }
+            Some(id) => Ok(id),
+            None => Err(anyhow::anyhow!("Object not found")),
         },
-    };
-
+    }?;
     // Acquire a read lock on the DataStore.
     let store = GLOBAL_STORE.read().unwrap();
-
     match store.get(obj_id) {
         Some(obj) => {
             // Convert SerializableSliceInfoElem to SliceInfoElem
@@ -191,44 +169,87 @@ pub fn get_object_data(data: &mut RPCData) -> HandlerResult {
                 array_slice,
                 sub_obj_slices: Some(sub_obj_slices),
             };
-
-            debug!(
-                "[RX Rank {:?}] get_object_data response: obj_id: {:?}, obj_name: {:?}",
-                crate::srvctx::get_rank(),
-                obj_id,
-                obj.name
-            );
-
-            data.data = Some(
-                rmp_serde::to_vec(&response)
-                    .map_err(|e| HandlerResult {
-                        status_code: StatusCode::Internal as u8,
-                        message: Some(format!("Failed to serialize response: {}", e)),
-                    })
-                    .unwrap(),
-            );
-
-            HandlerResult {
-                status_code: StatusCode::Ok as u8,
-                message: None,
-            }
+            Ok(response)
         }
-        None => HandlerResult {
-            status_code: StatusCode::NotFound as u8,
-            message: Some(format!("Object {} not found", obj_id)),
-        },
+        None => Err(anyhow::anyhow!("Object not found")),
     }
 }
 
-/// Get metadata for a DataObject by its ID and metadata keys.
-pub fn get_object_metadata(data: &mut RPCData) -> HandlerResult {
+/// Get a DataObject by its ID.
+pub fn get_object_data(data: &mut RPCData) -> HandlerResult {
     // Deserialize the ID from the incoming data.
-    let params: GetObjectMetaParams = rmp_serde::from_slice(&data.data.as_ref().unwrap())
+    let params: GetObjectSliceParams = rmp_serde::from_slice(&data.data.as_ref().unwrap())
         .map_err(|e| HandlerResult {
             status_code: StatusCode::Internal as u8,
             message: Some(format!("Failed to deserialize id: {}", e)),
         })
         .unwrap();
+
+    info!(
+        "[RX Rank {:?}] get_object_data: from client {:?}",
+        crate::srvctx::get_rank(),
+        data.metadata.as_ref().unwrap().client_rank
+    );
+
+    match get_single_object_data(params) {
+        Ok(response) => {
+            data.data = Some(rmp_serde::to_vec(&response).unwrap());
+            debug!(
+                "[RX Rank {:?}] get_object_data response: obj_id: {:?}, obj_name: {:?}",
+                crate::srvctx::get_rank(),
+                response.obj_id,
+                response.obj_name
+            );
+            HandlerResult {
+                status_code: StatusCode::Ok as u8,
+                message: None,
+            }
+        }
+        Err(e) => HandlerResult {
+            status_code: StatusCode::Internal as u8,
+            message: Some(e.to_string()),
+        },
+    }
+}
+
+pub fn get_multiple_object_data(data: &mut RPCData) -> HandlerResult {
+    let params: Vec<GetObjectSliceParams> = rmp_serde::from_slice(&data.data.as_ref().unwrap())
+        .map_err(|e| HandlerResult {
+            status_code: StatusCode::Internal as u8,
+            message: Some(format!("Failed to deserialize id: {}", e)),
+        })
+        .unwrap();
+
+    let param_len = params.len();
+    let mut results = Vec::with_capacity(param_len);
+    for param in params {
+        if let Ok(result) = get_single_object_data(param) {
+            results.push(result);
+        }
+    }
+    debug!(
+        "[RX Rank {:?}] get_multiple_object_data: req length: {} , resp length: {} , {} failure ignored.",
+        crate::srvctx::get_rank(),
+        param_len,
+        results.len(),
+        param_len - results.len()
+    );
+    data.data = Some(
+        rmp_serde::to_vec(&results)
+            .map_err(|e| HandlerResult {
+                status_code: StatusCode::Internal as u8,
+                message: Some(format!("Failed to serialize response: {}", e)),
+            })
+            .unwrap(),
+    );
+
+    HandlerResult {
+        status_code: StatusCode::Ok as u8,
+        message: None,
+    }
+}
+
+fn get_single_object_metadata(params: GetObjectMetaParams) -> Result<GetObjectMetaResponse> {
     let store = GLOBAL_STORE.read().unwrap();
 
     let obj_id_u128 = match params.obj_id {
@@ -236,10 +257,7 @@ pub fn get_object_metadata(data: &mut RPCData) -> HandlerResult {
         ObjectIdentifier::Name(name) => match store.get_obj_id_by_name(&name.as_str()) {
             Some(id) => id,
             None => {
-                return HandlerResult {
-                    status_code: StatusCode::NotFound as u8,
-                    message: Some(format!("Object {} not found", &name)),
-                };
+                return Err(anyhow::anyhow!(format!("Object {} not found", &name)));
             }
         },
     };
@@ -256,10 +274,10 @@ pub fn get_object_metadata(data: &mut RPCData) -> HandlerResult {
     let (obj_name, metadata) = match obj_metadata {
         Some((obj_name, metadata)) => (obj_name, metadata),
         None => {
-            return HandlerResult {
-                status_code: StatusCode::NotFound as u8,
-                message: Some(format!("Object {} not found", &obj_id_u128)),
-            }
+            return Err(anyhow::anyhow!(format!(
+                "Object {} not found",
+                &obj_id_u128
+            )));
         }
     };
 
@@ -331,11 +349,34 @@ pub fn get_object_metadata(data: &mut RPCData) -> HandlerResult {
         metadata: Some(metadata),
         sub_obj_metadata: sub_metadata_result,
     };
+    Ok(result)
+}
+
+/// Get metadata for a DataObject by its ID and metadata keys.
+pub fn get_object_metadata(data: &mut RPCData) -> HandlerResult {
+    // Deserialize the ID from the incoming data.
+    let params: GetObjectMetaParams = rmp_serde::from_slice(&data.data.as_ref().unwrap())
+        .map_err(|e| HandlerResult {
+            status_code: StatusCode::Internal as u8,
+            message: Some(format!("Failed to deserialize id: {}", e)),
+        })
+        .unwrap();
+
+    let result = match get_single_object_metadata(params) {
+        Ok(result) => result,
+        Err(e) => {
+            return HandlerResult {
+                status_code: StatusCode::Internal as u8,
+                message: Some(format!("Failed to get object metadata: {}", e)),
+            }
+        }
+    };
+
     debug!(
         "[RX Rank {:?}] get_object_metadata: obj_id: {:?}, obj_name: {:?}",
         crate::srvctx::get_rank(),
-        obj_id_u128,
-        obj_name
+        result.obj_id,
+        result.obj_name
     );
     data.data = Some(
         rmp_serde::to_vec(&result)
@@ -345,6 +386,43 @@ pub fn get_object_metadata(data: &mut RPCData) -> HandlerResult {
             })
             .unwrap(),
     );
+    HandlerResult {
+        status_code: StatusCode::Ok as u8,
+        message: None,
+    }
+}
+
+pub fn get_multiple_object_metadata(data: &mut RPCData) -> HandlerResult {
+    let params: Vec<GetObjectMetaParams> = rmp_serde::from_slice(&data.data.as_ref().unwrap())
+        .map_err(|e| HandlerResult {
+            status_code: StatusCode::Internal as u8,
+            message: Some(format!("Failed to deserialize id: {}", e)),
+        })
+        .unwrap();
+
+    let param_len = params.len();
+    let mut results = Vec::with_capacity(param_len);
+    for param in params {
+        if let Ok(result) = get_single_object_metadata(param) {
+            results.push(result);
+        }
+    }
+    debug!(
+        "[RX Rank {:?}] get_multiple_object_metadata: req length: {} , resp length: {} , {} failure ignored.",
+        crate::srvctx::get_rank(),
+        param_len,
+        results.len(),
+        param_len - results.len()
+    );
+    data.data = Some(
+        rmp_serde::to_vec(&results)
+            .map_err(|e| HandlerResult {
+                status_code: StatusCode::Internal as u8,
+                message: Some(format!("Failed to serialize response: {}", e)),
+            })
+            .unwrap(),
+    );
+
     HandlerResult {
         status_code: StatusCode::Ok as u8,
         message: None,

@@ -124,6 +124,36 @@ fn rust_ext<'py>(m: &Bound<'py, PyModule>) -> PyResult<()> {
         pyctx::get_object_data_impl(py, obj_id.into(), region, sub_obj_regions, sim_data)
     }
 
+    #[pyfn(m)]
+    #[pyo3(name = "get_multiple_object_metadata")]
+    #[pyo3(signature = (obj_ids, arr_meta_keys, arr_sub_meta_keys))]
+    fn get_multiple_object_metadata<'py>(
+        py: Python<'py>,
+        obj_ids: Vec<PyObjectIdentifier>,
+        arr_meta_keys: Option<Vec<Vec<String>>>,
+        arr_sub_meta_keys: Option<Vec<MetaKeySpec>>,
+    ) -> PyResult<Py<PyDict>> {
+        let rust_obj_ids = obj_ids.into_iter().map(|obj_id| obj_id.into()).collect();
+        pyctx::get_multiple_object_metadata_impl(py, rust_obj_ids, arr_meta_keys, arr_sub_meta_keys)
+    }
+
+    #[pyfn(m)]
+    #[pyo3(name = "get_multiple_object_data")]
+    #[pyo3(signature = (obj_ids, arr_regions, arr_sub_obj_regions))]
+    fn get_multiple_object_data<'py>(
+        py: Python<'py>,
+        obj_ids: Vec<PyObjectIdentifier>,
+        arr_regions: Option<Vec<Vec<Bound<'py, PySlice>>>>,
+        arr_sub_obj_regions: Option<Vec<Vec<(String, Vec<Bound<'py, PySlice>>)>>>,
+    ) -> PyResult<Py<PyDict>> {
+        pyctx::get_multiple_object_data_impl(
+            py,
+            obj_ids.into_iter().map(|obj_id| obj_id.into()).collect(),
+            arr_regions,
+            arr_sub_obj_regions,
+        )
+    }
+
     /// Forces a checkpoint of the memory store.
     #[pyfn(m)]
     #[pyo3(name = "force_checkpointing")]

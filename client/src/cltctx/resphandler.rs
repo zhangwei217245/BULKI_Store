@@ -17,6 +17,14 @@ pub fn register_handlers(tx: &mut GrpcTX) -> Result<()> {
                 RPCUtility::common_resp_proc,
             )
             .register(
+                "datastore::get_multiple_object_metadata",
+                RPCUtility::common_resp_proc,
+            )
+            .register(
+                "datastore::get_multiple_object_data",
+                RPCUtility::common_resp_proc,
+            )
+            .register(
                 "datastore::force_checkpointing",
                 RPCUtility::common_resp_proc,
             );
