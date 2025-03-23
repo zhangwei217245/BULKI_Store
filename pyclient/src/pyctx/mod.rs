@@ -6,39 +6,52 @@ use commons::err::RPCResult;
 use commons::object::objid::GlobalObjectIdExt;
 use commons::object::params::{
     CreateObjectParams, GetObjectMetaParams, GetObjectMetaResponse, GetObjectSliceParams,
-    GetObjectSliceResponse,
+    GetObjectSliceResponse, GetSampleRequest, GetSampleResponse,
 };
 use commons::object::types::{ObjectIdentifier, SupportedRustArrayD};
 use converter::{IntoBoundPyAny, MetaKeySpec, SupportedNumpyArray};
 
+use crossbeam::queue::SegQueue;
+use lazy_static::lazy_static;
 use log::{debug, info};
 use numpy::{
     ndarray::{ArrayD, ArrayViewD, ArrayViewMutD, Axis},
     Complex64,
 };
+use once_cell::sync::OnceCell;
 use pyo3::types::{PyDictMethods, PyInt};
 use pyo3::{
-    exceptions::PyValueError,
+    exceptions::{PyRuntimeError, PyValueError},
     types::{PyDict, PySlice},
     Bound, PyErr, PyObject, PyResult, Python,
 };
 use pyo3::{IntoPyObjectExt, Py, PyAny};
+use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::ops::Add;
+use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::Arc;
+use std::sync::Mutex;
 use std::time::Instant;
-// #[cfg(feature = "mpi")]
-// use std::sync::Arc;
-use std::{cell::RefCell, ops::Add};
 
-thread_local! {
-    static RUNTIME: RefCell<Option<tokio::runtime::Runtime>> = RefCell::new(None);
-    static CONTEXT: RefCell<Option<ClientContext>> = RefCell::new(None);
-    // request counter:
-    static REQUEST_COUNTER: RefCell<u32> = RefCell::new(0);
+// Process-wide static variables with thread-safe access
+// These are initialized once per process and shared across threads
+static RUNTIME: OnceCell<tokio::runtime::Runtime> = OnceCell::new();
+static CONTEXT: OnceCell<Mutex<ClientContext>> = OnceCell::new();
+// Atomic counter for thread-safe incrementing across threads
+static REQUEST_COUNTER: AtomicU32 = AtomicU32::new(0);
 
+lazy_static! {
+    pub static ref GLOBAL_DATA_QUEUE: Arc<SegQueue<GetSampleResponse>> = Arc::new(SegQueue::new());
 }
 
-pub fn init_py<'py>(_py: Python<'py>, rank: Option<u32>, size: Option<u32>) -> PyResult<()> {
+pub fn init_py<'py>(
+    _py: Python<'py>,
+    rank: Option<u32>,
+    size: Option<u32>,
+    batch_size: Option<usize>,
+) -> PyResult<()> {
     // First check if MPI should be initialized
     let universe = {
         #[cfg(feature = "mpi")]
@@ -108,25 +121,29 @@ pub fn init_py<'py>(_py: Python<'py>, rank: Option<u32>, size: Option<u32>) -> P
         info!("Running pyclient without MPI");
     }
 
-    // Initialize context using our new datastore function
-    let mut context = ClientContext::new();
+    // Initialize the runtime once per process
+    if RUNTIME.get().is_none() {
+        let rt = tokio::runtime::Runtime::new().map_err(|e| {
+            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!(
+                "Failed to create Tokio runtime: {}",
+                e
+            ))
+        })?;
 
-    // Initialize context with proper runtime management
-    RUNTIME.with(|rt_cell| {
-        let mut rt = rt_cell.borrow_mut();
-        if rt.is_none() {
-            *rt = Some(tokio::runtime::Runtime::new().map_err(|e| {
-                PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!(
-                    "Failed to create Tokio runtime: {}",
-                    e
-                ))
-            })?);
-        }
+        // This will fail if another thread already initialized the runtime, which is fine
+        let _ = RUNTIME.set(rt);
+    }
+
+    // Initialize the context once per process
+    if CONTEXT.get().is_none() {
+        // Create a new context
+        let mut context = ClientContext::new();
+
+        // Get a reference to the runtime
+        let rt = RUNTIME.get().expect("Runtime not initialized");
 
         // Initialize context with MPI if available
-        rt.as_ref()
-            .unwrap()
-            .block_on(context.initialize(universe, rank, size))
+        rt.block_on(context.initialize(universe, rank, size, batch_size))
             .map_err(|e| {
                 PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!(
                     "Failed to initialize context: {}",
@@ -135,9 +152,7 @@ pub fn init_py<'py>(_py: Python<'py>, rank: Option<u32>, size: Option<u32>) -> P
             })?;
 
         // Initialize network client
-        rt.as_ref()
-            .unwrap()
-            .block_on(context.ensure_client_initialized())
+        rt.block_on(context.ensure_client_initialized())
             .map_err(|e| {
                 PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!(
                     "Failed to initialize client: {}",
@@ -145,13 +160,28 @@ pub fn init_py<'py>(_py: Python<'py>, rank: Option<u32>, size: Option<u32>) -> P
                 ))
             })?;
 
-        Ok::<_, PyErr>(())
-    })?;
+        // Wrap in mutex for thread-safe access and set it
+        let _ = CONTEXT.set(Mutex::new(context));
+    } else {
+        // Context already exists, but we might need to update it with new parameters
+        let rt = RUNTIME.get().expect("Runtime not initialized");
+        let mut context_guard = CONTEXT
+            .get()
+            .expect("Context not initialized")
+            .lock()
+            .unwrap();
 
-    // Store the context
-    CONTEXT.with(|ctx| {
-        *ctx.borrow_mut() = Some(context);
-    });
+        // Reinitialize with new parameters if provided
+        if rank.is_some() || size.is_some() || batch_size.is_some() {
+            rt.block_on(context_guard.initialize(universe, rank, size, batch_size))
+                .map_err(|e| {
+                    PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!(
+                        "Failed to reinitialize context: {}",
+                        e
+                    ))
+                })?;
+        }
+    }
 
     Ok(())
 }
@@ -161,20 +191,19 @@ where
     T: Serialize + std::marker::Sync + 'static,
     R: for<'de> Deserialize<'de>,
 {
-    let response = CONTEXT.with(|ctx| {
-        let ctx = ctx.borrow();
-        let ctx_ref = ctx.as_ref().expect("Context not initialized");
-        RUNTIME.with(|rt_cell| {
-            let rt = rt_cell.borrow();
-            let rt_ref = rt.as_ref().expect("Runtime not initialized");
-            rt_ref.block_on(ctx_ref.send_message::<T, R>(srv_id as usize, method_name, input))
-        })
-    });
-    // Increment request counter
-    REQUEST_COUNTER.with(|counter| {
-        let mut counter = counter.borrow_mut();
-        *counter += 1;
-    });
+    // Get references to our static variables
+    let rt = RUNTIME.get().expect("Runtime not initialized");
+    let context_mutex = CONTEXT.get().expect("Context not initialized");
+
+    // Acquire the lock to access the context
+    let context = context_mutex.lock().unwrap();
+
+    // Make the RPC call
+    let response = rt.block_on(context.send_message::<T, R>(srv_id as usize, method_name, input));
+
+    // Increment request counter atomically
+    REQUEST_COUNTER.fetch_add(1, Ordering::SeqCst);
+
     response
 }
 
@@ -396,6 +425,102 @@ pub fn get_multiple_object_data_impl<'py>(
     Ok(results.into())
 }
 
+pub fn pop_queue_data_impl<'py>(py: Python<'py>) -> PyResult<Py<PyAny>> {
+    let data = GLOBAL_DATA_QUEUE.pop();
+    converter::convert_sample_response_to_pydict(py, data).map(|d| d.into())
+}
+
+pub fn check_queue_length_impl<'py>(py: Python<'py>) -> PyResult<Py<PyAny>> {
+    GLOBAL_DATA_QUEUE.len().into_py_any(py)
+}
+
+pub fn prefetch_samples_impl<'py>(
+    py: Python<'py>,
+    label: String,
+    sample_ids: Vec<usize>,
+    part_size: usize,
+    sample_var_keys: Vec<String>,
+) -> PyResult<Py<PyAny>> {
+    // Clone the data we need to move into the background task
+    let sample_ids_clone = sample_ids.clone();
+
+    // Get a reference to the runtime
+    let runtime = match RUNTIME.get() {
+        Some(rt) => rt,
+        None => {
+            return Err(PyErr::new::<PyRuntimeError, _>(
+                "Tokio runtime not initialized",
+            ))
+        }
+    };
+
+    // Spawn a background task to process the data
+    runtime.spawn(async move {
+        // Calculate partition mappings (objectId, local_sample_id, global_sample_id)
+        let mut grouped_request: HashMap<u32, Vec<GetSampleRequest>> = HashMap::new();
+        sample_ids_clone.iter().for_each(|&global_sample_id| {
+            let part_id = global_sample_id / part_size;
+            let local_smp_id = global_sample_id % part_size;
+            let obj_identifier = ObjectIdentifier::Name(format!("{}/part_{}", label, part_id));
+            let vnode_id = obj_identifier.vnode_id();
+            let request = GetSampleRequest {
+                sample_id: global_sample_id,
+                obj_id: obj_identifier,
+                local_sample_id: local_smp_id,
+                sample_var_keys: sample_var_keys.clone(),
+            };
+            grouped_request
+                .entry(vnode_id)
+                .and_modify(|v: &mut Vec<GetSampleRequest>| v.push(request.clone()))
+                .or_insert_with(|| vec![request.clone()]);
+        });
+
+        let results = grouped_request
+            .par_iter()
+            .map(|(vnode_id, requests)| {
+                match rpc_call::<Vec<GetSampleRequest>, HashMap<usize, GetSampleResponse>>(
+                    vnode_id % get_server_count(),
+                    "datastore::load_batch_samples",
+                    requests,
+                ) {
+                    Ok(result) => result,
+                    Err(e) => {
+                        eprintln!(
+                            "Error in background prefetch task for vnode {}: {}",
+                            vnode_id, e
+                        );
+                        HashMap::new()
+                    }
+                }
+            })
+            .reduce(
+                || HashMap::new(),
+                |mut acc, x| {
+                    acc.extend(x);
+                    acc
+                },
+            );
+
+        // Push results to the global queue
+        let mut found_count = 0;
+        sample_ids_clone.iter().for_each(|&global_sample_id| {
+            if let Some(data) = results.get(&global_sample_id) {
+                GLOBAL_DATA_QUEUE.push(data.to_owned());
+                found_count += 1;
+            }
+        });
+
+        println!(
+            "Background prefetch completed: {}/{} samples loaded",
+            found_count,
+            sample_ids_clone.len()
+        );
+    });
+
+    // Return the number of samples requested (not the actual queue length yet)
+    sample_ids.len().into_py_any(py)
+}
+
 pub fn force_checkpointing_impl<'py>(py: Python<'py>) -> PyResult<Py<PyAny>> {
     let args = ("client".to_string(), 0);
     let mut results = Vec::new();
@@ -415,7 +540,7 @@ pub fn force_checkpointing_impl<'py>(py: Python<'py>) -> PyResult<Py<PyAny>> {
 pub fn times_two_impl<'py>(py: Python<'py>, x: SupportedNumpyArray<'py>) -> PyResult<PyObject> {
     let input = x.into_array_type();
 
-    let srv_id = REQUEST_COUNTER.with(|counter| (*counter.borrow() as u32) % get_server_count());
+    let srv_id = REQUEST_COUNTER.load(Ordering::SeqCst) % get_server_count();
 
     let result = rpc_call::<SupportedRustArrayD, SupportedRustArrayD>(
         srv_id,

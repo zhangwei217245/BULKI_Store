@@ -33,6 +33,10 @@ pub fn register_handlers(rx: &mut GrpcRX) -> Result<()> {
                 crate::datastore::get_multiple_object_data,
             )
             .register(
+                "datastore::load_batch_samples",
+                crate::datastore::load_batch_samples,
+            )
+            .register(
                 "datastore::update_metadata",
                 crate::datastore::update_metadata,
             )

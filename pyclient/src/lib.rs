@@ -42,9 +42,14 @@ fn rust_ext<'py>(m: &Bound<'py, PyModule>) -> PyResult<()> {
     // Module initialization - just register the init function
     #[pyfn(m)]
     #[pyo3(name = "init")]
-    #[pyo3(signature = (rank=None, size=None))]
-    fn init_py<'py>(py: Python<'py>, rank: Option<u32>, size: Option<u32>) -> PyResult<()> {
-        pyctx::init_py(py, rank, size)
+    #[pyo3(signature = (rank=None, size=None, batch_size=None))]
+    fn init_py<'py>(
+        py: Python<'py>,
+        rank: Option<u32>,
+        size: Option<u32>,
+        batch_size: Option<usize>,
+    ) -> PyResult<()> {
+        pyctx::init_py(py, rank, size, batch_size)
     }
 
     #[pyfn(m)]
@@ -152,6 +157,31 @@ fn rust_ext<'py>(m: &Bound<'py, PyModule>) -> PyResult<()> {
             arr_regions,
             arr_sub_obj_regions,
         )
+    }
+
+    #[pyfn(m)]
+    #[pyo3(name = "pop_queue_data")]
+    fn pop_queue_data<'py>(py: Python<'py>) -> PyResult<Py<PyAny>> {
+        pyctx::pop_queue_data_impl(py)
+    }
+
+    #[pyfn(m)]
+    #[pyo3(name = "check_queue_length")]
+    fn check_queue_length<'py>(py: Python<'py>) -> PyResult<Py<PyAny>> {
+        pyctx::check_queue_length_impl(py)
+    }
+
+    #[pyfn(m)]
+    #[pyo3(name = "prefetch_samples")]
+    #[pyo3(signature = (label, sample_ids, part_size, sample_var_keys))]
+    fn prefetch_samples<'py>(
+        py: Python<'py>,
+        label: String,
+        sample_ids: Vec<usize>,
+        part_size: usize,
+        sample_var_keys: Vec<String>,
+    ) -> PyResult<Py<PyAny>> {
+        pyctx::prefetch_samples_impl(py, label, sample_ids, part_size, sample_var_keys)
     }
 
     /// Forces a checkpoint of the memory store.

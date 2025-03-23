@@ -25,6 +25,10 @@ pub fn register_handlers(tx: &mut GrpcTX) -> Result<()> {
                 RPCUtility::common_resp_proc,
             )
             .register(
+                "datastore::load_batch_samples",
+                RPCUtility::common_resp_proc,
+            )
+            .register(
                 "datastore::force_checkpointing",
                 RPCUtility::common_resp_proc,
             );

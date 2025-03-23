@@ -46,6 +46,7 @@ pub struct ClientContext {
     rank: usize,
     size: usize,
     pub c2s_client: Option<GrpcTX>,
+    pub batch_size: Option<usize>,
 }
 #[allow(dead_code)]
 #[derive(Debug)]
@@ -71,6 +72,7 @@ impl ClientContext {
             rank: 0,
             size: 1,
             c2s_client: None,
+            batch_size: Some(128),
         }
     }
     #[cfg(feature = "mpi")]
@@ -79,6 +81,7 @@ impl ClientContext {
         universe: Option<Arc<Universe>>,
         rank: Option<u32>,
         size: Option<u32>,
+        batch_size: Option<usize>,
     ) -> Result<()> {
         if let Some(universe) = universe {
             // Store the universe first
@@ -101,6 +104,9 @@ impl ClientContext {
             "[MPI Enabled] Client rank: {}, Client count: {}",
             self.rank, self.size
         );
+        if let Some(batch_size) = batch_size {
+            self.batch_size = Some(batch_size);
+        }
         Ok(())
     }
     #[cfg(not(feature = "mpi"))]
@@ -114,6 +120,9 @@ impl ClientContext {
             "[MPI Disabled]Client rank: {}, Client count: {}",
             self.rank, self.size
         );
+        if let Some(batch_size) = batch_size {
+            self.batch_size = Some(batch_size);
+        }
         Ok(())
     }
     #[allow(dead_code)]

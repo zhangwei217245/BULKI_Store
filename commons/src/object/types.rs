@@ -282,4 +282,18 @@ impl ObjectIdentifier {
             ObjectIdentifier::Name(name) => GlobalObjectId::get_name_hash(name.as_str()),
         }
     }
+
+    pub fn u128(&self) -> u128 {
+        match self {
+            ObjectIdentifier::U128(u) => *u,
+            ObjectIdentifier::Name(name) => GlobalObjectId::get_name_hash(name.as_str()).into(),
+        }
+    }
+
+    pub fn name(&self) -> String {
+        match self {
+            ObjectIdentifier::U128(u) => u.to_string(),
+            ObjectIdentifier::Name(name) => name.clone(),
+        }
+    }
 }

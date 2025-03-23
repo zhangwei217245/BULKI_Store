@@ -36,6 +36,7 @@ pyo3 = { version = "0.24.0", features = [
     "abi3",
     "generate-import-lib",
 ] }
+crossbeam = { workspace = true }
 
 
 [features]
