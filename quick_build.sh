@@ -11,12 +11,12 @@ print_usage() {
     echo "Usage: $0 [options]"
     echo "Options:"
     echo "  --build-type=<debug|release>    Set build type (default: debug)"
-    echo "  --gen-release=<patch|minor|major>[,dry-run]    Generate a release"
+    echo "  --gen-release=<patch|minor|major>[,execute]    Generate a release"
     echo ""
     echo "Examples:"
     echo "  $0 --build-type=release         # Build in release mode"
     echo "  $0 --build-type=release --gen-release=patch          # Generate patch release"
-    echo "  $0 --build-type=release --gen-release=minor,dry-run  # Test minor release process"
+    echo "  $0 --build-type=release --gen-release=minor,execute  # Test minor release process"
 }
 
 # Function to handle errors
