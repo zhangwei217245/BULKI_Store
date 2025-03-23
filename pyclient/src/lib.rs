@@ -184,6 +184,19 @@ fn rust_ext<'py>(m: &Bound<'py, PyModule>) -> PyResult<()> {
         pyctx::prefetch_samples_impl(py, label, sample_ids, part_size, sample_var_keys)
     }
 
+    #[pyfn(m)]
+    #[pyo3(name = "fetch_samples")]
+    #[pyo3(signature = (label, sample_ids, part_size, sample_var_keys))]
+    fn fetch_samples<'py>(
+        py: Python<'py>,
+        label: String,
+        sample_ids: Vec<usize>,
+        part_size: usize,
+        sample_var_keys: Vec<String>,
+    ) -> PyResult<Py<PyAny>> {
+        pyctx::fetch_samples_impl(py, label, sample_ids, part_size, sample_var_keys)
+    }
+
     /// Forces a checkpoint of the memory store.
     #[pyfn(m)]
     #[pyo3(name = "force_checkpointing")]

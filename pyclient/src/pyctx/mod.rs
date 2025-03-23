@@ -434,6 +434,72 @@ pub fn check_queue_length_impl<'py>(py: Python<'py>) -> PyResult<Py<PyAny>> {
     GLOBAL_DATA_QUEUE.len().into_py_any(py)
 }
 
+pub fn fetch_samples_impl<'py>(
+    py: Python<'py>,
+    label: String,
+    sample_ids: Vec<usize>,
+    part_size: usize,
+    sample_var_keys: Vec<String>,
+) -> PyResult<Py<PyAny>> {
+    // Clone the data we need to move into the background task
+    let sample_ids_clone = sample_ids.clone();
+
+    // Calculate partition mappings (objectId, local_sample_id, global_sample_id)
+    let mut grouped_request: HashMap<u32, Vec<GetSampleRequest>> = HashMap::new();
+    sample_ids_clone.iter().for_each(|&global_sample_id| {
+        let part_id = global_sample_id / part_size;
+        let local_smp_id = global_sample_id % part_size;
+        let obj_identifier = ObjectIdentifier::Name(format!("{}/part_{}", label, part_id));
+        let vnode_id = obj_identifier.vnode_id();
+        let request = GetSampleRequest {
+            sample_id: global_sample_id,
+            obj_id: obj_identifier,
+            local_sample_id: local_smp_id,
+            sample_var_keys: sample_var_keys.clone(),
+        };
+        grouped_request
+            .entry(vnode_id)
+            .and_modify(|v: &mut Vec<GetSampleRequest>| v.push(request.clone()))
+            .or_insert_with(|| vec![request.clone()]);
+    });
+
+    let results = grouped_request
+        .par_iter()
+        .map(|(vnode_id, requests)| {
+            match rpc_call::<Vec<GetSampleRequest>, HashMap<usize, GetSampleResponse>>(
+                vnode_id % get_server_count(),
+                "datastore::load_batch_samples",
+                requests,
+            ) {
+                Ok(result) => result,
+                Err(e) => {
+                    eprintln!(
+                        "Error in background prefetch task for vnode {}: {}",
+                        vnode_id, e
+                    );
+                    HashMap::new()
+                }
+            }
+        })
+        .reduce(
+            || HashMap::new(),
+            |mut acc, x| {
+                acc.extend(x);
+                acc
+            },
+        );
+
+    // Convert results to Python dictionary
+    let dict = PyDict::new(py);
+    for (sample_id, response) in results {
+        dict.set_item(
+            sample_id,
+            converter::convert_sample_response_to_pydict(py, Some(response))?,
+        )?;
+    }
+    Ok(dict.into())
+}
+
 pub fn prefetch_samples_impl<'py>(
     py: Python<'py>,
     label: String,
