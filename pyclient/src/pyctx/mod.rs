@@ -32,13 +32,13 @@ use std::collections::HashMap;
 use std::ops::Add;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Arc;
-use std::sync::Mutex;
 use std::time::Instant;
 
 // Process-wide static variables with thread-safe access
 // These are initialized once per process and shared across threads
 static RUNTIME: OnceCell<tokio::runtime::Runtime> = OnceCell::new();
-static CONTEXT: OnceCell<Mutex<ClientContext>> = OnceCell::new();
+// static BLOCKING_CONTEXT: OnceCell<std::sync::Mutex<ClientContext>> = OnceCell::new();
+static ASYNC_CONTEXT: OnceCell<tokio::sync::Mutex<ClientContext>> = OnceCell::new();
 // Atomic counter for thread-safe incrementing across threads
 static REQUEST_COUNTER: AtomicU32 = AtomicU32::new(0);
 
@@ -135,13 +135,11 @@ pub fn init_py<'py>(
     }
 
     // Initialize the context once per process
-    if CONTEXT.get().is_none() {
+    if ASYNC_CONTEXT.get().is_none() {
         // Create a new context
         let mut context = ClientContext::new();
-
         // Get a reference to the runtime
         let rt = RUNTIME.get().expect("Runtime not initialized");
-
         // Initialize context with MPI if available
         rt.block_on(context.initialize(universe, rank, size, batch_size))
             .map_err(|e| {
@@ -150,7 +148,6 @@ pub fn init_py<'py>(
                     e
                 ))
             })?;
-
         // Initialize network client
         rt.block_on(context.ensure_client_initialized())
             .map_err(|e| {
@@ -159,28 +156,38 @@ pub fn init_py<'py>(
                     e
                 ))
             })?;
-
-        // Wrap in mutex for thread-safe access and set it
-        let _ = CONTEXT.set(Mutex::new(context));
+        let _ = ASYNC_CONTEXT.set(tokio::sync::Mutex::new(context));
     } else {
         // Context already exists, but we might need to update it with new parameters
         let rt = RUNTIME.get().expect("Runtime not initialized");
-        let mut context_guard = CONTEXT
-            .get()
-            .expect("Context not initialized")
-            .lock()
-            .unwrap();
-
-        // Reinitialize with new parameters if provided
-        if rank.is_some() || size.is_some() || batch_size.is_some() {
-            rt.block_on(context_guard.initialize(universe, rank, size, batch_size))
-                .map_err(|e| {
-                    PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!(
-                        "Failed to reinitialize context: {}",
-                        e
-                    ))
-                })?;
-        }
+        rt.block_on(async {
+            let mut context_guard = ASYNC_CONTEXT
+                .get()
+                .expect("Context not initialized")
+                .lock()
+                .await;
+            // Reinitialize with new parameters if provided
+            if rank.is_some() || size.is_some() || batch_size.is_some() {
+                let _ = context_guard
+                    .initialize(universe, rank, size, batch_size)
+                    .await
+                    .map_err(|e| {
+                        PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!(
+                            "Failed to reinitialize context: {}",
+                            e
+                        ))
+                    });
+                let _ = context_guard
+                    .ensure_client_initialized()
+                    .await
+                    .map_err(|e| {
+                        PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!(
+                            "Failed to ensure client initialized: {}",
+                            e
+                        ))
+                    });
+            }
+        });
     }
 
     Ok(())
@@ -193,14 +200,35 @@ where
 {
     // Get references to our static variables
     let rt = RUNTIME.get().expect("Runtime not initialized");
-    let context_mutex = CONTEXT.get().expect("Context not initialized");
-
-    // Acquire the lock to access the context
-    let context = context_mutex.lock().unwrap();
-
     // Make the RPC call
-    let response = rt.block_on(context.send_message::<T, R>(srv_id as usize, method_name, input));
+    let response = rt.block_on(async {
+        ASYNC_CONTEXT
+            .get()
+            .expect("Context not initialized")
+            .lock()
+            .await
+            .send_message::<T, R>(srv_id as usize, method_name, input)
+            .await
+    });
+    // Increment request counter atomically
+    REQUEST_COUNTER.fetch_add(1, Ordering::SeqCst);
 
+    response
+}
+
+async fn async_rpc_call<T, R>(srv_id: u32, method_name: &str, input: &T) -> RPCResult<R>
+where
+    T: Serialize + std::marker::Sync + 'static,
+    R: for<'de> Deserialize<'de>,
+{
+    // Get references to our static variables
+    let context_mutex = ASYNC_CONTEXT.get().expect("Context not initialized");
+    // Acquire the lock to access the context
+    let context = context_mutex.lock().await;
+    // Make the RPC call
+    let response = context
+        .send_message::<T, R>(srv_id as usize, method_name, input)
+        .await;
     // Increment request counter atomically
     REQUEST_COUNTER.fetch_add(1, Ordering::SeqCst);
 
@@ -507,10 +535,7 @@ pub fn prefetch_samples_impl<'py>(
     part_size: usize,
     sample_var_keys: Vec<String>,
 ) -> PyResult<Py<PyAny>> {
-    // Clone the data we need to move into the background task
-    let sample_ids_clone = sample_ids.clone();
-
-    // Get a reference to the runtime
+    // Get the runtime
     let runtime = match RUNTIME.get() {
         Some(rt) => rt,
         None => {
@@ -519,53 +544,55 @@ pub fn prefetch_samples_impl<'py>(
             ))
         }
     };
+    // Clone the data we need to move into the background task
+    let sample_ids_clone = sample_ids.clone();
+    let label_clone = label.clone();
+    let sample_var_keys_clone = sample_var_keys.clone();
+    // Calculate partition mappings (objectId, local_sample_id, global_sample_id)
+    let mut grouped_request: HashMap<u32, Vec<GetSampleRequest>> = HashMap::new();
+    sample_ids_clone.iter().for_each(|&global_sample_id| {
+        let part_id = global_sample_id / part_size;
+        let local_smp_id = global_sample_id % part_size;
+        let obj_identifier = ObjectIdentifier::Name(format!("{}/part_{}", label_clone, part_id));
+        let vnode_id = obj_identifier.vnode_id();
+        let request = GetSampleRequest {
+            sample_id: global_sample_id,
+            obj_id: obj_identifier,
+            local_sample_id: local_smp_id,
+            sample_var_keys: sample_var_keys_clone.clone(),
+        };
+        grouped_request
+            .entry(vnode_id)
+            .and_modify(|v: &mut Vec<GetSampleRequest>| v.push(request.clone()))
+            .or_insert_with(|| vec![request.clone()]);
+    });
 
     // Spawn a background task to process the data
     runtime.spawn(async move {
-        // Calculate partition mappings (objectId, local_sample_id, global_sample_id)
-        let mut grouped_request: HashMap<u32, Vec<GetSampleRequest>> = HashMap::new();
-        sample_ids_clone.iter().for_each(|&global_sample_id| {
-            let part_id = global_sample_id / part_size;
-            let local_smp_id = global_sample_id % part_size;
-            let obj_identifier = ObjectIdentifier::Name(format!("{}/part_{}", label, part_id));
-            let vnode_id = obj_identifier.vnode_id();
-            let request = GetSampleRequest {
-                sample_id: global_sample_id,
-                obj_id: obj_identifier,
-                local_sample_id: local_smp_id,
-                sample_var_keys: sample_var_keys.clone(),
-            };
-            grouped_request
-                .entry(vnode_id)
-                .and_modify(|v: &mut Vec<GetSampleRequest>| v.push(request.clone()))
-                .or_insert_with(|| vec![request.clone()]);
-        });
+        // Process each group of requests sequentially in the async task
+        // This avoids using rayon's parallelism inside the Tokio task
+        let mut results: HashMap<usize, GetSampleResponse> = HashMap::new();
 
-        let results = grouped_request
-            .par_iter()
-            .map(|(vnode_id, requests)| {
-                match rpc_call::<Vec<GetSampleRequest>, HashMap<usize, GetSampleResponse>>(
-                    vnode_id % get_server_count(),
-                    "datastore::load_batch_samples",
-                    requests,
-                ) {
-                    Ok(result) => result,
-                    Err(e) => {
-                        eprintln!(
-                            "Error in background prefetch task for vnode {}: {}",
-                            vnode_id, e
-                        );
-                        HashMap::new()
-                    }
+        for (vnode_id, requests) in grouped_request {
+            // Use a non-blocking approach for RPC calls
+            match async_rpc_call::<Vec<GetSampleRequest>, HashMap<usize, GetSampleResponse>>(
+                vnode_id % get_server_count(),
+                "datastore::load_batch_samples",
+                &requests,
+            )
+            .await
+            {
+                Ok(result) => {
+                    results.extend(result);
                 }
-            })
-            .reduce(
-                || HashMap::new(),
-                |mut acc, x| {
-                    acc.extend(x);
-                    acc
-                },
-            );
+                Err(e) => {
+                    eprintln!(
+                        "Error in background prefetch task for vnode {}: {}",
+                        vnode_id, e
+                    );
+                }
+            }
+        }
 
         // Push results to the global queue
         let mut found_count = 0;
