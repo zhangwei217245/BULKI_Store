@@ -580,6 +580,13 @@ pub fn load_batch_samples(data: &mut RPCData) -> HandlerResult {
         }
     }
 
+    info!(
+        "[RX Rank {:?}] load_batch_samples: {}/{} samples loaded",
+        crate::srvctx::get_rank(),
+        result.len(),
+        params.len()
+    );
+
     data.data = Some(
         rmp_serde::to_vec(&result)
             .map_err(|e| HandlerResult {
