@@ -560,7 +560,8 @@ pub fn load_batch_samples(data: &mut RPCData) -> HandlerResult {
                         if let Some(sub_obj_slices) = slice_response.sub_obj_slices {
                             for (_, name, array_opt) in sub_obj_slices {
                                 if let Some(array) = array_opt {
-                                    variable_data.insert(name, array);
+                                    variable_data
+                                        .insert(name.split('/').last().unwrap().to_string(), array);
                                 }
                             }
                         }
