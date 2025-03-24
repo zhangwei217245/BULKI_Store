@@ -469,6 +469,7 @@ pub fn fetch_samples_impl<'py>(
     part_size: usize,
     sample_var_keys: Vec<String>,
 ) -> PyResult<Py<PyAny>> {
+    let start_time = Instant::now();
     // Clone the data we need to move into the background task
     let sample_ids_clone = sample_ids.clone();
 
@@ -525,6 +526,14 @@ pub fn fetch_samples_impl<'py>(
             converter::convert_sample_response_to_pydict(py, Some(response))?,
         )?;
     }
+    let elapsed_time = start_time.elapsed().as_millis();
+    info!(
+        "[R{}/S{}] fetch_samples: {:?} in {:?}ms",
+        get_client_rank(),
+        get_client_count(),
+        sample_ids.len(),
+        elapsed_time
+    );
     Ok(dict.into())
 }
 
