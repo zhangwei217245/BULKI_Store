@@ -14,7 +14,7 @@ use converter::{IntoBoundPyAny, MetaKeySpec, SupportedNumpyArray};
 
 use crossbeam::queue::SegQueue;
 use lazy_static::lazy_static;
-use log::{debug, info};
+use log::{debug, error, info};
 use numpy::{
     ndarray::{ArrayD, ArrayViewD, ArrayViewMutD, Axis},
     Complex64,
@@ -630,6 +630,11 @@ pub fn prefetch_samples_impl<'py>(
         let mut results: HashMap<usize, GetSampleResponse> = HashMap::new();
 
         for (vnode_id, requests) in grouped_request {
+            info!(
+                "prefetching {:?} samples from vnode {}",
+                requests.len(),
+                vnode_id
+            );
             // Use a non-blocking approach for RPC calls
             match async_rpc_call::<Vec<GetSampleRequest>, HashMap<usize, GetSampleResponse>>(
                 vnode_id % get_server_count(),
@@ -642,7 +647,7 @@ pub fn prefetch_samples_impl<'py>(
                     results.extend(result);
                 }
                 Err(e) => {
-                    eprintln!(
+                    error!(
                         "Error in background prefetch task for vnode {}: {}",
                         vnode_id, e
                     );
@@ -659,7 +664,7 @@ pub fn prefetch_samples_impl<'py>(
             }
         });
 
-        println!(
+        info!(
             "Background prefetch completed: {}/{} samples loaded, memory: {:?} MB",
             found_count,
             sample_ids_clone.len(),
