@@ -22,7 +22,7 @@ use numpy::{
 use once_cell::sync::OnceCell;
 use pyo3::types::{PyDictMethods, PyInt};
 use pyo3::{
-    exceptions::{PyRuntimeError, PyValueError},
+    exceptions::PyValueError,
     types::{PyDict, PySlice},
     Bound, PyErr, PyObject, PyResult, Python,
 };
@@ -227,7 +227,7 @@ where
 
     response
 }
-
+#[allow(dead_code)]
 async fn async_rpc_call<T, R>(srv_id: u32, method_name: &str, input: &T) -> RPCResult<R>
 where
     T: Serialize + std::marker::Sync + 'static,
