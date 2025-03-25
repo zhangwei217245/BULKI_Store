@@ -287,6 +287,7 @@ pub fn create_object_impl<'py>(
         timer.elapsed().as_millis(),
         SystemUtility::get_current_memory_usage_mb()
     );
+    drop(create_obj_params);
     converter::convert_vec_u128_to_py_long(py, result)
 }
 
@@ -591,15 +592,6 @@ pub fn prefetch_samples_impl<'py>(
     part_size: usize,
     sample_var_keys: Vec<String>,
 ) -> PyResult<Py<PyAny>> {
-    // Get the runtime
-    let runtime = match RUNTIME.get() {
-        Some(rt) => rt,
-        None => {
-            return Err(PyErr::new::<PyRuntimeError, _>(
-                "Tokio runtime not initialized",
-            ))
-        }
-    };
     // Clone the data we need to move into the background task
     let sample_ids_clone = sample_ids.clone();
     let label_clone = label.clone();
@@ -623,55 +615,47 @@ pub fn prefetch_samples_impl<'py>(
             .or_insert_with(|| vec![request.clone()]);
     });
 
-    // Spawn a background task to process the data
-    runtime.spawn(async move {
-        // Process each group of requests sequentially in the async task
-        // This avoids using rayon's parallelism inside the Tokio task
-        let mut results: HashMap<usize, GetSampleResponse> = HashMap::new();
-
-        for (vnode_id, requests) in grouped_request {
-            info!(
-                "prefetching {:?} samples from vnode {}",
-                requests.len(),
-                vnode_id
-            );
-            // Use a non-blocking approach for RPC calls
-            match async_rpc_call::<Vec<GetSampleRequest>, HashMap<usize, GetSampleResponse>>(
+    let results = grouped_request
+        .par_iter()
+        .map(|(vnode_id, requests)| {
+            match rpc_call::<Vec<GetSampleRequest>, HashMap<usize, GetSampleResponse>>(
                 vnode_id % get_server_count(),
                 "datastore::load_batch_samples",
-                &requests,
-            )
-            .await
-            {
-                Ok(result) => {
-                    results.extend(result);
-                }
+                requests,
+            ) {
+                Ok(result) => result,
                 Err(e) => {
-                    error!(
+                    eprintln!(
                         "Error in background prefetch task for vnode {}: {}",
                         vnode_id, e
                     );
+                    HashMap::new()
                 }
             }
-        }
-
-        // Push results to the global queue
-        let mut found_count = 0;
-        sample_ids_clone.iter().for_each(|&global_sample_id| {
-            if let Some(data) = results.get(&global_sample_id) {
-                GLOBAL_DATA_QUEUE.push(data.to_owned());
-                found_count += 1;
-            }
-        });
-
-        info!(
-            "Background prefetch completed: {}/{} samples loaded, memory: {:?} MB",
-            found_count,
-            sample_ids_clone.len(),
-            SystemUtility::get_current_memory_usage_mb()
+        })
+        .reduce(
+            || HashMap::new(),
+            |mut acc, x| {
+                acc.extend(x);
+                acc
+            },
         );
+
+    // Push results to the global queue
+    let mut found_count = 0;
+    sample_ids_clone.iter().for_each(|&global_sample_id| {
+        if let Some(data) = results.get(&global_sample_id) {
+            GLOBAL_DATA_QUEUE.push(data.to_owned());
+            found_count += 1;
+        }
     });
 
+    info!(
+        "Background prefetch completed: {}/{} samples loaded, memory: {:?} MB",
+        found_count,
+        sample_ids_clone.len(),
+        SystemUtility::get_current_memory_usage_mb()
+    );
     // Return the number of samples requested (not the actual queue length yet)
     sample_ids.len().into_py_any(py)
 }
