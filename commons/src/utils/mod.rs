@@ -100,6 +100,17 @@ impl RPCUtility {
 }
 
 impl SystemUtility {
+
+    pub fn get_current_memory_usage_mb() -> u64 {
+        let mut sys = System::new_all();
+        sys.refresh_all();
+        let pid = get_current_pid().expect("Failed to get current PID");
+        if let Some(process) = sys.process(pid) {
+            return process.memory() / 1024 / 1024;
+        }
+        0
+    }
+
     pub fn monitor_memory_usage(running: Arc<AtomicBool>, frequency_per_min: u64, source: String,rank: usize, size: usize) -> JoinHandle<()> {
         return thread::spawn(move || {
             let interval = Duration::from_secs(60/frequency_per_min); // Log every minute by default

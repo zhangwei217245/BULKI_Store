@@ -45,22 +45,7 @@ static REQUEST_COUNTER: AtomicU32 = AtomicU32::new(0);
 // Flag to control memory monitoring thread
 
 lazy_static! {
-    static ref MEMORY_MONITOR_RUNNING: Arc<AtomicBool> = Arc::new(AtomicBool::new(false));
     pub static ref GLOBAL_DATA_QUEUE: Arc<SegQueue<GetSampleResponse>> = Arc::new(SegQueue::new());
-}
-
-/// Stops the memory monitoring thread
-pub fn stop_memory_monitoring() {
-    if MEMORY_MONITOR_RUNNING.load(Ordering::SeqCst) {
-        info!(
-            "[R{}/S{}] Stopping client memory monitoring thread",
-            get_client_rank(),
-            get_client_count()
-        );
-        MEMORY_MONITOR_RUNNING.store(false, Ordering::SeqCst);
-        // Give the thread a moment to finish its current iteration
-        std::thread::sleep(Duration::from_millis(100));
-    }
 }
 
 pub fn init_py<'py>(
@@ -206,26 +191,11 @@ pub fn init_py<'py>(
             }
         });
     }
-
-    // Start memory monitoring thread if not already running
-    if !MEMORY_MONITOR_RUNNING.load(Ordering::SeqCst) {
-        SystemUtility::monitor_memory_usage(
-            MEMORY_MONITOR_RUNNING.clone(),
-            2,
-            "pyclient".to_string(),
-            get_client_rank() as usize,
-            get_client_count() as usize,
-        );
-        info!("Started client memory monitoring thread");
-    }
-
     Ok(())
 }
 
 /// Shuts down the client and cleans up resources
 pub fn close_py<'py>(_py: Python<'py>) -> PyResult<()> {
-    // Stop memory monitoring thread
-    stop_memory_monitoring();
     // Add any other cleanup tasks here
     info!(
         "[R{}/S{}] Client shutdown complete",
@@ -344,12 +314,13 @@ pub fn get_object_metadata_impl<'py>(
             })?;
             debug!("get_object_metadata: result: {:?}", result);
             info!(
-                "[R{}/S{}] get_object_metadata: result: {:?}, {:?} in {:?}ms",
+                "[R{}/S{}] get_object_metadata: result: {:?}, {:?} in {:?}ms, memory: {:?}MB",
                 get_client_rank(),
                 get_client_count(),
                 result.obj_id,
                 result.obj_name,
-                timer.elapsed().as_millis()
+                timer.elapsed().as_millis(),
+                SystemUtility::get_current_memory_usage_mb()
             );
             converter::convert_get_object_meta_response_to_pydict(py, result)
                 .map(|dict| dict.into())
@@ -570,11 +541,12 @@ pub fn fetch_samples_impl<'py>(
     }
     let elapsed_time = start_time.elapsed().as_millis();
     info!(
-        "[R{}/S{}] fetch_samples: {:?} in {:?}ms",
+        "[R{}/S{}] fetch_samples: {:?} in {:?} ms, memory: {:?} MB",
         get_client_rank(),
         get_client_count(),
         sample_ids.len(),
-        elapsed_time
+        elapsed_time,
+        SystemUtility::get_current_memory_usage_mb()
     );
     Ok(dict.into())
 }
@@ -655,9 +627,10 @@ pub fn prefetch_samples_impl<'py>(
         });
 
         println!(
-            "Background prefetch completed: {}/{} samples loaded",
+            "Background prefetch completed: {}/{} samples loaded, memory: {:?} MB",
             found_count,
-            sample_ids_clone.len()
+            sample_ids_clone.len(),
+            SystemUtility::get_current_memory_usage_mb()
         );
     });
 
