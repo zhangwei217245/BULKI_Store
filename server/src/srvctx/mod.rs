@@ -248,9 +248,12 @@ impl ServerContext {
             }
             tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
         }
-
         debug!("s2s ready file found: {}", ready_file.display());
-        // ?
+
+        // Check if the global s2s client is poisoned
+        let s2s_is_poisoned = GLOBAL_S2S_CLIENT.is_poisoned();
+        debug!("s2s client poisoned: {}", s2s_is_poisoned);
+
         Ok(())
     }
 
@@ -312,6 +315,9 @@ impl ServerContext {
 /// Particularly important for proper MPI finalization on Perlmutter.
 pub fn clear_global_resources() {
     // Clear global S2S client
+    if GLOBAL_S2S_CLIENT.is_poisoned() {
+        return;
+    }
     if let Ok(mut global_client) = GLOBAL_S2S_CLIENT.write() {
         *global_client = None;
     }

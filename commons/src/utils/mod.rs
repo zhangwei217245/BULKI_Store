@@ -1,9 +1,13 @@
-use std::env;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
+use std::thread::JoinHandle;
+use std::{env, thread};
 use std::net::TcpListener;
 use std::path::PathBuf;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use log::{debug, info};
+use sysinfo::{get_current_pid, System};
 
 use crate::err::StatusCode;
 use crate::handler::HandlerResult;
@@ -12,7 +16,7 @@ use crate::rpc::RPCData;
 pub struct TimeUtility;
 pub struct NetworkUtility;
 pub struct FileUtility;
-
+pub struct SystemUtility;
 pub struct RPCUtility;
 
 impl TimeUtility {
@@ -92,5 +96,39 @@ impl RPCUtility {
                 message: Some("Handler result is missing".to_string()),
             },
         }
+    }
+}
+
+impl SystemUtility {
+    pub fn monitor_memory_usage(running: Arc<AtomicBool>, frequency_per_min: u64, source: String,rank: usize, size: usize) -> JoinHandle<()> {
+        return thread::spawn(move || {
+            let interval = Duration::from_secs(60/frequency_per_min); // Log every minute by default
+            let mut sys = System::new_all();
+            while running.load(Ordering::SeqCst) {
+                // Refresh system information
+                sys.refresh_all();
+                // Get the current process ID
+                let pid = get_current_pid().expect("Failed to get current PID");
+                // Retrieve and print the memory usage in kilobytes
+                if let Some(process) = sys.process(pid) {
+                    info!(
+                        "[{} R{}/S{}] Memory usage: {} MB",
+                        source,
+                        rank,
+                        size,
+                        process.memory() / 1024 / 1024
+                    );
+                } else {
+                    info!(
+                        "[{} R{}/S{}] Current process not found!",
+                        source,
+                        rank,
+                        size
+                    );
+                }
+                // Sleep for the specified interval
+                thread::sleep(interval);
+            }
+        });
     }
 }

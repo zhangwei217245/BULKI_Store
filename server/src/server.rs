@@ -1,14 +1,20 @@
-use std::sync::Arc;
-
+use commons::utils::SystemUtility;
 use log::{debug, info};
+use std::sync::Arc;
 mod bench;
 mod datastore;
 mod health;
 mod srvctx;
 use anyhow::Result;
 use env_logger;
+use lazy_static::lazy_static;
 use srvctx::{get_rank, get_size, ServerContext};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Instant;
+
+lazy_static! {
+    static ref MEMORY_MONITOR_RUNNING: Arc<AtomicBool> = Arc::new(AtomicBool::new(true));
+}
 
 fn close_resources() -> Result<()> {
     let timer = Instant::now();
@@ -24,6 +30,8 @@ fn close_resources() -> Result<()> {
         get_size(),
         timer.elapsed().as_secs()
     );
+
+    MEMORY_MONITOR_RUNNING.store(false, Ordering::SeqCst);
     return checkpoint_result;
 }
 
@@ -39,13 +47,21 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     #[cfg(not(feature = "mpi"))]
     let universe = None;
-
     // Create and initialize server context
     let mut server_context = ServerContext::new();
 
     // Initialize with MPI universe - critical for Perlmutter
     server_context.initialize(universe).await?;
     info!("[R{}/S{}] Server initialized", get_rank(), get_size());
+
+    // Start memory monitoring thread
+    let _memory_monitor_thread = SystemUtility::monitor_memory_usage(
+        MEMORY_MONITOR_RUNNING.clone(),
+        2,
+        "Server".to_string(),
+        get_rank() as usize,
+        get_size() as usize,
+    );
 
     // Start the RX endpoints before wrapping in Arc
     futures::executor::block_on(async { server_context.start_endpoints().await })?;
@@ -69,11 +85,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         tokio::select! {
             _ = tokio::signal::ctrl_c() => {
                 info!("[R{}/S{}] Received Ctrl+C signal", get_rank(), get_size());
+                // Signal memory monitor thread to stop
                 server_context.shutdown(|| async { close_resources() }).await?;
                 debug!("[R{}/S{}] Server shutdown complete", get_rank(), get_size());
             }
             _ = terminate.recv() => {
                 info!("[R{}/S{}] Received SIGTERM signal", get_rank(), get_size());
+                // Signal memory monitor thread to stop
                 server_context.shutdown(|| async { close_resources() }).await?;
                 debug!("[R{}/S{}] Server shutdown complete", get_rank(), get_size());
             }
@@ -88,6 +106,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             .await?;
         debug!("[R{}/S{}] Server shutdown complete", get_rank(), get_size());
     }
+
+    // // Wait for memory monitor thread to finish
+    // if let Err(e) = memory_monitor_thread.join() {
+    //     debug!(
+    //         "[R{}/S{}] Error joining memory monitor thread: {:?}",
+    //         get_rank(),
+    //         get_size(),
+    //         e
+    //     );
+    // }
 
     Ok(())
 }

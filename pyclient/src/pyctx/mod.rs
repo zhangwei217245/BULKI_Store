@@ -9,6 +9,7 @@ use commons::object::params::{
     GetObjectSliceResponse, GetSampleRequest, GetSampleResponse,
 };
 use commons::object::types::{ObjectIdentifier, SupportedRustArrayD};
+use commons::utils::SystemUtility;
 use converter::{IntoBoundPyAny, MetaKeySpec, SupportedNumpyArray};
 
 use crossbeam::queue::SegQueue;
@@ -30,9 +31,9 @@ use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::ops::Add;
-use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::Arc;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 // Process-wide static variables with thread-safe access
 // These are initialized once per process and shared across threads
@@ -41,9 +42,25 @@ static RUNTIME: OnceCell<tokio::runtime::Runtime> = OnceCell::new();
 static ASYNC_CONTEXT: OnceCell<tokio::sync::Mutex<ClientContext>> = OnceCell::new();
 // Atomic counter for thread-safe incrementing across threads
 static REQUEST_COUNTER: AtomicU32 = AtomicU32::new(0);
+// Flag to control memory monitoring thread
 
 lazy_static! {
+    static ref MEMORY_MONITOR_RUNNING: Arc<AtomicBool> = Arc::new(AtomicBool::new(false));
     pub static ref GLOBAL_DATA_QUEUE: Arc<SegQueue<GetSampleResponse>> = Arc::new(SegQueue::new());
+}
+
+/// Stops the memory monitoring thread
+pub fn stop_memory_monitoring() {
+    if MEMORY_MONITOR_RUNNING.load(Ordering::SeqCst) {
+        info!(
+            "[R{}/S{}] Stopping client memory monitoring thread",
+            get_client_rank(),
+            get_client_count()
+        );
+        MEMORY_MONITOR_RUNNING.store(false, Ordering::SeqCst);
+        // Give the thread a moment to finish its current iteration
+        std::thread::sleep(Duration::from_millis(100));
+    }
 }
 
 pub fn init_py<'py>(
@@ -190,6 +207,31 @@ pub fn init_py<'py>(
         });
     }
 
+    // Start memory monitoring thread if not already running
+    if !MEMORY_MONITOR_RUNNING.load(Ordering::SeqCst) {
+        SystemUtility::monitor_memory_usage(
+            MEMORY_MONITOR_RUNNING.clone(),
+            2,
+            "pyclient".to_string(),
+            get_client_rank() as usize,
+            get_client_count() as usize,
+        );
+        info!("Started client memory monitoring thread");
+    }
+
+    Ok(())
+}
+
+/// Shuts down the client and cleans up resources
+pub fn close_py<'py>(_py: Python<'py>) -> PyResult<()> {
+    // Stop memory monitoring thread
+    stop_memory_monitoring();
+    // Add any other cleanup tasks here
+    info!(
+        "[R{}/S{}] Client shutdown complete",
+        get_client_rank(),
+        get_client_count()
+    );
     Ok(())
 }
 

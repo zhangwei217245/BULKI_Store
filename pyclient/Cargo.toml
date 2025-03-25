@@ -37,6 +37,7 @@ pyo3 = { version = "0.24.0", features = [
     "generate-import-lib",
 ] }
 crossbeam = { workspace = true }
+sysinfo = { workspace = true }
 
 
 [features]

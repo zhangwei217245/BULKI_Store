@@ -22,6 +22,7 @@ lazy_static = { workspace = true }
 uuid = { workspace = true }
 fnv = { workspace = true }
 futures = { workspace = true }
+sysinfo = { workspace = true }
 
 [features]
 default = ["mpi"]

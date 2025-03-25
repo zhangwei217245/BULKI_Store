@@ -53,6 +53,12 @@ fn rust_ext<'py>(m: &Bound<'py, PyModule>) -> PyResult<()> {
     }
 
     #[pyfn(m)]
+    #[pyo3(name = "close")]
+    fn close_py<'py>(py: Python<'py>) -> PyResult<()> {
+        pyctx::close_py(py)
+    }
+
+    #[pyfn(m)]
     #[pyo3(name = "version")]
     fn version_py(py: Python<'_>) -> PyResult<Py<PyString>> {
         let version = PyString::new(py, VERSION).unbind();
