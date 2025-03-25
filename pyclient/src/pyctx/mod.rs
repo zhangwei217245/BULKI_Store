@@ -280,11 +280,12 @@ pub fn create_object_impl<'py>(
     debug!("create_objects: result vector length: {:?}", result.len());
     debug!("create_objects: result vector: {:?}", result);
     info!(
-        "[R{}/S{}] create_objects: result vector: {:?} in {:?}ms",
+        "[R{}/S{}] create_objects: result vector: {:?} in {:?} ms, memory: {:?} MB",
         get_client_rank(),
         get_client_count(),
         result,
-        timer.elapsed().as_millis()
+        timer.elapsed().as_millis(),
+        SystemUtility::get_current_memory_usage_mb()
     );
     converter::convert_vec_u128_to_py_long(py, result)
 }
@@ -314,7 +315,7 @@ pub fn get_object_metadata_impl<'py>(
             })?;
             debug!("get_object_metadata: result: {:?}", result);
             info!(
-                "[R{}/S{}] get_object_metadata: result: {:?}, {:?} in {:?}ms, memory: {:?}MB",
+                "[R{}/S{}] get_object_metadata: result: {:?}, {:?} in {:?} ms, memory: {:?} MB",
                 get_client_rank(),
                 get_client_count(),
                 result.obj_id,
@@ -334,6 +335,7 @@ pub fn get_multiple_object_metadata_impl<'py>(
     arr_meta_keys: Option<Vec<Vec<String>>>,
     arr_sub_meta_keys: Option<Vec<MetaKeySpec>>,
 ) -> PyResult<Py<PyDict>> {
+    let timer = Instant::now();
     // group obj_ids by vnode_id
     let mut grouped_request = HashMap::new();
     for (i, obj_id) in obj_ids.iter().enumerate() {
@@ -372,6 +374,14 @@ pub fn get_multiple_object_metadata_impl<'py>(
             };
         }
     }
+    info!(
+        "[R{}/S{}] get_multiple_object_metadata complete, {:?} in {:?} ms, memory usage: {} MB",
+        get_client_rank(),
+        get_client_count(),
+        obj_ids.len(),
+        timer.elapsed().as_millis(),
+        SystemUtility::get_current_memory_usage_mb()
+    );
     Ok(results.into())
 }
 
@@ -405,14 +415,14 @@ pub fn get_object_data_impl<'py>(
                 }),
             }?;
 
-            // debug!("get_object_data: result vector: {:?}", result);
             info!(
-                "[R{}/S{}] get_object_data: result: {:?}, {:?} in {:?}ms",
+                "[R{}/S{}] get_object_data: result: {:?}, {:?} in {:?}ms, memory: {:?} MB",
                 get_client_rank(),
                 get_client_count(),
                 result.obj_id,
                 result.obj_name,
-                timer.elapsed().as_millis()
+                timer.elapsed().as_millis(),
+                SystemUtility::get_current_memory_usage_mb()
             );
             converter::convert_get_object_slice_response_to_pydict(py, result)
                 .map(|dict| dict.into())
@@ -426,6 +436,7 @@ pub fn get_multiple_object_data_impl<'py>(
     arr_regions: Option<Vec<Vec<Bound<'py, PySlice>>>>,
     arr_sub_obj_regions: Option<Vec<Vec<(String, Vec<Bound<'py, PySlice>>)>>>,
 ) -> PyResult<Py<PyDict>> {
+    let timer = Instant::now();
     let mut grouped_request = HashMap::new();
     for (i, obj_id) in obj_ids.iter().enumerate() {
         let regions = arr_regions.as_ref().map(|v| v[i].clone());
@@ -463,15 +474,37 @@ pub fn get_multiple_object_data_impl<'py>(
             };
         }
     }
+    info!(
+        "[R{}/S{}] get_multiple_object_data complete, {:?} in {:?} ms, memory usage: {} MB",
+        get_client_rank(),
+        get_client_count(),
+        obj_ids.len(),
+        timer.elapsed().as_millis(),
+        SystemUtility::get_current_memory_usage_mb()
+    );
     Ok(results.into())
 }
 
 pub fn pop_queue_data_impl<'py>(py: Python<'py>) -> PyResult<Py<PyAny>> {
     let data = GLOBAL_DATA_QUEUE.pop();
+    info!(
+        "[R{}/S{}] queue length after pop_queue_data: {:?}, memory usage: {} MB",
+        get_client_rank(),
+        get_client_count(),
+        GLOBAL_DATA_QUEUE.len(),
+        SystemUtility::get_current_memory_usage_mb()
+    );
     converter::convert_sample_response_to_pydict(py, data).map(|d| d.into())
 }
 
 pub fn check_queue_length_impl<'py>(py: Python<'py>) -> PyResult<Py<PyAny>> {
+    info!(
+        "[R{}/S{}] current queue length: {:?}, memory usage: {} MB",
+        get_client_rank(),
+        get_client_count(),
+        GLOBAL_DATA_QUEUE.len(),
+        SystemUtility::get_current_memory_usage_mb()
+    );
     GLOBAL_DATA_QUEUE.len().into_py_any(py)
 }
 
@@ -482,7 +515,7 @@ pub fn fetch_samples_impl<'py>(
     part_size: usize,
     sample_var_keys: Vec<String>,
 ) -> PyResult<Py<PyAny>> {
-    let start_time = Instant::now();
+    let timer = Instant::now();
     // Clone the data we need to move into the background task
     let sample_ids_clone = sample_ids.clone();
 
@@ -539,7 +572,7 @@ pub fn fetch_samples_impl<'py>(
             converter::convert_sample_response_to_pydict(py, Some(response))?,
         )?;
     }
-    let elapsed_time = start_time.elapsed().as_millis();
+    let elapsed_time = timer.elapsed().as_millis();
     info!(
         "[R{}/S{}] fetch_samples: {:?} in {:?} ms, memory: {:?} MB",
         get_client_rank(),
