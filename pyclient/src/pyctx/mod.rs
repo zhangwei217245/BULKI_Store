@@ -45,7 +45,7 @@ static REQUEST_COUNTER: AtomicU32 = AtomicU32::new(0);
 // Flag to control memory monitoring thread
 
 lazy_static! {
-    pub static ref GLOBAL_DATA_QUEUE: Arc<SegQueue<GetSampleResponse>> = Arc::new(SegQueue::new());
+    pub static ref GLOBAL_DATA_QUEUE: Arc<SegQueue<Py<PyAny>>> = Arc::new(SegQueue::new());
 }
 
 pub fn init_py<'py>(
@@ -496,7 +496,7 @@ pub fn pop_queue_data_impl<'py>(py: Python<'py>) -> PyResult<Py<PyAny>> {
         GLOBAL_DATA_QUEUE.len(),
         SystemUtility::get_current_memory_usage_mb()
     );
-    converter::convert_sample_response_to_pydict(py, data).map(|d| d.into())
+    data.ok_or(PyErr::new::<PyValueError, _>("Queue is empty"))
 }
 
 pub fn check_queue_length_impl<'py>(py: Python<'py>) -> PyResult<Py<PyAny>> {
@@ -586,7 +586,7 @@ pub fn fetch_samples_impl<'py>(
     Ok(dict.into())
 }
 
-pub fn prefetch_samples_impl<'py>(
+pub fn prefetch_samples_into_queue_impl<'py>(
     py: Python<'py>,
     label: String,
     sample_ids: Vec<usize>,
@@ -643,13 +643,21 @@ pub fn prefetch_samples_impl<'py>(
         );
 
     // Push results to the global queue
-    let mut found_count = 0;
-    sample_ids_clone.iter().for_each(|&global_sample_id| {
-        if let Some(data) = results.get(&global_sample_id) {
-            GLOBAL_DATA_QUEUE.push(data.to_owned());
-            found_count += 1;
-        }
-    });
+    let found_count = sample_ids_clone
+        .iter()
+        .map(|&global_sample_id| {
+            if let Some(data) = results.get(&global_sample_id) {
+                let pydict =
+                    converter::convert_sample_response_to_pydict(py, Some(data.to_owned()))
+                        .map(|d| d.into_py_any(py).unwrap())
+                        .unwrap();
+                GLOBAL_DATA_QUEUE.push(pydict);
+                1
+            } else {
+                0
+            }
+        })
+        .sum::<usize>();
 
     info!(
         "Background prefetch completed: {}/{} samples loaded, memory: {:?} MB",

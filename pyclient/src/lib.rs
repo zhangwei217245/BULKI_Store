@@ -187,7 +187,7 @@ fn rust_ext<'py>(m: &Bound<'py, PyModule>) -> PyResult<()> {
         part_size: usize,
         sample_var_keys: Vec<String>,
     ) -> PyResult<Py<PyAny>> {
-        pyctx::prefetch_samples_impl(py, label, sample_ids, part_size, sample_var_keys)
+        pyctx::prefetch_samples_into_queue_impl(py, label, sample_ids, part_size, sample_var_keys)
     }
 
     #[pyfn(m)]
