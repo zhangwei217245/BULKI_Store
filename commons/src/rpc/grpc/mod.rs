@@ -234,7 +234,7 @@ impl GrpcBulkistore for GrpcRX {
                 )))
             }
         };
-        info!(
+        debug!(
             "Request deserialization time: {} ms",
             TimeUtility::get_timestamp_ms() - start_time
         );
@@ -250,7 +250,7 @@ impl GrpcBulkistore for GrpcRX {
         let binary_response = rmp_serde::to_vec(&response)
             .map_err(|e| tonic::Status::internal(format!("Failed to serialize response: {}", e)))?;
 
-        info!(
+        debug!(
             "Response serialization time: {} ms",
             TimeUtility::get_timestamp_ms() - response_start_time
         );
