@@ -489,7 +489,7 @@ pub fn get_multiple_object_data_impl<'py>(
 
 pub fn pop_queue_data_impl<'py>(py: Python<'py>) -> PyResult<Py<PyAny>> {
     let data = GLOBAL_DATA_QUEUE.pop();
-    info!(
+    debug!(
         "[R{}/S{}] queue length after pop_queue_data: {:?}, memory usage: {} MB",
         get_client_rank(),
         get_client_count(),
