@@ -257,7 +257,7 @@ pub fn create_object_impl<'py>(
     array_data_list: Option<Vec<Option<SupportedNumpyArray<'py>>>>,
 ) -> PyResult<Vec<Py<PyInt>>> {
     let timer = Instant::now();
-    let create_obj_params: Vec<commons::object::params::CreateObjectParams> =
+    let create_obj_params: Vec<commons::object::params::CreateObjectParams> = {
         proc::create_objects_req_proc(
             obj_name_key,
             parent_id,
@@ -268,7 +268,8 @@ pub fn create_object_impl<'py>(
         )
         .map_err(|e| {
             PyErr::new::<PyValueError, _>(format!("Failed to create object parameters: {}", e))
-        })?;
+        })?
+    };
     let main_obj_id = create_obj_params[0].obj_id;
     // Get binary data from response (assuming response.data contains the binary payload)
     let result = rpc_call::<Vec<CreateObjectParams>, Vec<u128>>(
