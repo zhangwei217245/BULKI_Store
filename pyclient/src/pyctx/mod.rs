@@ -392,11 +392,11 @@ pub fn get_object_data_impl<'py>(
     obj_id: ObjectIdentifier,
     region: Option<Vec<Bound<'py, PySlice>>>,
     sub_obj_regions: Option<Vec<(String, Vec<Bound<'py, PySlice>>)>>,
-    sim_data: bool,
 ) -> PyResult<Py<PyDict>> {
     let timer = Instant::now();
     let vnode_id = obj_id.vnode_id();
     let get_object_data_params = proc::get_object_slice_req_proc(obj_id, region, sub_obj_regions);
+    let sim_data = false;
     match get_object_data_params {
         Err(_) => Err(PyErr::new::<PyValueError, _>(
             "Failed to create object parameters",
@@ -487,7 +487,7 @@ pub fn get_multiple_object_data_impl<'py>(
     Ok(results.into())
 }
 
-pub fn pop_queue_data_impl<'py>(py: Python<'py>) -> PyResult<Py<PyAny>> {
+pub fn pop_queue_data_impl<'py>(_py: Python<'py>) -> PyResult<Py<PyAny>> {
     let data = GLOBAL_DATA_QUEUE.pop();
     debug!(
         "[R{}/S{}] queue length after pop_queue_data: {:?}, memory usage: {} MB",

@@ -124,15 +124,14 @@ fn rust_ext<'py>(m: &Bound<'py, PyModule>) -> PyResult<()> {
     /// The identifier can be either an object ID of u128 or a name of str.
     #[pyfn(m)]
     #[pyo3(name = "get_object_data")]
-    #[pyo3(signature = (obj_id, region=None, sub_obj_regions=None, sim_data=false))]
+    #[pyo3(signature = (obj_id, region=None, sub_obj_regions=None))]
     fn get_object_data<'py>(
         py: Python<'py>,
         obj_id: PyObjectIdentifier,
         region: Option<Vec<Bound<'py, PySlice>>>,
         sub_obj_regions: Option<Vec<(String, Vec<Bound<'py, PySlice>>)>>,
-        sim_data: bool,
     ) -> PyResult<Py<PyDict>> {
-        pyctx::get_object_data_impl(py, obj_id.into(), region, sub_obj_regions, sim_data)
+        pyctx::get_object_data_impl(py, obj_id.into(), region, sub_obj_regions)
     }
 
     #[pyfn(m)]

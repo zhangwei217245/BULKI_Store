@@ -234,6 +234,7 @@ pub fn get_object_metadata_req_proc<'py>(
     })
 }
 
+#[allow(dead_code)]
 pub fn gen_sim_data(
     get_object_slice_params: GetObjectSliceParams,
 ) -> Result<GetObjectSliceResponse> {
