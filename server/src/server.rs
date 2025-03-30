@@ -16,6 +16,19 @@ lazy_static! {
     static ref MEMORY_MONITOR_RUNNING: Arc<AtomicBool> = Arc::new(AtomicBool::new(true));
 }
 
+fn prepare_resources() -> Result<()> {
+    debug!("[R{}/S{}] Loading Data...", get_rank(), get_size());
+    let timer = Instant::now();
+    let rst = datastore::load_memory_store();
+    info!(
+        "[R{}/S{}] Data loaded in {} seconds",
+        get_rank(),
+        get_size(),
+        timer.elapsed().as_secs()
+    );
+    rst
+}
+
 fn close_resources() -> Result<()> {
     let timer = Instant::now();
     info!(
@@ -64,18 +77,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     );
 
     // Start the RX endpoints before wrapping in Arc
-    futures::executor::block_on(async { server_context.start_endpoints().await })?;
+    futures::executor::block_on(async {
+        server_context
+            .start_endpoints(Some(prepare_resources))
+            .await
+    })?;
     info!("[R{}/S{}] Server endpoints started", get_rank(), get_size());
-
-    debug!("[R{}/S{}] Loading Data...", get_rank(), get_size());
-    let timer = Instant::now();
-    datastore::load_memory_store()?;
-    info!(
-        "[R{}/S{}] Data loaded in {} seconds",
-        get_rank(),
-        get_size(),
-        timer.elapsed().as_secs()
-    );
 
     // Handle shutdown signals with proper MPI cleanup
     #[cfg(unix)]

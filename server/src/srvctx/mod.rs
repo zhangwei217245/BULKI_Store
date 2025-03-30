@@ -192,7 +192,10 @@ impl ServerContext {
         Ok(())
     }
 
-    pub async fn start_endpoints(&mut self) -> Result<()> {
+    pub async fn start_endpoints<F>(&mut self, callback: Option<F>) -> Result<()>
+    where
+        F: FnOnce() -> Result<()>,
+    {
         let endpoint_list = ["c2s", "s2s"];
         for &id in endpoint_list.iter() {
             let (start_listen_tx, start_listen_rx) = oneshot::channel();
@@ -234,6 +237,11 @@ impl ServerContext {
         if let Some(s2s) = self.endpoints.get("s2s") {
             s2s.lock().await.exchange_addresses()?;
             s2s.lock().await.write_addresses()?;
+        }
+
+        // Execute the callback function if provided
+        if let Some(callback) = callback {
+            callback()?;
         }
 
         // test if s2s ready file is there, if yes, let's move on, otherwise, just wait for that file to be created
