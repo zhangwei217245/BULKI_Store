@@ -1,11 +1,13 @@
 from mpi4py import MPI
 import sys
+import os
 
 world = MPI.COMM_WORLD
 rank = world.Get_rank()
 size = world.Get_size()
 
 print(f"Rank {rank}, Size {size}")
+print(os.getcwd(), flush=True)
 
 world.Barrier()
 
@@ -18,6 +20,7 @@ obj_data = np.random.rand(4, 12)
 import bkstore_client as client
 
 client.init()
+
 
 # check the first console argument and see if it is --create
 if len(sys.argv) > 1 and sys.argv[1] == "--create":
