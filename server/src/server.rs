@@ -19,14 +19,14 @@ lazy_static! {
 fn prepare_resources() -> Result<()> {
     debug!("[R{}/S{}] Loading Data...", get_rank(), get_size());
     let timer = Instant::now();
-    let rst = datastore::load_memory_store();
+    datastore::load_memory_store()?;
     info!(
         "[R{}/S{}] Data loaded in {} seconds",
         get_rank(),
         get_size(),
         timer.elapsed().as_secs()
     );
-    rst
+    Ok(())
 }
 
 fn close_resources() -> Result<()> {
@@ -36,7 +36,7 @@ fn close_resources() -> Result<()> {
         get_rank(),
         get_size()
     );
-    let checkpoint_result = datastore::dump_memory_store();
+    datastore::dump_memory_store()?;
     info!(
         "[R{}/S{}] Finished checkpointing in {} seconds",
         get_rank(),
@@ -45,7 +45,7 @@ fn close_resources() -> Result<()> {
     );
 
     MEMORY_MONITOR_RUNNING.store(false, Ordering::SeqCst);
-    return checkpoint_result;
+    Ok(())
 }
 
 #[tokio::main]
