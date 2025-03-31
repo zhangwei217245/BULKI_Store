@@ -800,8 +800,8 @@ pub fn force_checkpointing(data: &mut RPCData) -> HandlerResult {
                 i
             );
             if i == get_rank() {
-                if let Ok(_) = dump_memory_store() {
-                    total_success += 1;
+                if let Ok(num_obj_dumped) = dump_memory_store() {
+                    total_success += num_obj_dumped;
                 }
             } else {
                 // Send checkpointing request to server i
@@ -832,12 +832,12 @@ pub fn force_checkpointing(data: &mut RPCData) -> HandlerResult {
     }
 }
 
-pub fn dump_memory_store() -> Result<()> {
+pub fn dump_memory_store() -> Result<usize> {
     let store = GLOBAL_STORE.write().unwrap();
     store.dump_memorystore_to_file(get_rank(), get_size())
 }
 
-pub fn load_memory_store() -> Result<()> {
+pub fn load_memory_store() -> Result<usize> {
     let store = GLOBAL_STORE.write().unwrap();
     store.load_memorystore_from_file(get_rank(), get_size())
 }

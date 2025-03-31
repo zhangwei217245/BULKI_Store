@@ -2,7 +2,7 @@ pub mod objid;
 pub mod params;
 pub mod types;
 use dashmap::DashMap;
-use log::{debug, info};
+use log::{debug, info, warn};
 use ndarray::SliceInfoElem;
 
 use anyhow::Result;
@@ -350,7 +350,7 @@ impl DataStore {
     }
 
     /// Dump all DataObjects to a file in MessagePack format.
-    pub fn dump_memorystore_to_file(&self, _rank: u32, _size: u32) -> Result<(), anyhow::Error> {
+    pub fn dump_memorystore_to_file(&self, _rank: u32, _size: u32) -> Result<usize, anyhow::Error> {
         info!("[R{}/S{}] Dumping memory store to file", _rank, _size);
         // read env var "PDC_DATA_LOC" and use it as the path, the default value should be "./.bulkistore_data"
         let data_dir = std::env::var("PDC_DATA_LOC").unwrap_or("./.bulkistore_data".to_string());
@@ -358,22 +358,36 @@ impl DataStore {
         // Create directory if it doesn't exist
         std::fs::create_dir_all(&data_dir)?;
         // file name format should be {data_dir}/objects_id.obj
-        self.objects
-            .iter()
-            .map(|entry| entry.clone())
-            .for_each(|x| x.save_to_file(data_dir.as_str()).unwrap_or(()));
-        // FIXME: no need for an index file here. We can rebuild it when loading objects.
-        // // write name_obj_idx to file
-        // let filename = format!("{}/name_obj.idx", data_dir);
-        // let mut file = File::create(filename)?;
-        // let name_idx_map: HashMap<String, u128> = self
-        //     .name_obj_idx
-        //     .iter()
-        //     .map(|entry| (entry.key().clone(), *entry.value()))
-        //     .collect();
-        // rmp_serde::encode::write(&mut file, &name_idx_map)?;
-        info!("[R{}/S{}] DONE WITH MEMORY STORE DUMP", _rank, _size);
-        Ok(())
+        let total_objects = self.objects.len();
+        let mut saved_count = 0;
+
+        for (i, entry) in self.objects.iter().enumerate() {
+            let result = entry.clone().save_to_file(data_dir.as_str());
+            if let Err(e) = &result {
+                warn!(
+                    "[R{}/S{}] Failed to save object {}: {}",
+                    _rank, _size, entry.id, e
+                );
+            } else {
+                saved_count += 1;
+                if i % 100 == 0 || i == total_objects - 1 {
+                    info!(
+                        "[R{}/S{}] Saved {}/{} objects ({:.1}%)",
+                        _rank,
+                        _size,
+                        i + 1,
+                        total_objects,
+                        (i as f64 + 1.0) * 100.0 / total_objects as f64
+                    );
+                }
+            }
+        }
+
+        info!(
+            "[R{}/S{}] DONE WITH MEMORY STORE DUMP: saved {}/{} objects",
+            _rank, _size, saved_count, total_objects
+        );
+        Ok(saved_count)
     }
 
     /// Load DataObjects from a MessagePack file and populate the DataStore.
@@ -381,12 +395,13 @@ impl DataStore {
         &self,
         server_rank: u32,
         server_count: u32,
-    ) -> Result<(), anyhow::Error> {
+    ) -> Result<usize, anyhow::Error> {
         // read env var "PDC_DATA_LOC" and use it as the path, the default value should be "./.bulkistore_data"
         let data_dir = std::env::var("PDC_DATA_LOC").unwrap_or("./.bulkistore_data".to_string());
 
         // Create directory if it doesn't exist
         std::fs::create_dir_all(&data_dir)?;
+        let mut eligible_files: Vec<_> = Vec::new();
 
         // Walk through the directory and find all .obj files
         for entry in std::fs::read_dir(data_dir)? {
@@ -407,29 +422,58 @@ impl DataStore {
 
             // Check if it's a file and has .obj extension
             if path.is_file() && path.extension().and_then(|s| s.to_str()) == Some("obj") {
-                let mut vnode_id_checked = false;
                 // check the file name, since the file name is {id}.obj, we need to get the vnode id from the id in the file name
                 if let Some(id_str) = path.file_name().and_then(|s| s.to_str()?.split('.').next()) {
                     let vnode_id = id_str.parse::<u128>()?.vnode_id();
-                    if vnode_id % server_count != server_rank {
-                        continue;
+                    if vnode_id % server_count == server_rank {
+                        eligible_files.push(path);
                     }
-                    vnode_id_checked = true;
                 }
+            }
+        }
+
+        info!(
+            "[R{}/S{}] Found {} eligible files",
+            server_rank,
+            server_count,
+            eligible_files.len()
+        );
+
+        let num_loaded: std::result::Result<Option<usize>, anyhow::Error> = eligible_files
+            .iter()
+            .enumerate()
+            .map(|(i, path)| {
                 // Open and read the file
                 let obj = DataObject::load_from_file(path.to_str().unwrap())?;
                 let obj_id = obj.id;
-                if !vnode_id_checked {
-                    if obj_id.vnode_id() % server_count != server_rank {
-                        continue;
-                    }
-                }
                 let obj_name = obj.name.clone();
                 // insert into objects and name_obj_idx
                 self.objects.insert(obj_id, obj);
                 self.name_obj_idx.insert(obj_name, obj_id);
-            }
-        }
-        Ok(())
+                if i % 100 == 0 || i == eligible_files.len() - 1 {
+                    info!(
+                        "[R{}/S{}] Loaded object {}/{} ({:.1}%)",
+                        server_rank,
+                        server_count,
+                        i + 1,
+                        eligible_files.len(),
+                        (i as f64 + 1.0) * 100.0 / eligible_files.len() as f64
+                    );
+                }
+                Ok(1usize)
+            })
+            .reduce(|acc, res| Ok(acc? + res?))
+            .transpose();
+
+        let num_loaded = num_loaded?.unwrap_or(0);
+        info!(
+            "[R{}/S{}] Loaded {:?}/{} objects",
+            server_rank,
+            server_count,
+            num_loaded,
+            eligible_files.len()
+        );
+
+        Ok(num_loaded)
     }
 }

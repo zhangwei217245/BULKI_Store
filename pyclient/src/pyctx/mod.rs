@@ -673,14 +673,16 @@ pub fn force_checkpointing_impl<'py>(py: Python<'py>) -> PyResult<Py<PyAny>> {
     let args = ("client".to_string(), 0);
     let mut results = Vec::new();
     for i in 0..get_server_count() {
-        let result = rpc_call::<(String, u32), u32>(i, "datastore::force_checkpointing", &args)
+        let result = rpc_call::<(String, u32), usize>(i, "datastore::force_checkpointing", &args)
             .map_err(|e| {
-                PyErr::new::<PyValueError, _>(format!("Failed to force checkpointing: {}", e))
-            })?;
+            PyErr::new::<PyValueError, _>(format!("Failed to force checkpointing: {}", e))
+        })?;
         results.push(result);
     }
 
     Ok(results
+        .iter()
+        .sum::<usize>()
         .into_bound_py_any(py)
         .and_then(|rst| Ok(rst.unbind()))?)
 }

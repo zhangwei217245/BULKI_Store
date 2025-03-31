@@ -228,20 +228,27 @@ impl ServerContext {
             }
         }
 
-        // Exchange and write addresses for registered endpoints
+        // Exchange addresses for registered endpoints
         if let Some(c2s) = self.endpoints.get("c2s") {
             c2s.lock().await.exchange_addresses()?;
-            c2s.lock().await.write_addresses()?;
         }
 
         if let Some(s2s) = self.endpoints.get("s2s") {
             s2s.lock().await.exchange_addresses()?;
-            s2s.lock().await.write_addresses()?;
         }
 
-        // Execute the callback function if provided
+        // Execute the callback function so we can get the server ready.
         if let Some(callback) = callback {
             callback()?;
+        }
+
+        // Write addresses for registered endpoints
+        if let Some(c2s) = self.endpoints.get("c2s") {
+            c2s.lock().await.write_addresses()?;
+        }
+
+        if let Some(s2s) = self.endpoints.get("s2s") {
+            s2s.lock().await.write_addresses()?;
         }
 
         // test if s2s ready file is there, if yes, let's move on, otherwise, just wait for that file to be created

@@ -19,30 +19,31 @@ lazy_static! {
 fn prepare_resources() -> Result<()> {
     debug!("[R{}/S{}] Loading Data...", get_rank(), get_size());
     let timer = Instant::now();
-    datastore::load_memory_store()?;
+    let num_obj_loaded = datastore::load_memory_store()?;
     info!(
-        "[R{}/S{}] Data loaded in {} seconds",
+        "[R{}/S{}] {} objects loaded in {} seconds",
         get_rank(),
         get_size(),
+        num_obj_loaded,
         timer.elapsed().as_secs()
     );
     Ok(())
 }
 
 fn close_resources() -> Result<()> {
-    let timer = Instant::now();
-    info!(
-        "[R{}/S{}] Closing resources, checkpointing data...",
-        get_rank(),
-        get_size()
-    );
-    datastore::dump_memory_store()?;
-    info!(
-        "[R{}/S{}] Finished checkpointing in {} seconds",
-        get_rank(),
-        get_size(),
-        timer.elapsed().as_secs()
-    );
+    // let timer = Instant::now();
+    // info!(
+    //     "[R{}/S{}] Closing resources, checkpointing data...",
+    //     get_rank(),
+    //     get_size()
+    // );
+    // datastore::dump_memory_store()?;
+    // info!(
+    //     "[R{}/S{}] Finished checkpointing in {} seconds",
+    //     get_rank(),
+    //     get_size(),
+    //     timer.elapsed().as_secs()
+    // );
 
     MEMORY_MONITOR_RUNNING.store(false, Ordering::SeqCst);
     Ok(())
