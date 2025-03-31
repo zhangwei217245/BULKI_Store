@@ -14,7 +14,7 @@ use converter::{IntoBoundPyAny, MetaKeySpec, SupportedNumpyArray};
 
 use crossbeam::queue::SegQueue;
 use lazy_static::lazy_static;
-use log::{debug, error, info};
+use log::{debug, error, info, warn};
 use numpy::{
     ndarray::{ArrayD, ArrayViewD, ArrayViewMutD, Axis},
     Complex64,
@@ -79,8 +79,7 @@ pub fn init_py<'py>(
                             match mpi::initialize() {
                                 Some(universe) => Some(Arc::new(universe)),
                                 None => {
-                                    use log::error;
-                                    error!("Failed to initialize MPI from Rust, will treat as single process");
+                                    warn!("Failed to initialize MPI from Rust, will treat as single process");
                                     None
                                 }
                             }
@@ -90,8 +89,7 @@ pub fn init_py<'py>(
                             match mpi::initialize_with_threading(mpi::Threading::Multiple) {
                                 Some((universe, _)) => Some(Arc::new(universe)),
                                 None => {
-                                    use log::error;
-                                    error!("Failed to initialize MPI from Rust, will treat as single process");
+                                    warn!("Failed to initialize MPI from Rust, will treat as single process");
                                     None
                                 }
                             }
@@ -103,8 +101,7 @@ pub fn init_py<'py>(
                     match mpi::initialize_with_threading(mpi::Threading::Multiple) {
                         Some((universe, _)) => Some(Arc::new(universe)),
                         None => {
-                            use log::error;
-                            error!("Failed to initialize MPI from Rust");
+                            warn!("Failed to initialize MPI from Rust");
                             None
                         }
                     }
