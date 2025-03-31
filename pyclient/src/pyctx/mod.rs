@@ -14,7 +14,7 @@ use converter::{IntoBoundPyAny, MetaKeySpec, SupportedNumpyArray};
 
 use crossbeam::queue::SegQueue;
 use lazy_static::lazy_static;
-use log::{debug, error, info, warn};
+use log::{debug, info, warn};
 use numpy::{
     ndarray::{ArrayD, ArrayViewD, ArrayViewMutD, Axis},
     Complex64,
