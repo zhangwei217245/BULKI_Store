@@ -47,7 +47,16 @@ if len(sys.argv) > 1 and sys.argv[1] == "--create":
     if rank == 0:
         print(f"called force_checkpointing")
         rst = client.force_checkpointing()
-        print(f"Rank {rank} force_checkpointing result: {rst}")
+        print(
+            f"Rank {rank} force_checkpointing result: job = {rst['job_id']} , submitted = {rst['submitted']}"
+        )
+        completed = False
+        while not completed:
+            completed = client.is_job_completed(rst["job_id"])
+            print(
+                f"Rank {rank} job completed: {client.get_checkpointing_status(rst['job_id'])}"
+            )
+
 else:
     print(f"=========READING=========== \n  Rank {rank} reading object")
     for i in range(100):

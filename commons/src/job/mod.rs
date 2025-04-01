@@ -166,12 +166,25 @@ impl JobProgress {
         );
     }
 
+    /// sync value before or after serialization/deserialization
+    pub fn sync(&mut self, is_deserialize: bool) {
+        if is_deserialize {
+            self.processed_steps
+                .store(self.processed_steps_value, Ordering::Relaxed);
+            self.completed_steps
+                .store(self.completed_steps_value, Ordering::Relaxed);
+            self.status.store(self.status_value, Ordering::Relaxed);
+        } else {
+            self.processed_steps_value = self.processed_steps.load(Ordering::Relaxed);
+            self.completed_steps_value = self.completed_steps.load(Ordering::Relaxed);
+            self.status_value = self.status.load(Ordering::Relaxed);
+        }
+    }
+
     /// serialize to bytes
     pub fn to_vec(&mut self) -> Result<Vec<u8>, rmp_serde::encode::Error> {
         // sync the value of atomic variables into the serializable fields
-        self.processed_steps_value = self.processed_steps.load(Ordering::Relaxed);
-        self.completed_steps_value = self.completed_steps.load(Ordering::Relaxed);
-        self.status_value = self.status.load(Ordering::Relaxed);
+        self.sync(false);
         rmp_serde::to_vec(&self)
     }
 
@@ -179,11 +192,7 @@ impl JobProgress {
     pub fn from_slice(&mut self, data: &[u8]) -> Result<Self, rmp_serde::decode::Error> {
         let v: JobProgress = rmp_serde::from_slice(data)?;
         // sync the value of serializable fields into the atomic variables
-        self.processed_steps
-            .store(v.processed_steps_value, Ordering::Relaxed);
-        self.completed_steps
-            .store(v.completed_steps_value, Ordering::Relaxed);
-        self.status.store(v.status_value, Ordering::Relaxed);
+        self.sync(true);
         Ok(v)
     }
 }

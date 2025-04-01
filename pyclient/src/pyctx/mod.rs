@@ -3,6 +3,7 @@ mod proc;
 use client::cltctx::{get_client_count, get_client_rank, get_server_count, ClientContext};
 
 use commons::err::RPCResult;
+use commons::job::JobProgress;
 use commons::object::objid::GlobalObjectIdExt;
 use commons::object::params::{
     CreateObjectParams, GetObjectMetaParams, GetObjectMetaResponse, GetObjectSliceParams,
@@ -679,7 +680,10 @@ pub fn force_checkpointing_impl<'py>(py: Python<'py>) -> PyResult<Py<PyAny>> {
                 })?;
         results.push(result);
     }
-    results.iter().sum::<usize>().into_py_any(py)
+    let rst_dict = PyDict::new(py);
+    rst_dict.set_item("job_id", uuid)?;
+    rst_dict.set_item("submitted", results.iter().sum::<usize>())?;
+    rst_dict.into_py_any(py).into()
 }
 
 /// Get the progress of a checkpointing job
@@ -687,20 +691,20 @@ pub fn get_job_progress_impl<'py>(py: Python<'py>, job_id: String) -> PyResult<P
     let final_result = PyDict::new(py);
     for i in 0..get_server_count() {
         let server_id = 0;
-        let srv_response = rpc_call::<String, Option<(String, f32, String)>>(
+        let srv_response = rpc_call::<String, Option<JobProgress>>(
             server_id,
-            "datastore::get_job_progress",
+            "datastore::get_checkpointing_progress",
             &job_id,
         )
         .map_err(|e| PyErr::new::<PyValueError, _>(format!("Failed to get job progress: {}", e)))?;
 
         match srv_response {
-            Some((status, progress, message)) => {
+            Some(mut job_progress) => {
+                job_progress.sync(true);
                 let progress_dict = PyDict::new(py);
                 progress_dict.set_item("job_id", &job_id)?;
-                progress_dict.set_item("status", status)?;
-                progress_dict.set_item("progress", progress)?;
-                progress_dict.set_item("message", message)?;
+                progress_dict.set_item("status", job_progress.status_str())?;
+                progress_dict.set_item("progress", job_progress.get_progress())?;
                 final_result.set_item(format!("srv_{}", i), progress_dict)?;
             }
             None => {
@@ -721,9 +725,9 @@ pub fn is_job_completed_impl<'py>(py: Python<'py>, job_id: String) -> PyResult<P
     let completed_count: u32 = server_id_list
         .par_iter()
         .map(|server_id| {
-            let srv_response = rpc_call::<String, Option<(String, f32, String)>>(
+            let srv_response = rpc_call::<String, Option<JobProgress>>(
                 server_id.clone(),
-                "datastore::get_job_progress",
+                "datastore::get_checkpointing_progress",
                 &job_id,
             )
             .map_err(|e| {
@@ -731,8 +735,9 @@ pub fn is_job_completed_impl<'py>(py: Python<'py>, job_id: String) -> PyResult<P
             })
             .unwrap_or(None);
             match srv_response {
-                Some((status, _progress, _message)) => {
-                    if status == "completed" {
+                Some(mut job_progress) => {
+                    job_progress.sync(true);
+                    if job_progress.status_str() == "completed" {
                         1
                     } else {
                         0

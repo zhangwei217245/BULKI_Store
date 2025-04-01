@@ -894,15 +894,14 @@ pub fn get_checkpointing_progress(data: &mut RPCData) -> HandlerResult {
         job_map.get(&job_id).cloned()
     };
 
+    data.data = job_progress.map(|mut progress| progress.to_vec().unwrap());
+
     // Return the job progress or an error if not found
-    match job_progress {
-        Some(progress) => {
-            data.data = Some(rmp_serde::to_vec(&progress).unwrap());
-            HandlerResult {
-                status_code: StatusCode::Ok as u8,
-                message: None,
-            }
-        }
+    match data.data.as_ref() {
+        Some(_) => HandlerResult {
+            status_code: StatusCode::Ok as u8,
+            message: None,
+        },
         None => HandlerResult {
             status_code: StatusCode::NotFound as u8,
             message: Some(format!("Job with ID {} not found", job_id)),

@@ -31,6 +31,10 @@ pub fn register_handlers(tx: &mut GrpcTX) -> Result<()> {
             .register(
                 "datastore::force_checkpointing",
                 RPCUtility::common_resp_proc,
+            )
+            .register(
+                "datastore::get_checkpointing_progress",
+                RPCUtility::common_resp_proc,
             );
         Ok(())
     } else {
