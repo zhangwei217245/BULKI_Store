@@ -34,6 +34,7 @@ use std::ops::Add;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Arc;
 use std::time::Instant;
+use uuid::Uuid;
 
 // Process-wide static variables with thread-safe access
 // These are initialized once per process and shared across threads
@@ -667,21 +668,81 @@ pub fn prefetch_samples_into_queue_impl<'py>(
 }
 
 pub fn force_checkpointing_impl<'py>(py: Python<'py>) -> PyResult<Py<PyAny>> {
-    let args = ("client".to_string(), 0);
+    let uuid = Uuid::now_v7().to_string();
+    let args = ("client".to_string(), uuid.clone());
     let mut results = Vec::new();
     for i in 0..get_server_count() {
-        let result = rpc_call::<(String, u32), usize>(i, "datastore::force_checkpointing", &args)
-            .map_err(|e| {
-            PyErr::new::<PyValueError, _>(format!("Failed to force checkpointing: {}", e))
-        })?;
+        let result =
+            rpc_call::<(String, String), usize>(i, "datastore::force_checkpointing", &args)
+                .map_err(|e| {
+                    PyErr::new::<PyValueError, _>(format!("Failed to force checkpointing: {}", e))
+                })?;
         results.push(result);
     }
+    results.iter().sum::<usize>().into_py_any(py)
+}
 
-    Ok(results
-        .iter()
-        .sum::<usize>()
-        .into_bound_py_any(py)
-        .and_then(|rst| Ok(rst.unbind()))?)
+/// Get the progress of a checkpointing job
+pub fn get_job_progress_impl<'py>(py: Python<'py>, job_id: String) -> PyResult<Py<PyAny>> {
+    let final_result = PyDict::new(py);
+    for i in 0..get_server_count() {
+        let server_id = 0;
+        let srv_response = rpc_call::<String, Option<(String, f32, String)>>(
+            server_id,
+            "datastore::get_job_progress",
+            &job_id,
+        )
+        .map_err(|e| PyErr::new::<PyValueError, _>(format!("Failed to get job progress: {}", e)))?;
+
+        match srv_response {
+            Some((status, progress, message)) => {
+                let progress_dict = PyDict::new(py);
+                progress_dict.set_item("job_id", &job_id)?;
+                progress_dict.set_item("status", status)?;
+                progress_dict.set_item("progress", progress)?;
+                progress_dict.set_item("message", message)?;
+                final_result.set_item(format!("srv_{}", i), progress_dict)?;
+            }
+            None => {
+                let progress_dict = PyDict::new(py);
+                progress_dict.set_item("job_id", &job_id)?;
+                progress_dict.set_item("status", "not_found")?;
+                progress_dict.set_item("progress", 0.0)?;
+                progress_dict.set_item("message", "Job not found")?;
+                final_result.set_item(format!("srv_{}", i), progress_dict)?;
+            }
+        };
+    }
+    Ok(final_result.into_any().into())
+}
+
+pub fn is_job_completed_impl<'py>(py: Python<'py>, job_id: String) -> PyResult<Py<PyAny>> {
+    let server_id_list = (0..get_server_count()).collect::<Vec<u32>>();
+    let completed_count: u32 = server_id_list
+        .par_iter()
+        .map(|server_id| {
+            let srv_response = rpc_call::<String, Option<(String, f32, String)>>(
+                server_id.clone(),
+                "datastore::get_job_progress",
+                &job_id,
+            )
+            .map_err(|e| {
+                PyErr::new::<PyValueError, _>(format!("Failed to get job progress: {}", e))
+            })
+            .unwrap_or(None);
+            match srv_response {
+                Some((status, _progress, _message)) => {
+                    if status == "completed" {
+                        1
+                    } else {
+                        0
+                    }
+                }
+                None => 0,
+            }
+        })
+        .sum();
+    (completed_count == get_server_count()).into_py_any(py)
 }
 
 pub fn times_two_impl<'py>(py: Python<'py>, x: SupportedNumpyArray<'py>) -> PyResult<PyObject> {

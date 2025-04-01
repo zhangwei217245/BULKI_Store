@@ -12,6 +12,7 @@ name = "bkstore_client"
 crate-type = ["cdylib"]
 
 [dependencies]
+uuid = { workspace = true }
 client = { path = "../client" }
 commons = { path = "../commons" }
 tokio = { workspace = true }

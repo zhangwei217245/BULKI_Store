@@ -209,6 +209,20 @@ fn rust_ext<'py>(m: &Bound<'py, PyModule>) -> PyResult<()> {
         pyctx::force_checkpointing_impl(py)
     }
 
+    #[pyfn(m)]
+    #[pyo3(name = "get_checkpointing_status")]
+    #[pyo3(signature = (job_id))]
+    fn get_checkpointing_status<'py>(py: Python<'py>, job_id: String) -> PyResult<Py<PyAny>> {
+        pyctx::get_job_progress_impl(py, job_id)
+    }
+
+    #[pyfn(m)]
+    #[pyo3(name = "is_job_completed")]
+    #[pyo3(signature = (job_id))]
+    fn is_job_completed<'py>(py: Python<'py>, job_id: String) -> PyResult<Py<PyAny>> {
+        pyctx::is_job_completed_impl(py, job_id)
+    }
+
     ///////////////////////////////////////////////////////////////////////////
     //     Ok(())
     // }

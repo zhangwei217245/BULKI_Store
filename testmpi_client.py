@@ -14,7 +14,7 @@ world.Barrier()
 
 import numpy as np
 
-obj_data = np.random.rand(4, 12)
+obj_data = np.random.rand(4000, 1200)
 
 import bkstore_client as client
 

@@ -45,6 +45,10 @@ pub fn register_handlers(rx: &mut GrpcRX) -> Result<()> {
             .register(
                 "datastore::force_checkpointing",
                 crate::datastore::force_checkpointing,
+            )
+            .register(
+                "datastore::get_checkpointing_progress",
+                crate::datastore::get_checkpointing_progress,
             );
         Ok(())
     } else {

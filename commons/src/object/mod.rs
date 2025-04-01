@@ -13,6 +13,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::fmt::Debug;
 use std::fs::File;
+use std::io::Write;
 use types::{MetadataValue, SupportedRustArrayD};
 
 /// A DataObject that can own an NDArray of various numeric types
@@ -170,11 +171,22 @@ impl DataObject {
     }
 }
 
+/// Header structure for checkpoint files
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct DSCheckpointHeader {
+    pub version: u32,
+    pub timestamp: u64,
+    pub rank: u32,
+    pub size: u32,
+    pub object_count: u64,
+}
+
 /// A concurrent DataStore that indexes DataObjects by their u128 IDs using DashMap.
 pub struct DataStore {
     pub objects: DashMap<u128, DataObject>,
     pub name_obj_idx: DashMap<String, u128>,
 }
+
 impl DataStore {
     /// Create a new, empty DataStore.
     pub fn new() -> Self {
@@ -349,48 +361,94 @@ impl DataStore {
         self.objects.remove(&id).map(|(_k, v)| v)
     }
 
-    /// Dump all DataObjects to a file in MessagePack format.
+    /// Dump all DataObjects to a single file in MessagePack format.
+    /// Uses the object ID's built-in vnode_id for distribution when loading.
     pub fn dump_memorystore_to_file(&self, _rank: u32, _size: u32) -> Result<usize, anyhow::Error> {
         info!("[R{}/S{}] Dumping memory store to file", _rank, _size);
         // read env var "PDC_DATA_LOC" and use it as the path, the default value should be "./.bulkistore_data"
         let data_dir = std::env::var("PDC_DATA_LOC").unwrap_or("./.bulkistore_data".to_string());
-        // scan data_dir and load every file with .obj extension
         // Create directory if it doesn't exist
         std::fs::create_dir_all(&data_dir)?;
-        // file name format should be {data_dir}/objects_id.obj
-        let total_objects = self.objects.len();
-        let mut saved_count = 0;
 
-        for (i, entry) in self.objects.iter().enumerate() {
-            let result = entry.clone().save_to_file(data_dir.as_str());
-            if let Err(e) = &result {
+        let total_objects = self.objects.len();
+        if total_objects == 0 {
+            info!("[R{}/S{}] No objects to save", _rank, _size);
+            return Ok(0);
+        }
+
+        // Create a single file with timestamp to avoid conflicts
+        let timestamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+        let filename = format!("{}/objects_{}_{}.oset", data_dir, timestamp, _rank);
+
+        info!(
+            "[R{}/S{}] Saving {} objects to {}",
+            _rank, _size, total_objects, filename
+        );
+
+        let file = std::fs::File::create(&filename)?;
+        let mut writer = std::io::BufWriter::new(file);
+
+        // Write file header with metadata
+        let header = DSCheckpointHeader {
+            version: 1,
+            timestamp,
+            rank: _rank,
+            size: _size,
+            object_count: total_objects as u64,
+        };
+
+        rmp_serde::encode::write(&mut writer, &header)?;
+
+        let mut saved_count = 0;
+        let progress_interval = std::cmp::max(1, total_objects / 100); // Report progress every 1%
+
+        // Simply save each (id, object) pair
+        self.objects.iter().enumerate().for_each(|(i, obj)| {
+            // Serialize the ID and object
+            let id = obj.id;
+            let result: Result<(), anyhow::Error> = (|| {
+                rmp_serde::encode::write(&mut writer, &id)?;
+                rmp_serde::encode::write(&mut writer, &obj)?;
+                Ok(())
+            })();
+
+            if let Err(e) = result {
                 warn!(
                     "[R{}/S{}] Failed to save object {}: {}",
-                    _rank, _size, entry.id, e
+                    _rank, _size, id, e
                 );
             } else {
                 saved_count += 1;
-                if i % 100 == 0 || i == total_objects - 1 {
+                if i % progress_interval == 0 || i == total_objects - 1 {
+                    let progress = (i as f64 + 1.0) * 100.0 / total_objects as f64;
                     info!(
                         "[R{}/S{}] Saved {}/{} objects ({:.1}%)",
                         _rank,
                         _size,
                         i + 1,
                         total_objects,
-                        (i as f64 + 1.0) * 100.0 / total_objects as f64
+                        progress
                     );
                 }
             }
-        }
+        });
+
+        // Flush the writer to ensure all data is written
+        writer.flush()?;
 
         info!(
-            "[R{}/S{}] DONE WITH MEMORY STORE DUMP: saved {}/{} objects",
-            _rank, _size, saved_count, total_objects
+            "[R{}/S{}] Successfully saved {}/{} objects to {}",
+            _rank, _size, saved_count, total_objects, filename
         );
+
         Ok(saved_count)
     }
 
-    /// Load DataObjects from a MessagePack file and populate the DataStore.
+    /// Load DataObjects from MessagePack files and populate the DataStore.
+    /// Uses the object ID's built-in vnode_id for determining which objects to load.
     pub fn load_memorystore_from_file(
         &self,
         server_rank: u32,
@@ -401,79 +459,162 @@ impl DataStore {
 
         // Create directory if it doesn't exist
         std::fs::create_dir_all(&data_dir)?;
-        let mut eligible_files: Vec<_> = Vec::new();
 
-        // Walk through the directory and find all .obj files
-        for entry in std::fs::read_dir(data_dir)? {
+        // Find all .bulki files in the directory
+        let mut checkpoint_files: Vec<std::path::PathBuf> = Vec::new();
+        for entry in std::fs::read_dir(&data_dir)? {
             let entry = entry?;
             let path = entry.path();
 
-            // FIXME: we do not need to load the idx file here.
-            // // check if it is idx file and we can load the name_obj.idx file
-            // if path.is_file() && path.extension().and_then(|s| s.to_str()) == Some("idx") {
-            //     // Open and read the file
-            //     let name_idx_map: HashMap<String, u128> =
-            //         rmp_serde::decode::from_read(File::open(path.to_str().unwrap())?)?;
-            //     for (name, id) in name_idx_map {
-            //         self.name_obj_idx.insert(name, id);
-            //     }
-            //     continue;
-            // }
+            if path.is_file() && path.extension().and_then(|s| s.to_str()) == Some("oset") {
+                checkpoint_files.push(path);
+            }
+        }
 
-            // Check if it's a file and has .obj extension
-            if path.is_file() && path.extension().and_then(|s| s.to_str()) == Some("obj") {
-                // check the file name, since the file name is {id}.obj, we need to get the vnode id from the id in the file name
-                if let Some(id_str) = path.file_name().and_then(|s| s.to_str()?.split('.').next()) {
-                    let vnode_id = id_str.parse::<u128>()?.vnode_id();
-                    if vnode_id % server_count == server_rank {
-                        eligible_files.push(path);
+        if checkpoint_files.is_empty() {
+            info!(
+                "[R{}/S{}] No checkpoint files found in {}",
+                server_rank, server_count, data_dir
+            );
+            return Ok(0);
+        }
+
+        // Sort files by timestamp (newest first) to load the most recent checkpoint
+        checkpoint_files.sort_by(|a, b| {
+            let a_name = a.file_name().unwrap_or_default().to_string_lossy();
+            let b_name = b.file_name().unwrap_or_default().to_string_lossy();
+            b_name.cmp(&a_name) // Reverse order for newest first
+        });
+
+        info!(
+            "[R{}/S{}] Found {} checkpoint files, loading from newest",
+            server_rank,
+            server_count,
+            checkpoint_files.len()
+        );
+
+        let mut total_loaded = 0;
+
+        // Process each checkpoint file
+        for file_path in checkpoint_files {
+            let file_name = file_path.file_name().unwrap_or_default().to_string_lossy();
+            let file = std::fs::File::open(&file_path)?;
+            let mut reader = std::io::BufReader::new(file);
+
+            // Read and validate the header
+            let header: Result<DSCheckpointHeader, _> = rmp_serde::decode::from_read(&mut reader);
+
+            match header {
+                Ok(header) => {
+                    info!(
+                        "[R{}/S{}] Processing checkpoint file: {}, version: {}, from rank {}/{}, with {} objects",
+                        server_rank, server_count, file_name, header.version, header.rank, header.size, header.object_count
+                    );
+
+                    if header.object_count == 0 {
+                        continue; // Skip empty files
                     }
+
+                    // Track progress
+                    let mut objects_processed = 0;
+                    let mut objects_loaded = 0;
+                    let progress_interval = std::cmp::max(1, header.object_count as usize / 100);
+
+                    // Read and process each object
+                    loop {
+                        // Read object ID
+                        let id_result: Result<u128, _> = rmp_serde::decode::from_read(&mut reader);
+
+                        match id_result {
+                            Ok(id) => {
+                                // Read the corresponding object
+                                let obj_result: Result<DataObject, _> =
+                                    rmp_serde::decode::from_read(&mut reader);
+
+                                match obj_result {
+                                    Ok(obj) => {
+                                        objects_processed += 1;
+
+                                        // Use the vnode_id from the object ID to determine if this server should load it
+                                        let vnode_id = id.vnode_id();
+                                        let should_load = vnode_id % server_count == server_rank;
+
+                                        if should_load {
+                                            // Insert the object into our store
+                                            let obj_name = obj.name.clone();
+
+                                            self.objects.insert(id, obj);
+                                            if !obj_name.is_empty() {
+                                                self.name_obj_idx.insert(obj_name, id);
+                                            }
+
+                                            objects_loaded += 1;
+                                        }
+
+                                        // Report progress periodically
+                                        if objects_processed % progress_interval == 0
+                                            || objects_processed == header.object_count as usize
+                                        {
+                                            let progress = (objects_processed as f64 * 100.0)
+                                                / header.object_count as f64;
+                                            info!(
+                                                "[R{}/S{}] Processed {}/{} objects ({:.1}%), loaded {} objects",
+                                                server_rank, server_count, objects_processed, header.object_count, progress, objects_loaded
+                                            );
+                                        }
+
+                                        // Check if we've processed all objects in this file
+                                        if objects_processed >= header.object_count as usize {
+                                            break;
+                                        }
+                                    }
+                                    Err(e) => {
+                                        warn!(
+                                            "[R{}/S{}] Error reading object from {}: {}",
+                                            server_rank, server_count, file_name, e
+                                        );
+                                        break;
+                                    }
+                                }
+                            }
+                            Err(e) => {
+                                if objects_processed >= header.object_count as usize {
+                                    // We've read all objects, this is expected EOF
+                                    break;
+                                } else {
+                                    // Unexpected error
+                                    warn!(
+                                        "[R{}/S{}] Error reading object ID from {}: {}",
+                                        server_rank, server_count, file_name, e
+                                    );
+                                    break;
+                                }
+                            }
+                        }
+                    }
+
+                    info!(
+                        "[R{}/S{}] Completed loading from {}: processed {} objects, loaded {} objects",
+                        server_rank, server_count, file_name, objects_processed, objects_loaded
+                    );
+
+                    total_loaded += objects_loaded;
+                }
+                Err(e) => {
+                    warn!(
+                        "[R{}/S{}] Failed to read header from {}: {}",
+                        server_rank, server_count, file_name, e
+                    );
+                    continue; // Skip this file and try the next one
                 }
             }
         }
 
         info!(
-            "[R{}/S{}] Found {} eligible files",
-            server_rank,
-            server_count,
-            eligible_files.len()
+            "[R{}/S{}] Total objects loaded: {}",
+            server_rank, server_count, total_loaded
         );
 
-        let num_loaded: std::result::Result<Option<usize>, anyhow::Error> = eligible_files
-            .iter()
-            .enumerate()
-            .map(|(i, path)| {
-                // Open and read the file
-                let obj = DataObject::load_from_file(path.to_str().unwrap())?;
-                let obj_id = obj.id;
-                let obj_name = obj.name.clone();
-                // insert into objects and name_obj_idx
-                self.objects.insert(obj_id, obj);
-                self.name_obj_idx.insert(obj_name, obj_id);
-                if i % 100 == 0 || i == eligible_files.len() - 1 {
-                    info!(
-                        "[R{}/S{}] Loaded object {}/{} ({:.1}%)",
-                        server_rank,
-                        server_count,
-                        i + 1,
-                        eligible_files.len(),
-                        (i as f64 + 1.0) * 100.0 / eligible_files.len() as f64
-                    );
-                }
-                Ok(1usize)
-            })
-            .reduce(|acc, res| Ok(acc? + res?))
-            .transpose();
-
-        let num_loaded = num_loaded?.unwrap_or(0);
-        info!(
-            "[R{}/S{}] Loaded {:?}/{} objects",
-            server_rank,
-            server_count,
-            num_loaded,
-            eligible_files.len()
-        );
-
-        Ok(num_loaded)
+        Ok(total_loaded)
     }
 }

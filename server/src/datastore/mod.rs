@@ -3,6 +3,7 @@ use crate::srvctx::{get_rank, get_size, server_rpc_call};
 use anyhow::Result;
 use commons::err::StatusCode;
 use commons::handler::HandlerResult;
+use commons::job::JobProgress;
 use commons::object::params::{
     GetObjectMetaParams, GetObjectMetaResponse, GetObjectSliceParams, GetObjectSliceResponse,
     GetSampleRequest, GetSampleResponse, SerializableMetaKeySpec,
@@ -16,11 +17,12 @@ use commons::object::{
 use commons::region::SerializableNDArray;
 use commons::rpc::RPCData;
 use lazy_static::lazy_static;
-use log::{debug, info};
+use log::{debug, error, info, warn};
 use ndarray::SliceInfoElem;
 use rayon::prelude::*;
 use rmp_serde;
 use std::collections::HashMap;
+use std::io::Write;
 use std::sync::atomic::{AtomicU32, AtomicU64};
 use std::sync::{Arc, RwLock};
 
@@ -29,7 +31,10 @@ lazy_static! {
     pub static ref GLOBAL_STORE: Arc<RwLock<DataStore>> = Arc::new(RwLock::new(DataStore::new()));
     static ref SEQUENCE_COUNTER: AtomicU32 = AtomicU32::new(0);
     static ref LAST_TIMESTAMP: AtomicU64 = AtomicU64::new(0);
+    pub static ref JOB_PROGRESS: Arc<RwLock<HashMap<String, JobProgress>>> =
+        Arc::new(RwLock::new(HashMap::new()));
 }
+
 /// Initialize the global DataStore.
 /// Synchronous version: no async/await.
 pub fn init_datastore() -> HandlerResult {
@@ -768,73 +773,241 @@ pub fn get_regions_by_obj_ids(data: &mut RPCData) -> HandlerResult {
 }
 
 pub fn force_checkpointing(data: &mut RPCData) -> HandlerResult {
-    let request: (String, u32) = rmp_serde::from_slice(&data.data.as_ref().unwrap())
+    let request: (String, String) = rmp_serde::from_slice(&data.data.as_ref().unwrap())
         .map_err(|e| HandlerResult {
             status_code: StatusCode::Internal as u8,
             message: Some(format!("Failed to deserialize input: {}", e)),
         })
         .unwrap();
+    let mut job_submitted = 0usize;
     info!("force_checkpointing request: {:?}", request);
-    if request.0 == "server" {
-        let result = dump_memory_store();
-        if result.is_ok() {
-            data.data = Some(rmp_serde::to_vec(&1u32).unwrap());
-        } else {
-            data.data = Some(rmp_serde::to_vec(&0u32).unwrap());
-            return HandlerResult {
-                status_code: StatusCode::Internal as u8,
-                message: Some(format!(
-                    "Failed to dump memory store: {}",
-                    result.unwrap_err()
-                )),
-            };
-        }
-    } else if request.0 == "client" {
-        // Send checkpointing request to all servers
-        let mut total_success = 0;
-        for i in 0..get_size() {
-            info!(
-                "[R{}/S{}] Force checkpointing to server {}",
-                get_rank(),
-                get_size(),
-                i
-            );
-            if i == get_rank() {
-                if let Ok(num_obj_dumped) = dump_memory_store() {
-                    total_success += num_obj_dumped;
-                }
-            } else {
-                // Send checkpointing request to server i
-                // let input = (String::from("server"), get_rank());
-                // let rst = server_rpc_call::<(String, u32), u32>(i, "force_checkpointing", &input);
-                // if rst.is_ok() {
-                //     total_success += 1;
-                // }
-            }
-        }
-        // if total_success == get_size() {
-        data.data = Some(rmp_serde::to_vec(&total_success).unwrap());
-        // } else {
-        //     data.data = Some(rmp_serde::to_vec(&0u32).unwrap());
-        //     return HandlerResult {
-        //         status_code: StatusCode::Internal as u8,
-        //         message: Some(format!(
-        //             "Failed to checkpoint all servers: {}",
-        //             total_success
-        //         )),
-        //     };
-        // }
-    }
+    if request.0 == "client" {
+        // Asynchronously checkpoint the data
+        let rank = get_rank();
+        let size = get_size();
 
+        // Create a job ID for this checkpointing operation
+        let job_id = request.1;
+
+        // Get a handle to the current tokio runtime
+        let rt = tokio::runtime::Handle::current();
+
+        // Get total object count for progress tracking
+        let total_objects = {
+            let store = GLOBAL_STORE.read().unwrap();
+            store.objects.len()
+        };
+
+        // Initialize job progress
+        {
+            let mut job_map = JOB_PROGRESS.write().unwrap();
+            job_map.insert(
+                job_id.clone(),
+                JobProgress::new(job_id.clone(), total_objects),
+            );
+        }
+
+        // Clone the job_id for the new thread
+        let job_id_clone = job_id.clone();
+
+        // Spawn a new task to perform the checkpointing
+        std::thread::spawn(move || {
+            // Enter the tokio runtime context
+            let _guard = rt.enter();
+
+            info!(
+                "[R{}/S{}] Starting asynchronous checkpointing job: {}",
+                rank, size, job_id_clone
+            );
+
+            // Mark job as running
+            {
+                let mut job_map = JOB_PROGRESS.write().unwrap();
+                if let Some(job) = job_map.get_mut(&job_id_clone) {
+                    job.mark_running();
+                }
+            }
+
+            let timer = std::time::Instant::now();
+
+            match dump_memory_store_with_progress(job_id_clone.clone()) {
+                Ok(saved_count) => {
+                    // Mark job as completed
+                    {
+                        let mut job_map = JOB_PROGRESS.write().unwrap();
+                        if let Some(job) = job_map.get_mut(&job_id_clone) {
+                            job.mark_completed();
+                        }
+                    }
+
+                    info!(
+                        "[R{}/S{}] Completed asynchronous checkpointing job: {}, saved {} objects in {:.2?}",
+                        rank, size, job_id_clone, saved_count, timer.elapsed()
+                    );
+                }
+                Err(e) => {
+                    // Mark job as failed
+                    {
+                        let mut job_map = JOB_PROGRESS.write().unwrap();
+                        if let Some(job) = job_map.get_mut(&job_id_clone) {
+                            job.mark_failed(&e.to_string());
+                        }
+                    }
+
+                    error!(
+                        "[R{}/S{}] Failed asynchronous checkpointing job: {}, error: {}",
+                        rank, size, job_id_clone, e
+                    );
+                }
+            }
+        });
+
+        info!(
+            "[R{}/S{}] Initiated asynchronous checkpointing job: {}",
+            get_rank(),
+            get_size(),
+            job_id.clone()
+        );
+        job_submitted += 1;
+    }
+    // Store the job ID in the response
+    data.data = Some(rmp_serde::to_vec(&job_submitted).unwrap());
     HandlerResult {
         status_code: StatusCode::Ok as u8,
         message: None,
     }
 }
 
-pub fn dump_memory_store() -> Result<usize> {
+/// Get the progress of a job by its ID
+pub fn get_checkpointing_progress(data: &mut RPCData) -> HandlerResult {
+    // Deserialize the job ID from the request
+    let job_id: String = rmp_serde::from_slice(&data.data.as_ref().unwrap())
+        .map_err(|e| HandlerResult {
+            status_code: StatusCode::Internal as u8,
+            message: Some(format!("Failed to deserialize job ID: {}", e)),
+        })
+        .unwrap();
+
+    // Look up the job progress
+    let job_progress = {
+        let job_map = JOB_PROGRESS.read().unwrap();
+        job_map.get(&job_id).cloned()
+    };
+
+    // Return the job progress or an error if not found
+    match job_progress {
+        Some(progress) => {
+            data.data = Some(rmp_serde::to_vec(&progress).unwrap());
+            HandlerResult {
+                status_code: StatusCode::Ok as u8,
+                message: None,
+            }
+        }
+        None => HandlerResult {
+            status_code: StatusCode::NotFound as u8,
+            message: Some(format!("Job with ID {} not found", job_id)),
+        },
+    }
+}
+
+/// Dump memory store with progress callback
+pub fn dump_memory_store_with_progress(job_id: String) -> Result<usize> {
+    let mut job_map = JOB_PROGRESS.write().unwrap();
+    if let Some(job) = job_map.get_mut(&job_id) {
+        job.mark_running();
+    }
+
     let store = GLOBAL_STORE.write().unwrap();
-    store.dump_memorystore_to_file(get_rank(), get_size())
+    let rank = get_rank();
+    let size = get_size();
+
+    // read env var "PDC_DATA_LOC" and use it as the path, the default value should be "./.bulkistore_data"
+    let data_dir = std::env::var("PDC_DATA_LOC").unwrap_or("./.bulkistore_data".to_string());
+    // Create directory if it doesn't exist
+    std::fs::create_dir_all(&data_dir)?;
+
+    let total_objects = store.objects.len();
+    if total_objects == 0 {
+        info!("[R{}/S{}] No objects to save", rank, size);
+        return Ok(0);
+    }
+
+    // Create a single file with timestamp to avoid conflicts
+    let timestamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
+    let filename = format!("{}/objects_{}_{}.oset", data_dir, timestamp, rank);
+
+    info!(
+        "[R{}/S{}] Saving {} objects to {}",
+        rank, size, total_objects, filename
+    );
+
+    let file = std::fs::File::create(&filename)?;
+    let mut writer = std::io::BufWriter::new(file);
+
+    // Write file header with metadata
+    let header = commons::object::DSCheckpointHeader {
+        version: 1,
+        timestamp,
+        rank,
+        size,
+        object_count: total_objects as u64,
+    };
+
+    rmp_serde::encode::write(&mut writer, &header)?;
+
+    let progress_interval = std::cmp::max(1, total_objects / 100); // Report progress every 1%
+
+    // Simply save each (id, object) pair
+    store.objects.iter().enumerate().for_each(|(i, obj)| {
+        if let Some(job) = job_map.get_mut(&job_id) {
+            job.increment_processed();
+        }
+        // Serialize the ID and object
+        let id = obj.id;
+        let result: Result<(), anyhow::Error> = (|| {
+            rmp_serde::encode::write(&mut writer, &id)?;
+            rmp_serde::encode::write(&mut writer, &obj)?;
+            Ok(())
+        })();
+
+        if let Err(e) = result {
+            warn!("[R{}/S{}] Failed to save object {}: {}", rank, size, id, e);
+        } else {
+            if let Some(job) = job_map.get_mut(&job_id) {
+                job.increment_completed();
+            }
+
+            if i % progress_interval == 0 || i == total_objects - 1 {
+                let progress = (i as f64 + 1.0) * 100.0 / total_objects as f64;
+                if let Some(job) = job_map.get_mut(&job_id) {
+                    info!(
+                        "[R{}/S{}] Saved {}/{} objects ({:.1}%)",
+                        rank,
+                        size,
+                        job.completed(),
+                        total_objects,
+                        progress
+                    );
+                }
+            }
+        }
+    });
+
+    // Flush the writer to ensure all data is written
+    writer.flush()?;
+
+    let mut completed_steps = 0;
+    if let Some(job) = job_map.get_mut(&job_id) {
+        completed_steps = job.completed();
+        info!(
+            "[R{}/S{}] Successfully saved {}/{} objects to {}",
+            rank, size, completed_steps, total_objects, filename
+        );
+    }
+    Ok(completed_steps)
 }
 
 pub fn load_memory_store() -> Result<usize> {
