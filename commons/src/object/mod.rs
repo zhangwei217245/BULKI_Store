@@ -458,8 +458,27 @@ impl DataStore {
         // read env var "PDC_DATA_LOC" and use it as the path, the default value should be "./.bulkistore_data"
         let data_dir = std::env::var("PDC_DATA_LOC").unwrap_or("./.bulkistore_data".to_string());
 
-        // Create directory if it doesn't exist
-        std::fs::create_dir_all(&data_dir)?;
+        // check if data_dir exists
+        if !std::path::Path::new(&data_dir).exists() {
+            // Create directory if it doesn't exist
+            match std::fs::create_dir_all(&data_dir) {
+                Ok(_) => info!(
+                    "[R{}/S{}] Created data directory for PDC_DATA_LOC: {}",
+                    server_rank, server_count, data_dir
+                ),
+                Err(e) => {
+                    return Err(anyhow::anyhow!(
+                        "Failed to create data directory for PDC_DATA_LOC: {}",
+                        e
+                    ))
+                }
+            }
+        } else {
+            info!(
+                "[R{}/S{}] Data directory already exists for PDC_DATA_LOC: {}",
+                server_rank, server_count, data_dir
+            );
+        }
 
         // Find all .bulki files in the directory
         let mut checkpoint_files: Vec<std::path::PathBuf> = Vec::new();
@@ -478,6 +497,14 @@ impl DataStore {
                 server_rank, server_count, data_dir
             );
             return Ok(0);
+        } else {
+            info!(
+                "[R{}/S{}] Found {} checkpoint files in {}",
+                server_rank,
+                server_count,
+                checkpoint_files.len(),
+                data_dir
+            );
         }
 
         // Sort files by timestamp (newest first) to load the most recent checkpoint
