@@ -79,6 +79,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Start the RX endpoints before wrapping in Arc
     futures::executor::block_on(async {
+        info!(
+            "[R{}/S{}] Starting server endpoints",
+            get_rank(),
+            get_size()
+        );
         server_context
             .start_endpoints(Some(prepare_resources))
             .await
