@@ -69,21 +69,21 @@ fi
 # # Assume we are using the default PrgEnv-gnu for cray-mpich.
 # # Test if cc is several levels under "/opt/cray/pe/craype/"
 # # Get the canonical path of cc
-# cc_path=$(readlink -f "$(which cc)")
+cc_path=$(readlink -f "$(which cc)")
 
-# # Check if the path starts with /opt/cray/pe/craype/
-# if [[ $cc_path == /opt/cray/pe/craype/* ]]; then
-#     module load PrgEnv-llvm
-#     CLANG_PATH=$(which clang)
-#     CLANG_DIR=$(dirname "$CLANG_PATH")
-#     export LIBCLANG_PATH="$CLANG_DIR/../lib"
-#     module swap PrgEnv-llvm PrgEnv-gnu
-#     module load cray-mpich
-#     export CC=cc
-#     export MPICC=cc
-#     export MPI_LIB_DIR=$(dirname $(cc --cray-print-opts=libs | sed 's/-L//;s/ .*//'))
-#     export MPI_INCLUDE_DIR=$(dirname $(cc --cray-print-opts=cflags | sed 's/-I//;s/ .*//'))
-# fi
+# Check if the path starts with /opt/cray/pe/craype/
+if [[ $cc_path == /opt/cray/pe/craype/* ]]; then
+    module load PrgEnv-llvm
+    CLANG_PATH=$(which clang)
+    CLANG_DIR=$(dirname "$CLANG_PATH")
+    export LIBCLANG_PATH="$CLANG_DIR/../lib"
+    module swap PrgEnv-llvm PrgEnv-gnu
+    module load cray-mpich
+    export CC=cc
+    export MPICC=cc
+    export MPI_LIB_DIR=$(dirname $(cc --cray-print-opts=libs | sed 's/-L//;s/ .*//'))
+    export MPI_INCLUDE_DIR=$(dirname $(cc --cray-print-opts=cflags | sed 's/-I//;s/ .*//'))
+fi
 
 # Build all crates except pyclient with the appropriate flags
 echo "Building server with build type: $BUILD_TYPE"
