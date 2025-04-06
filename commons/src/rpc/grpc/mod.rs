@@ -38,8 +38,8 @@ use tonic::Request;
 const MAX_SERVER_ADDR_LEN: usize = 256;
 const DEFAULT_BASE_PORT: u16 = 50051;
 
-const MAX_DECODING_MESSAGE_SIZE: usize = 1024 * 1024 * 1024;
-const MAX_ENCODING_MESSAGE_SIZE: usize = usize::MAX;
+const MAX_DECODING_MESSAGE_SIZE: usize = usize::MAX - 100;
+const MAX_ENCODING_MESSAGE_SIZE: usize = usize::MAX - 100;
 
 #[derive(Default, Clone)]
 pub struct GrpcRX {

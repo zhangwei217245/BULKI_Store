@@ -23,6 +23,9 @@ const VERSION: &str = env!("CARGO_PKG_VERSION");
 fn rust_ext<'py>(m: &Bound<'py, PyModule>) -> PyResult<()> {
     env_logger::init();
 
+    // Initialize Python for multi-threaded use
+    pyo3::prepare_freethreaded_python();
+
     #[pyclass]
     struct BKCObject {
         #[pyo3(get)]
