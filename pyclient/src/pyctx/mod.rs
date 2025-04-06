@@ -35,6 +35,7 @@ use std::ops::Add;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Arc;
 use std::time::Instant;
+use threadpool::ThreadPool;
 use uuid::Uuid;
 
 // Process-wide static variables with thread-safe access
@@ -48,6 +49,11 @@ static REQUEST_COUNTER: AtomicU32 = AtomicU32::new(0);
 
 lazy_static! {
     pub static ref GLOBAL_DATA_QUEUE: Arc<SegQueue<Py<PyAny>>> = Arc::new(SegQueue::new());
+    static ref PREFETCH_THREAD_POOL: ThreadPool = {
+        // Use number of available cores or a reasonable fixed size
+        let num_threads = std::cmp::min(num_cpus::get(), 8);
+        ThreadPool::new(num_threads)
+    };
 }
 
 pub fn init_py<'py>(
@@ -526,7 +532,7 @@ pub fn fetch_samples_impl<'py>(
         let part_id = global_sample_id / part_size;
         let local_smp_id = global_sample_id % part_size;
         let obj_identifier = ObjectIdentifier::Name(format!("{}/part_{}", label, part_id));
-        let vnode_id = obj_identifier.vnode_id();
+        let server_id = obj_identifier.vnode_id() % get_server_count();
         let request = GetSampleRequest {
             sample_id: global_sample_id,
             obj_id: obj_identifier,
@@ -534,24 +540,24 @@ pub fn fetch_samples_impl<'py>(
             sample_var_keys: sample_var_keys.clone(),
         };
         grouped_request
-            .entry(vnode_id)
+            .entry(server_id)
             .and_modify(|v: &mut Vec<GetSampleRequest>| v.push(request.clone()))
             .or_insert_with(|| vec![request.clone()]);
     });
 
     let results = grouped_request
         .par_iter()
-        .map(|(vnode_id, requests)| {
+        .map(|(&server_id, requests)| {
             match rpc_call::<Vec<GetSampleRequest>, HashMap<usize, GetSampleResponse>>(
-                vnode_id % get_server_count(),
+                server_id,
                 "datastore::load_batch_samples",
                 requests,
             ) {
                 Ok(result) => result,
                 Err(e) => {
                     eprintln!(
-                        "Error in background prefetch task for vnode {}: {}",
-                        vnode_id, e
+                        "Error in background prefetch task for server {}: {}",
+                        server_id, e
                     );
                     HashMap::new()
                 }
@@ -602,7 +608,7 @@ pub fn prefetch_samples_into_queue_impl<'py>(
         let part_id = global_sample_id / part_size;
         let local_smp_id = global_sample_id % part_size;
         let obj_identifier = ObjectIdentifier::Name(format!("{}/part_{}", label_clone, part_id));
-        let vnode_id = obj_identifier.vnode_id();
+        let server_id = obj_identifier.vnode_id() % get_server_count();
         let request = GetSampleRequest {
             sample_id: global_sample_id,
             obj_id: obj_identifier,
@@ -610,60 +616,68 @@ pub fn prefetch_samples_into_queue_impl<'py>(
             sample_var_keys: sample_var_keys_clone.clone(),
         };
         grouped_request
-            .entry(vnode_id)
+            .entry(server_id)
             .and_modify(|v: &mut Vec<GetSampleRequest>| v.push(request.clone()))
             .or_insert_with(|| vec![request.clone()]);
     });
 
-    let results = grouped_request
-        .par_iter()
-        .map(|(vnode_id, requests)| {
-            match rpc_call::<Vec<GetSampleRequest>, HashMap<usize, GetSampleResponse>>(
-                vnode_id % get_server_count(),
+    // Replace the current implementation with this:
+    for (server_id, requests) in grouped_request {
+        let queue_arc = Arc::clone(&GLOBAL_DATA_QUEUE);
+        let requests_clone = requests.clone();
+        let server_id_clone = server_id;
+
+        PREFETCH_THREAD_POOL.execute(move || {
+            // Process requests in this background thread
+            let result = match rpc_call::<Vec<GetSampleRequest>, HashMap<usize, GetSampleResponse>>(
+                server_id_clone,
                 "datastore::load_batch_samples",
-                requests,
+                &requests_clone,
             ) {
                 Ok(result) => result,
                 Err(e) => {
                     eprintln!(
-                        "Error in background prefetch task for vnode {}: {}",
-                        vnode_id, e
+                        "Error in background prefetch task for server {}: {}",
+                        server_id_clone, e
                     );
                     HashMap::new()
                 }
-            }
-        })
-        .reduce(
-            || HashMap::new(),
-            |mut acc, x| {
-                acc.extend(x);
-                acc
-            },
-        );
+            };
 
-    // Push results to the global queue
-    let found_count = sample_ids_clone
-        .iter()
-        .map(|&global_sample_id| {
-            if let Some(data) = results.get(&global_sample_id) {
-                let pydict =
-                    converter::convert_sample_response_to_pydict(py, Some(data.to_owned()))
-                        .map(|d| d.into_py_any(py).unwrap())
-                        .unwrap();
-                GLOBAL_DATA_QUEUE.push(pydict);
-                1
-            } else {
-                0
-            }
-        })
-        .sum::<usize>();
+            // Push results directly to the global queue
+            Python::with_gil(|py| {
+                let found_count = result
+                    .iter()
+                    .map(|(_global_sample_id, data)| {
+                        match converter::convert_sample_response_to_pydict(
+                            py,
+                            Some(data.to_owned()),
+                        ) {
+                            Ok(dict) => {
+                                if let Ok(pyobj) = dict.into_py_any(py) {
+                                    queue_arc.push(pyobj);
+                                    1
+                                } else {
+                                    0
+                                }
+                            }
+                            Err(_) => 0,
+                        }
+                    })
+                    .sum::<usize>();
 
-    info!(
-        "Background prefetch completed: {}/{} samples loaded, memory: {:?} MB",
-        found_count,
-        sample_ids_clone.len(),
-        SystemUtility::get_current_memory_usage_mb()
-    );
+                info!(
+                    "[R{}/S{}] Background thread for server {} completed: {}/{} samples loaded, memory: {:?} MB",
+                    get_client_rank(),
+                    get_client_count(),
+                    server_id_clone,
+                    found_count,
+                    requests_clone.len(),
+                    SystemUtility::get_current_memory_usage_mb()
+                );
+            });
+        });
+    }
     // Return the number of samples requested (not the actual queue length yet)
     sample_ids.len().into_py_any(py)
 }

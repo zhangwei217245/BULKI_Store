@@ -39,7 +39,8 @@ pyo3 = { version = "0.24.0", features = [
 ] }
 crossbeam = { workspace = true }
 sysinfo = { workspace = true }
-
+threadpool = { workspace = true }
+num_cpus = { workspace = true }
 
 [features]
 # default = []
