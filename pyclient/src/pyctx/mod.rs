@@ -499,7 +499,7 @@ pub fn pop_queue_data_impl<'py>(_py: Python<'py>) -> PyResult<Py<PyAny>> {
 }
 
 pub fn check_queue_length_impl<'py>(py: Python<'py>) -> PyResult<Py<PyAny>> {
-    info!(
+    debug!(
         "[R{}/S{}] current queue length: {:?}, memory usage: {} MB",
         get_client_rank(),
         get_client_count(),
