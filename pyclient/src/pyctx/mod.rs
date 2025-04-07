@@ -534,7 +534,7 @@ pub fn fetch_samples_impl<'py>(
         let part_id = global_sample_id / part_size;
         let local_smp_id = global_sample_id % part_size;
         let obj_identifier = ObjectIdentifier::Name(format!("{}/part_{}", label, part_id));
-        let server_id = obj_identifier.vnode_id() % get_server_count();
+        let vnode_id = obj_identifier.vnode_id();
         let request = GetSampleRequest {
             sample_id: global_sample_id,
             obj_id: obj_identifier,
@@ -542,16 +542,16 @@ pub fn fetch_samples_impl<'py>(
             sample_var_keys: sample_var_keys.clone(),
         };
         grouped_request
-            .entry(server_id)
+            .entry(vnode_id)
             .and_modify(|v: &mut Vec<GetSampleRequest>| v.push(request.clone()))
             .or_insert_with(|| vec![request.clone()]);
     });
 
     let results = grouped_request
         .par_iter()
-        .map(|(&server_id, requests)| {
+        .map(|(&vnode_id, requests)| {
             match rpc_call::<Vec<GetSampleRequest>, HashMap<usize, GetSampleResponse>>(
-                server_id,
+                vnode_id % get_server_count(),
                 "datastore::load_batch_samples",
                 requests,
             ) {
@@ -559,7 +559,8 @@ pub fn fetch_samples_impl<'py>(
                 Err(e) => {
                     eprintln!(
                         "Error in background prefetch task for server {}: {}",
-                        server_id, e
+                        vnode_id % get_server_count(),
+                        e
                     );
                     HashMap::new()
                 }
@@ -610,7 +611,7 @@ pub fn prefetch_samples_into_queue_impl<'py>(
         let part_id = global_sample_id / part_size;
         let local_smp_id = global_sample_id % part_size;
         let obj_identifier = ObjectIdentifier::Name(format!("{}/part_{}", label_clone, part_id));
-        let server_id = obj_identifier.vnode_id() % get_server_count();
+        let vnode_id = obj_identifier.vnode_id();
         let request = GetSampleRequest {
             sample_id: global_sample_id,
             obj_id: obj_identifier,
@@ -618,21 +619,21 @@ pub fn prefetch_samples_into_queue_impl<'py>(
             sample_var_keys: sample_var_keys_clone.clone(),
         };
         grouped_request
-            .entry(server_id)
+            .entry(vnode_id)
             .and_modify(|v: &mut Vec<GetSampleRequest>| v.push(request.clone()))
             .or_insert_with(|| vec![request.clone()]);
     });
 
     // Replace the current implementation with this:
-    for (server_id, requests) in grouped_request {
+    for (vnode_id, requests) in grouped_request {
         let queue_arc = Arc::clone(&GLOBAL_DATA_QUEUE);
         let requests_clone = requests.clone();
-        let server_id_clone = server_id;
+        let server_id = vnode_id % get_server_count();
 
         PREFETCH_THREAD_POOL.spawn(move || {
             // Process requests in this background thread
             let result = match rpc_call::<Vec<GetSampleRequest>, HashMap<usize, GetSampleResponse>>(
-                server_id_clone,
+                server_id,
                 "datastore::load_batch_samples",
                 &requests_clone,
             ) {
@@ -640,7 +641,7 @@ pub fn prefetch_samples_into_queue_impl<'py>(
                 Err(e) => {
                     eprintln!(
                         "Error in background prefetch task for server {}: {}",
-                        server_id_clone, e
+                        server_id, e
                     );
                     HashMap::new()
                 }
@@ -672,7 +673,7 @@ pub fn prefetch_samples_into_queue_impl<'py>(
                     "[R{}/S{}] Background thread for server {} completed: {}/{} samples loaded, memory: {:?} MB",
                     get_client_rank(),
                     get_client_count(),
-                    server_id_clone,
+                    server_id,
                     found_count,
                     requests_clone.len(),
                     SystemUtility::get_current_memory_usage_mb()
