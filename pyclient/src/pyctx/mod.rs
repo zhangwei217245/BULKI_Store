@@ -35,7 +35,6 @@ use std::ops::Add;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Arc;
 use std::time::Instant;
-use threadpool::ThreadPool;
 use uuid::Uuid;
 
 // Process-wide static variables with thread-safe access
@@ -49,10 +48,13 @@ static REQUEST_COUNTER: AtomicU32 = AtomicU32::new(0);
 
 lazy_static! {
     pub static ref GLOBAL_DATA_QUEUE: Arc<SegQueue<Py<PyAny>>> = Arc::new(SegQueue::new());
-    static ref PREFETCH_THREAD_POOL: ThreadPool = {
+    static ref PREFETCH_THREAD_POOL: rayon::ThreadPool = {
         // Use number of available cores or a reasonable fixed size
         let num_threads = std::cmp::min(num_cpus::get(), 8);
-        ThreadPool::new(num_threads)
+        rayon::ThreadPoolBuilder::new()
+            .num_threads(num_threads)
+            .build()
+            .expect("Failed to build Rayon thread pool")
     };
 }
 
@@ -627,7 +629,7 @@ pub fn prefetch_samples_into_queue_impl<'py>(
         let requests_clone = requests.clone();
         let server_id_clone = server_id;
 
-        PREFETCH_THREAD_POOL.execute(move || {
+        PREFETCH_THREAD_POOL.spawn(move || {
             // Process requests in this background thread
             let result = match rpc_call::<Vec<GetSampleRequest>, HashMap<usize, GetSampleResponse>>(
                 server_id_clone,
