@@ -490,101 +490,112 @@ pub fn load_batch_samples(data: &mut RPCData) -> HandlerResult {
         })
         .unwrap();
 
-    let mut result: HashMap<usize, GetSampleResponse> = HashMap::new();
-    for param in &params {
-        // First get metadata to determine slice regions
-        let metadata_request = GetObjectMetaParams {
-            obj_id: param.obj_id.clone(),
-            meta_keys: None,
-            sub_meta_keys: Some(SerializableMetaKeySpec::Simple(
-                param.sample_var_keys.clone(),
-            )),
-        };
+    let result = params
+        .par_iter()
+        .filter_map(|param| {
+            // First get metadata to determine slice regions
+            let metadata_request = GetObjectMetaParams {
+                obj_id: param.obj_id.clone(),
+                meta_keys: None,
+                sub_meta_keys: Some(SerializableMetaKeySpec::Simple(
+                    param.sample_var_keys.clone(),
+                )),
+            };
 
-        if let Ok(meta_response) = get_single_object_metadata(metadata_request) {
-            let mut variable_data: HashMap<String, SupportedRustArrayD> = HashMap::new();
+            if let Ok(meta_response) = get_single_object_metadata(metadata_request) {
+                let mut variable_data: HashMap<String, SupportedRustArrayD> = HashMap::new();
+                // Process each sub-object metadata
+                if let Some(sub_obj_metadata) = meta_response.sub_obj_metadata {
+                    // level 1
+                    let sub_obj_regions = sub_obj_metadata
+                        .par_iter()
+                        .map(|(oid, vname, meta)| {
+                            // Extract metadata values similar to Python code
+                            if let (
+                                Some(MetadataValue::Int(vdim)),
+                                Some(MetadataValue::IntList(vshape)),
+                                Some(MetadataValue::IntList(vcount)),
+                                Some(MetadataValue::IntList(voffset)),
+                            ) = (
+                                meta.get("vdim"),
+                                meta.get("vshape"),
+                                meta.get("vcount"),
+                                meta.get("voffset"),
+                            ) {
+                                // Calculate slice region
+                                let mdim = *vdim as usize;
+                                let local_smp_id = param.local_sample_id;
 
-            // Process each sub-object metadata
-            if let Some(sub_obj_metadata) = meta_response.sub_obj_metadata {
-                let mut sub_obj_regions: Vec<(String, Option<Vec<SerializableSliceInfoElem>>)> =
-                    Vec::new();
-
-                for (_oid, vname, meta) in sub_obj_metadata {
-                    // Extract metadata values similar to Python code
-                    if let (
-                        Some(MetadataValue::Int(vdim)),
-                        Some(MetadataValue::IntList(vshape)),
-                        Some(MetadataValue::IntList(vcount)),
-                        Some(MetadataValue::IntList(voffset)),
-                    ) = (
-                        meta.get("vdim"),
-                        meta.get("vshape"),
-                        meta.get("vcount"),
-                        meta.get("voffset"),
-                    ) {
-                        // Calculate slice region
-                        let mdim = *vdim as usize;
-                        let local_smp_id = param.local_sample_id;
-
-                        // Create slice info elements
-                        let mut slice_info = Vec::new();
-                        for dim_idx in 0..vshape.len() {
-                            if dim_idx == mdim {
-                                // For the dimension with variable data, calculate start and count
-                                let start = (voffset[local_smp_id] - voffset[0]) as isize;
-                                let count = vcount[local_smp_id] as isize;
-                                slice_info.push(SerializableSliceInfoElem::Slice {
-                                    start: start,
-                                    end: Some(start + count),
-                                    step: 1,
-                                });
+                                // Create slice info elements
+                                let mut slice_info = Vec::new();
+                                for dim_idx in 0..vshape.len() {
+                                    if dim_idx == mdim {
+                                        // For the dimension with variable data, calculate start and count
+                                        let start = (voffset[local_smp_id] - voffset[0]) as isize;
+                                        let count = vcount[local_smp_id] as isize;
+                                        slice_info.push(SerializableSliceInfoElem::Slice {
+                                            start: start,
+                                            end: Some(start + count),
+                                            step: 1,
+                                        });
+                                    } else {
+                                        // For other dimensions, take the full range
+                                        slice_info.push(SerializableSliceInfoElem::Slice {
+                                            start: 0,
+                                            end: None,
+                                            step: 1,
+                                        });
+                                    }
+                                }
+                                // Add to regions
+                                (vname.clone(), Some(slice_info))
                             } else {
-                                // For other dimensions, take the full range
-                                slice_info.push(SerializableSliceInfoElem::Slice {
-                                    start: 0,
-                                    end: None,
-                                    step: 1,
-                                });
+                                (vname.clone(), None)
                             }
-                        }
-                        // Add to regions
-                        sub_obj_regions.push((vname.clone(), Some(slice_info)));
-                    }
-                }
+                        })
+                        .collect::<Vec<(String, Option<Vec<SerializableSliceInfoElem>>)>>();
+                    // level 1 end
 
-                // Now fetch the actual array data using the slice regions
-                if !sub_obj_regions.is_empty() {
-                    let slice_request = GetObjectSliceParams {
-                        obj_id: param.obj_id.clone(),
-                        region: None, // We're only interested in sub-objects
-                        sub_obj_regions: Some(sub_obj_regions),
-                    };
+                    // level 2
+                    // Now fetch the actual array data using the slice regions
+                    if !sub_obj_regions.is_empty() {
+                        let slice_request = GetObjectSliceParams {
+                            obj_id: param.obj_id.clone(),
+                            region: None, // We're only interested in sub-objects
+                            sub_obj_regions: Some(sub_obj_regions),
+                        };
 
-                    if let Ok(slice_response) = get_single_object_data(slice_request) {
-                        // Process the slice response
-                        if let Some(sub_obj_slices) = slice_response.sub_obj_slices {
-                            for (_, name, array_opt) in sub_obj_slices {
-                                if let Some(array) = array_opt {
-                                    variable_data
-                                        .insert(name.split('/').last().unwrap().to_string(), array);
+                        if let Ok(slice_response) = get_single_object_data(slice_request) {
+                            // Process the slice response
+                            if let Some(sub_obj_slices) = slice_response.sub_obj_slices {
+                                for (_, name, array_opt) in sub_obj_slices {
+                                    if let Some(array) = array_opt {
+                                        variable_data.insert(
+                                            name.split('/').last().unwrap().to_string(),
+                                            array,
+                                        );
+                                    }
                                 }
                             }
                         }
                     }
+                    // level 2 end
+                    Some((
+                        param.sample_id,
+                        GetSampleResponse {
+                            original_idx: param.original_idx,
+                            sample_id: param.sample_id,
+                            variable_data,
+                        },
+                    ))
+                } else {
+                    None
                 }
+            } else {
+                None
             }
-
-            // Create the sample response
-            result.insert(
-                param.sample_id,
-                GetSampleResponse {
-                    original_idx: param.original_idx,
-                    sample_id: param.sample_id,
-                    variable_data,
-                },
-            );
-        }
-    }
+        })
+        .collect::<HashMap<usize, GetSampleResponse>>();
 
     info!(
         "[RX Rank {:?}] load_batch_samples: {}/{} samples loaded",
