@@ -509,7 +509,7 @@ pub fn load_batch_samples(data: &mut RPCData) -> HandlerResult {
                     // level 1
                     let sub_obj_regions = sub_obj_metadata
                         .par_iter()
-                        .map(|(oid, vname, meta)| {
+                        .map(|(_oid, vname, meta)| {
                             // Extract metadata values similar to Python code
                             if let (
                                 Some(MetadataValue::Int(vdim)),
