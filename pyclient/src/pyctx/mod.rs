@@ -711,7 +711,7 @@ pub fn prefetch_samples_into_queue_impl<'py>(
     let sample_ids_clone = sample_ids.clone();
     let batch_size = batch_size.unwrap_or(128);
     let prefetch_factor = prefetch_factor.unwrap_or(64);
-    let num_threads = std::env::var("HYDRAGNN_THREAD_NUM")
+    let num_threads = std::env::var("BULKI_PREFETCH_THREAD_NUM")
         .and_then(|s| s.parse::<usize>().map_err(|_| VarError::NotPresent))
         .unwrap_or(8);
     let chunk_size = batch_size * prefetch_factor / num_threads;
