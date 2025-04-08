@@ -578,6 +578,7 @@ pub fn load_batch_samples(data: &mut RPCData) -> HandlerResult {
             result.insert(
                 param.sample_id,
                 GetSampleResponse {
+                    original_idx: param.original_idx,
                     sample_id: param.sample_id,
                     variable_data,
                 },

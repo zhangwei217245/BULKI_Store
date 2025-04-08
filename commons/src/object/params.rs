@@ -56,10 +56,12 @@ pub struct GetSampleRequest {
     pub obj_id: ObjectIdentifier,
     pub local_sample_id: usize,
     pub sample_var_keys: Vec<String>,
+    pub original_idx: usize,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct GetSampleResponse {
+    pub original_idx: usize,
     pub sample_id: usize,
     pub variable_data: HashMap<String, SupportedRustArrayD>,
 }

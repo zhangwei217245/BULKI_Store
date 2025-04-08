@@ -705,40 +705,48 @@ pub fn prefetch_samples_into_queue_impl<'py>(
     PREFETCH_THREAD_POOL.spawn(move || {
         // slice the array into bigger batches
         let mut batches = sample_ids_clone
+            .iter()
+            .enumerate()
+            .map(|(i, x)| (i, x))
+            .collect::<Vec<(usize, &usize)>>()
             .chunks(chunk_size)
             .map(|batch| batch.to_vec())
-            .collect::<Vec<Vec<usize>>>()
+            .collect::<Vec<Vec<(usize, &usize)>>>()
             .chunks(parallelism)
             .map(|batch| batch.to_vec())
-            .collect::<Vec<Vec<Vec<usize>>>>();
+            .collect::<Vec<Vec<Vec<(usize, &usize)>>>>();
         loop {
             let batch = batches.pop();
             if batch.is_none() {
                 break;
             }
-            let batch_result = batch
+            let mut batch_result = batch
                 .unwrap_or(vec![])
                 .par_iter()
-                .map(|smp_ids| {
+                .enumerate()
+                .map(|(batch_idx, smp_ids)| {
                     // Calculate partition mappings (objectId, local_sample_id, global_sample_id)
                     let mut grouped_request: HashMap<u32, Vec<GetSampleRequest>> = HashMap::new();
-                    smp_ids.iter().for_each(|&global_sample_id| {
-                        let part_id = global_sample_id / part_size;
-                        let local_smp_id = global_sample_id % part_size;
-                        let obj_identifier =
-                            ObjectIdentifier::Name(format!("{}/part_{}", label_clone, part_id));
-                        let vnode_id = obj_identifier.vnode_id();
-                        let request = GetSampleRequest {
-                            sample_id: global_sample_id,
-                            obj_id: obj_identifier,
-                            local_sample_id: local_smp_id,
-                            sample_var_keys: sample_var_keys.clone(),
-                        };
-                        grouped_request
-                            .entry(vnode_id)
-                            .and_modify(|v: &mut Vec<GetSampleRequest>| v.push(request.clone()))
-                            .or_insert_with(|| vec![request.clone()]);
-                    });
+                    smp_ids
+                        .iter()
+                        .for_each(|(original_idx, &global_sample_id)| {
+                            let part_id = global_sample_id / part_size;
+                            let local_smp_id = global_sample_id % part_size;
+                            let obj_identifier =
+                                ObjectIdentifier::Name(format!("{}/part_{}", label_clone, part_id));
+                            let vnode_id = obj_identifier.vnode_id();
+                            let request = GetSampleRequest {
+                                original_idx: *original_idx,
+                                sample_id: global_sample_id,
+                                obj_id: obj_identifier,
+                                local_sample_id: local_smp_id,
+                                sample_var_keys: sample_var_keys.clone(),
+                            };
+                            grouped_request
+                                .entry(vnode_id)
+                                .and_modify(|v: &mut Vec<GetSampleRequest>| v.push(request.clone()))
+                                .or_insert_with(|| vec![request.clone()]);
+                        });
                     let results =
                         grouped_request
                             .par_iter()
@@ -769,12 +777,21 @@ pub fn prefetch_samples_into_queue_impl<'py>(
                                     acc
                                 },
                             );
-                    results
+                    let sorted_results = smp_ids
+                        .iter()
+                        .map(|(_, global_sample_id)| {
+                            results.get(&global_sample_id).unwrap().clone()
+                        })
+                        .collect::<Vec<GetSampleResponse>>();
+                    (batch_idx, sorted_results)
                 })
-                .collect::<Vec<HashMap<usize, GetSampleResponse>>>();
-            batch_result.iter().for_each(|result| {
+                .collect::<Vec<(usize, Vec<GetSampleResponse>)>>();
+
+            batch_result.sort_by_key(|(batch_idx, _)| *batch_idx);
+
+            batch_result.iter().for_each(|(_, sorted_results)| {
                 Python::with_gil(|py| {
-                    result.iter().for_each(|(_, response)| {
+                    sorted_results.iter().for_each(|response| {
                         let pyobj = converter::convert_sample_response_to_pydict(
                             py,
                             Some(response.to_owned()),
