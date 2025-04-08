@@ -530,22 +530,26 @@ pub fn fetch_samples_impl<'py>(
 
     // Calculate partition mappings (objectId, local_sample_id, global_sample_id)
     let mut grouped_request: HashMap<u32, Vec<GetSampleRequest>> = HashMap::new();
-    sample_ids_clone.iter().for_each(|&global_sample_id| {
-        let part_id = global_sample_id / part_size;
-        let local_smp_id = global_sample_id % part_size;
-        let obj_identifier = ObjectIdentifier::Name(format!("{}/part_{}", label, part_id));
-        let vnode_id = obj_identifier.vnode_id();
-        let request = GetSampleRequest {
-            sample_id: global_sample_id,
-            obj_id: obj_identifier,
-            local_sample_id: local_smp_id,
-            sample_var_keys: sample_var_keys.clone(),
-        };
-        grouped_request
-            .entry(vnode_id)
-            .and_modify(|v: &mut Vec<GetSampleRequest>| v.push(request.clone()))
-            .or_insert_with(|| vec![request.clone()]);
-    });
+    sample_ids_clone
+        .iter()
+        .enumerate()
+        .for_each(|(original_idx, &global_sample_id)| {
+            let part_id = global_sample_id / part_size;
+            let local_smp_id = global_sample_id % part_size;
+            let obj_identifier = ObjectIdentifier::Name(format!("{}/part_{}", label, part_id));
+            let vnode_id = obj_identifier.vnode_id();
+            let request = GetSampleRequest {
+                original_idx,
+                sample_id: global_sample_id,
+                obj_id: obj_identifier,
+                local_sample_id: local_smp_id,
+                sample_var_keys: sample_var_keys.clone(),
+            };
+            grouped_request
+                .entry(vnode_id)
+                .and_modify(|v: &mut Vec<GetSampleRequest>| v.push(request.clone()))
+                .or_insert_with(|| vec![request.clone()]);
+        });
 
     let results = grouped_request
         .par_iter()
@@ -607,22 +611,27 @@ pub fn prefetch_samples_normal_impl<'py>(
     let sample_var_keys_clone = sample_var_keys.clone();
     // Calculate partition mappings (objectId, local_sample_id, global_sample_id)
     let mut grouped_request: HashMap<u32, Vec<GetSampleRequest>> = HashMap::new();
-    sample_ids_clone.iter().for_each(|&global_sample_id| {
-        let part_id = global_sample_id / part_size;
-        let local_smp_id = global_sample_id % part_size;
-        let obj_identifier = ObjectIdentifier::Name(format!("{}/part_{}", label_clone, part_id));
-        let vnode_id = obj_identifier.vnode_id();
-        let request = GetSampleRequest {
-            sample_id: global_sample_id,
-            obj_id: obj_identifier,
-            local_sample_id: local_smp_id,
-            sample_var_keys: sample_var_keys_clone.clone(),
-        };
-        grouped_request
-            .entry(vnode_id)
-            .and_modify(|v: &mut Vec<GetSampleRequest>| v.push(request.clone()))
-            .or_insert_with(|| vec![request.clone()]);
-    });
+    sample_ids_clone
+        .iter()
+        .enumerate()
+        .for_each(|(original_idx, &global_sample_id)| {
+            let part_id = global_sample_id / part_size;
+            let local_smp_id = global_sample_id % part_size;
+            let obj_identifier =
+                ObjectIdentifier::Name(format!("{}/part_{}", label_clone, part_id));
+            let vnode_id = obj_identifier.vnode_id();
+            let request = GetSampleRequest {
+                original_idx,
+                sample_id: global_sample_id,
+                obj_id: obj_identifier,
+                local_sample_id: local_smp_id,
+                sample_var_keys: sample_var_keys_clone.clone(),
+            };
+            grouped_request
+                .entry(vnode_id)
+                .and_modify(|v: &mut Vec<GetSampleRequest>| v.push(request.clone()))
+                .or_insert_with(|| vec![request.clone()]);
+        });
 
     // Replace the current implementation with this:
     for (vnode_id, requests) in grouped_request {
