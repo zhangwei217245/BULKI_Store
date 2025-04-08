@@ -181,15 +181,34 @@ fn rust_ext<'py>(m: &Bound<'py, PyModule>) -> PyResult<()> {
 
     #[pyfn(m)]
     #[pyo3(name = "prefetch_samples")]
-    #[pyo3(signature = (label, sample_ids, part_size, sample_var_keys))]
+    #[pyo3(signature = (label, sample_ids, part_size, sample_var_keys, batch_size=None, prefetch_factor=None))]
     fn prefetch_samples<'py>(
         py: Python<'py>,
         label: String,
         sample_ids: Vec<usize>,
         part_size: usize,
         sample_var_keys: Vec<String>,
+        batch_size: Option<usize>,
+        prefetch_factor: Option<usize>,
     ) -> PyResult<Py<PyAny>> {
-        pyctx::prefetch_samples_into_queue_impl(py, label, sample_ids, part_size, sample_var_keys)
+        if batch_size.is_none() {
+            return pyctx::prefetch_samples_normal_impl(
+                py,
+                label,
+                sample_ids,
+                part_size,
+                sample_var_keys,
+            );
+        }
+        pyctx::prefetch_samples_into_queue_impl(
+            py,
+            label,
+            sample_ids,
+            part_size,
+            sample_var_keys,
+            batch_size,
+            prefetch_factor,
+        )
     }
 
     #[pyfn(m)]
