@@ -59,7 +59,7 @@ pub struct GetSampleRequest {
     pub sample_var_keys: Vec<String>,
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone, Default)]
 pub struct GetSampleResponse {
     pub original_idx: usize,
     pub sample_id: usize,
