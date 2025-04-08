@@ -729,93 +729,113 @@ pub fn prefetch_samples_into_queue_impl<'py>(
         .for_each(|x| {
             GLOBAL_INDEX_QUEUE.push(x.clone());
         });
-    for _ in 0..num_threads {
+    for thread_id in 0..num_threads {
         let label_clone = label.clone();
         let sample_var_keys_clone = sample_var_keys.clone();
 
-        PREFETCH_THREAD_POOL.spawn(move || loop {
-            let batch = match GLOBAL_INDEX_QUEUE.pop() {
-                Some(batch) => batch,
-                None => {
-                    // If queue is empty, sleep a bit and try again
-                    std::thread::sleep(std::time::Duration::from_millis(5));
-                    continue;
-                }
-            };
-            let (batch_idx, batch_data) = batch;
-            // Calculate partition mappings (objectId, local_sample_id, global_sample_id)
-            let mut grouped_request: HashMap<u32, Vec<GetSampleRequest>> = HashMap::new();
-            batch_data
-                .iter()
-                .for_each(|(original_idx, global_sample_id)| {
-                    let part_id = global_sample_id / part_size;
-                    let local_smp_id = global_sample_id % part_size;
-                    let obj_identifier =
-                        ObjectIdentifier::Name(format!("{}/part_{}", label_clone.clone(), part_id));
-                    let lookup_id = obj_identifier.vnode_id() % get_server_count();
-                    let request = GetSampleRequest {
-                        original_idx: *original_idx,
-                        sample_id: *global_sample_id,
-                        obj_id: obj_identifier,
-                        local_sample_id: local_smp_id,
-                        sample_var_keys: sample_var_keys_clone.clone(),
-                    };
-                    grouped_request
-                        .entry(lookup_id)
-                        .and_modify(|v: &mut Vec<GetSampleRequest>| v.push(request.clone()))
-                        .or_insert_with(|| vec![request.clone()]);
-                });
-            let results = grouped_request
-                .par_iter()
-                .map(|(&lookup_id, requests)| {
-                    match rpc_call::<Vec<GetSampleRequest>, HashMap<usize, GetSampleResponse>>(
-                        lookup_id,
-                        "datastore::load_batch_samples",
-                        requests,
-                    ) {
-                        Ok(result) => result,
-                        Err(e) => {
-                            eprintln!(
-                                "Error in background prefetch task for server {}: {}",
-                                lookup_id, e
-                            );
-                            HashMap::new()
-                        }
-                    }
-                })
-                .reduce(
-                    || HashMap::new(),
-                    |mut acc, x| {
-                        acc.extend(x);
-                        acc
-                    },
-                );
-            // Wait until it's this batch's turn to be processed
+        PREFETCH_THREAD_POOL.spawn(move || {
+            let thread_id_clone = thread_id.clone();
             loop {
-                let current_index = NEXT_BATCH_INDEX.load(Ordering::SeqCst);
-                if current_index == batch_idx {
-                    // It's our turn to process
-                    break;
-                }
-                // Sleep briefly to avoid busy waiting
-                std::thread::sleep(std::time::Duration::from_millis(1));
-            }
-            Python::with_gil(|py| {
-                batch_data.iter().for_each(|(_, global_sample_id)| {
-                    let response = results.get(global_sample_id).unwrap().clone();
-                    let pyobj =
-                        converter::convert_sample_response_to_pydict(py, Some(response.to_owned()));
-                    if let Ok(pyobj) = pyobj {
-                        GLOBAL_DATA_QUEUE.push(pyobj.into_any().into());
+                let batch = match GLOBAL_INDEX_QUEUE.pop() {
+                    Some(batch) => batch,
+                    None => {
+                        // If queue is empty, sleep a bit and try again
+                        std::thread::sleep(std::time::Duration::from_millis(5));
+                        continue;
                     }
+                };
+                let (batch_idx, batch_data) = batch;
+                // Calculate partition mappings (objectId, local_sample_id, global_sample_id)
+                let mut grouped_request: HashMap<u32, Vec<GetSampleRequest>> = HashMap::new();
+                batch_data
+                    .iter()
+                    .for_each(|(original_idx, global_sample_id)| {
+                        let part_id = global_sample_id / part_size;
+                        let local_smp_id = global_sample_id % part_size;
+                        let obj_identifier = ObjectIdentifier::Name(format!(
+                            "{}/part_{}",
+                            label_clone.clone(),
+                            part_id
+                        ));
+                        let lookup_id = obj_identifier.vnode_id() % get_server_count();
+                        let request = GetSampleRequest {
+                            original_idx: *original_idx,
+                            sample_id: *global_sample_id,
+                            obj_id: obj_identifier,
+                            local_sample_id: local_smp_id,
+                            sample_var_keys: sample_var_keys_clone.clone(),
+                        };
+                        grouped_request
+                            .entry(lookup_id)
+                            .and_modify(|v: &mut Vec<GetSampleRequest>| v.push(request.clone()))
+                            .or_insert_with(|| vec![request.clone()]);
+                    });
+                let results = grouped_request
+                    .par_iter()
+                    .map(|(&lookup_id, requests)| {
+                        match rpc_call::<Vec<GetSampleRequest>, HashMap<usize, GetSampleResponse>>(
+                            lookup_id,
+                            "datastore::load_batch_samples",
+                            requests,
+                        ) {
+                            Ok(result) => result,
+                            Err(e) => {
+                                eprintln!(
+                                    "Error in background prefetch task for server {}: {}",
+                                    lookup_id, e
+                                );
+                                HashMap::new()
+                            }
+                        }
+                    })
+                    .reduce(
+                        || HashMap::new(),
+                        |mut acc, x| {
+                            acc.extend(x);
+                            acc
+                        },
+                    );
+                // Wait until it's this batch's turn to be processed
+                loop {
+                    let current_index = NEXT_BATCH_INDEX.load(Ordering::SeqCst);
+                    if current_index == batch_idx {
+                        // It's our turn to process
+                        break;
+                    }
+                    // Sleep briefly to avoid busy waiting
+                    std::thread::sleep(std::time::Duration::from_millis(1));
+                }
+                let mut found_count = 0;
+                Python::with_gil(|py| {
+                    batch_data.iter().for_each(|(_, global_sample_id)| {
+                        let response = results.get(global_sample_id).unwrap().clone();
+                        let pyobj = converter::convert_sample_response_to_pydict(
+                            py,
+                            Some(response.to_owned()),
+                        );
+                        if let Ok(pyobj) = pyobj {
+                            GLOBAL_DATA_QUEUE.push(pyobj.into_any().into());
+                            found_count += 1;
+                        }
+                    });
                 });
-            });
-            NEXT_BATCH_INDEX.fetch_add(1, Ordering::SeqCst);
-            // Explicit memory management to prevent leaks
-            Python::with_gil(|py| {
-                let code = CStr::from_bytes_with_nul(b"import gc; gc.collect()\0").unwrap();
-                py.run(code, None, None).ok();
-            });
+                info!(
+                    "[R{}/S{}] Background thread {} completed batch {}: {}/{} samples loaded, memory: {:?} MB",
+                    get_client_rank(),
+                    get_client_count(),
+                    thread_id_clone,
+                    batch_idx,
+                    found_count,
+                    batch_data.len(),
+                    SystemUtility::get_current_memory_usage_mb()
+                );
+                NEXT_BATCH_INDEX.fetch_add(1, Ordering::SeqCst);
+                // Explicit memory management to prevent leaks
+                Python::with_gil(|py| {
+                    let code = CStr::from_bytes_with_nul(b"import gc; gc.collect()\0").unwrap();
+                    py.run(code, None, None).ok();
+                });
+            }
         });
     }
     // Return the number of samples requested (not the actual queue length yet)
