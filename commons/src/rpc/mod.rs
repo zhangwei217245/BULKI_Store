@@ -14,9 +14,11 @@ use crate::{
 };
 
 pub mod grpc; // Expose the grpc submodule
+              // pub mod tcp;
 
 pub enum RPCImpl {
     Grpc,
+    // Tcp,
 }
 
 impl std::str::FromStr for RPCImpl {
@@ -25,6 +27,7 @@ impl std::str::FromStr for RPCImpl {
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s.to_lowercase().as_str() {
             "grpc" => Ok(RPCImpl::Grpc),
+            // "tcp" => Ok(RPCImpl::Tcp),
             _ => Err(format!("Unknown RPC implementation: {}", s)),
         }
     }

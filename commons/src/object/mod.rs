@@ -520,8 +520,10 @@ impl DataStore {
             server_count,
             checkpoint_files.len()
         );
+        let mut total_loaded = 0;
+        for i in 0..checkpoint_files.len() {
+            let file_path = &checkpoint_files[(i + server_rank as usize) % checkpoint_files.len()];
 
-        let total_loaded = checkpoint_files.par_iter().map(|file_path| {
             let file_name = file_path.file_name().unwrap_or_default().to_string_lossy();
             let file = std::fs::File::open(&file_path).unwrap();
             let mut reader = std::io::BufReader::new(file);
@@ -537,7 +539,7 @@ impl DataStore {
                     );
 
                     if header.object_count == 0 {
-                        return 0; // Skip empty files
+                        continue;
                     }
 
                     // Track progress
@@ -623,17 +625,16 @@ impl DataStore {
                         server_rank, server_count, file_name, objects_processed, objects_loaded
                     );
 
-                    objects_loaded
+                    total_loaded += objects_loaded as usize;
                 }
                 Err(e) => {
                     warn!(
                         "[R{}/S{}] Failed to read header from {}: {}",
                         server_rank, server_count, file_name, e
                     );
-                    0
                 }
             }
-        }).sum::<usize>();
+        }
 
         info!(
             "[R{}/S{}] Total objects loaded: {}",
