@@ -8,7 +8,7 @@ use ndarray::SliceInfoElem;
 use anyhow::Result;
 use objid::GlobalObjectIdExt;
 use params::CreateObjectParams;
-use rayon::prelude::*;
+// use rayon::prelude::*;
 use rmp_serde::encode;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
