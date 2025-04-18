@@ -512,6 +512,7 @@ pub fn update_metadata(data: &mut RPCData) -> HandlerResult {
 pub fn load_batch_samples(data: &mut RPCData) -> HandlerResult {
     // input : Vec<GetSampleRequest>,
     // output: HashMap<usize, GetSampleResponse>
+    let overall_timer = Instant::now();
     let params: Vec<GetSampleRequest> = rmp_serde::from_slice(&data.data.as_ref().unwrap())
         .map_err(|e| HandlerResult {
             status_code: StatusCode::Internal as u8,
@@ -655,37 +656,51 @@ pub fn load_batch_samples(data: &mut RPCData) -> HandlerResult {
         .collect();
 
     // Log timing statistics if needed
-    let mut timing_data = (0u128, 0u128, 0u128);
+    let mut timing_data = (0u128, 0u128, 0u128, 0u128);
     if !time_tick_collection.is_empty() {
         let avg_meta_time: u128 = time_tick_collection
+            .iter()
+            .filter(|ticks| ticks.len() >= 1)
+            .map(|ticks| ticks[0])
+            .sum::<u128>()
+            / time_tick_collection.len() as u128;
+
+        let avg_region_time: u128 = time_tick_collection
             .iter()
             .filter(|ticks| ticks.len() >= 2)
             .map(|ticks| ticks[1] - ticks[0])
             .sum::<u128>()
             / time_tick_collection.len() as u128;
 
-        let avg_region_time: u128 = time_tick_collection
+        let avg_slice_time: u128 = time_tick_collection
             .iter()
             .filter(|ticks| ticks.len() >= 3)
             .map(|ticks| ticks[2] - ticks[1])
             .sum::<u128>()
             / time_tick_collection.len() as u128;
 
-        let avg_slice_time: u128 = time_tick_collection
+        let avg_sample_fetching_time: u128 = time_tick_collection
             .iter()
             .filter(|ticks| ticks.len() >= 4)
-            .map(|ticks| ticks[3] - ticks[2])
+            .map(|ticks| ticks[3] - ticks[0])
             .sum::<u128>()
             / time_tick_collection.len() as u128;
 
-        timing_data = (avg_meta_time, avg_region_time, avg_slice_time);
+        timing_data = (
+            avg_meta_time,
+            avg_region_time,
+            avg_slice_time,
+            avg_sample_fetching_time,
+        );
     }
 
     info!(
-        "[RX Rank {:?}] load_batch_samples: {}/{} samples loaded, timing (μs): avg_metadata={}, avg_region_calc={}, avg_slice_fetch={}",
+        "[RX Rank {:?}] load_batch_samples: {}/{} samples loaded, overall time {} μs: avg_sample_fetching={}, avg_metadata={}, avg_region_calc={}, avg_slice_fetch={}",
         crate::srvctx::get_rank(),
         result.len(),
         params.len(),
+        overall_timer.elapsed().as_micros(),
+        timing_data.3,
         timing_data.0,
         timing_data.1,
         timing_data.2
