@@ -24,7 +24,7 @@ use rmp_serde;
 use std::collections::HashMap;
 use std::io::Write;
 use std::sync::atomic::{AtomicU32, AtomicU64};
-use std::sync::{Arc, RwLock};
+use std::sync::{Arc, RwLock, RwLockReadGuard};
 
 // Global DataStore instance using the standard RwLock.
 lazy_static! {
@@ -121,9 +121,10 @@ pub fn create_objects(data: &mut RPCData) -> HandlerResult {
     }
 }
 
-fn get_single_object_data(params: GetObjectSliceParams) -> Result<GetObjectSliceResponse> {
-    let store = GLOBAL_STORE.read().unwrap();
-
+fn _get_single_object_data_with_store_guard(
+    params: GetObjectSliceParams,
+    store: &RwLockReadGuard<DataStore>,
+) -> Result<GetObjectSliceResponse> {
     let obj_id = match params.obj_id {
         ObjectIdentifier::U128(id) => Ok(id),
         ObjectIdentifier::Name(name) => match store.get_obj_id_by_name(&name.as_str()) {
@@ -131,8 +132,6 @@ fn get_single_object_data(params: GetObjectSliceParams) -> Result<GetObjectSlice
             None => Err(anyhow::anyhow!("Object not found")),
         },
     }?;
-    // Acquire a read lock on the DataStore.
-    let store = GLOBAL_STORE.read().unwrap();
     match store.get(obj_id) {
         Some(obj) => {
             // Convert SerializableSliceInfoElem to SliceInfoElem
@@ -178,6 +177,11 @@ fn get_single_object_data(params: GetObjectSliceParams) -> Result<GetObjectSlice
         }
         None => Err(anyhow::anyhow!("Object not found")),
     }
+}
+
+fn get_single_object_data(params: GetObjectSliceParams) -> Result<GetObjectSliceResponse> {
+    let store = GLOBAL_STORE.read().unwrap();
+    _get_single_object_data_with_store_guard(params, &store)
 }
 
 /// Get a DataObject by its ID.
@@ -254,9 +258,10 @@ pub fn get_multiple_object_data(data: &mut RPCData) -> HandlerResult {
     }
 }
 
-fn get_single_object_metadata(params: GetObjectMetaParams) -> Result<GetObjectMetaResponse> {
-    let store = GLOBAL_STORE.read().unwrap();
-
+fn _get_single_object_metadata_with_store_guard(
+    params: GetObjectMetaParams,
+    store: &RwLockReadGuard<'_, DataStore>,
+) -> Result<GetObjectMetaResponse> {
     let obj_id_u128 = match params.obj_id {
         ObjectIdentifier::U128(id) => id,
         ObjectIdentifier::Name(name) => match store.get_obj_id_by_name(&name.as_str()) {
@@ -357,6 +362,11 @@ fn get_single_object_metadata(params: GetObjectMetaParams) -> Result<GetObjectMe
     Ok(result)
 }
 
+fn get_single_object_metadata(params: GetObjectMetaParams) -> Result<GetObjectMetaResponse> {
+    let store = GLOBAL_STORE.read().unwrap();
+    _get_single_object_metadata_with_store_guard(params, &store)
+}
+
 /// Get metadata for a DataObject by its ID and metadata keys.
 pub fn get_object_metadata(data: &mut RPCData) -> HandlerResult {
     // Deserialize the ID from the incoming data.
@@ -397,6 +407,29 @@ pub fn get_object_metadata(data: &mut RPCData) -> HandlerResult {
     }
 }
 
+fn _get_multiple_object_metadata_with_store_guard(
+    params: Vec<GetObjectMetaParams>,
+    store: &RwLockReadGuard<'_, DataStore>,
+) -> Result<Vec<Option<GetObjectMetaResponse>>> {
+    let param_len = params.len();
+    let mut results = Vec::with_capacity(param_len);
+    for param in params {
+        if let Ok(result) = _get_single_object_metadata_with_store_guard(param, store) {
+            results.push(Some(result));
+        } else {
+            results.push(None);
+        }
+    }
+    debug!(
+        "[RX Rank {:?}] _get_multiple_object_metadata: req length: {} , resp length: {} , {} failure ignored.",
+        crate::srvctx::get_rank(),
+        param_len,
+        results.len(),
+        param_len - results.len()
+    );
+    Ok(results)
+}
+
 pub fn get_multiple_object_metadata(data: &mut RPCData) -> HandlerResult {
     let params: Vec<GetObjectMetaParams> = rmp_serde::from_slice(&data.data.as_ref().unwrap())
         .map_err(|e| HandlerResult {
@@ -405,32 +438,27 @@ pub fn get_multiple_object_metadata(data: &mut RPCData) -> HandlerResult {
         })
         .unwrap();
 
-    let param_len = params.len();
-    let mut results = Vec::with_capacity(param_len);
-    for param in params {
-        if let Ok(result) = get_single_object_metadata(param) {
-            results.push(result);
+    match _get_multiple_object_metadata_with_store_guard(params, &GLOBAL_STORE.read().unwrap()) {
+        Ok(results) => {
+            data.data = Some(
+                rmp_serde::to_vec(&results)
+                    .map_err(|e| HandlerResult {
+                        status_code: StatusCode::Internal as u8,
+                        message: Some(format!("Failed to serialize response: {}", e)),
+                    })
+                    .unwrap(),
+            );
+            HandlerResult {
+                status_code: StatusCode::Ok as u8,
+                message: None,
+            }
         }
-    }
-    debug!(
-        "[RX Rank {:?}] get_multiple_object_metadata: req length: {} , resp length: {} , {} failure ignored.",
-        crate::srvctx::get_rank(),
-        param_len,
-        results.len(),
-        param_len - results.len()
-    );
-    data.data = Some(
-        rmp_serde::to_vec(&results)
-            .map_err(|e| HandlerResult {
+        Err(e) => {
+            return HandlerResult {
                 status_code: StatusCode::Internal as u8,
-                message: Some(format!("Failed to serialize response: {}", e)),
-            })
-            .unwrap(),
-    );
-
-    HandlerResult {
-        status_code: StatusCode::Ok as u8,
-        message: None,
+                message: Some(format!("Failed to get multiple object metadata: {}", e)),
+            }
+        }
     }
 }
 
@@ -490,6 +518,8 @@ pub fn load_batch_samples(data: &mut RPCData) -> HandlerResult {
         })
         .unwrap();
 
+    let store = GLOBAL_STORE.read().unwrap();
+
     let result = params
         .par_iter()
         .filter_map(|param| {
@@ -502,13 +532,15 @@ pub fn load_batch_samples(data: &mut RPCData) -> HandlerResult {
                 )),
             };
 
-            if let Ok(meta_response) = get_single_object_metadata(metadata_request) {
+            if let Ok(meta_response) =
+                _get_single_object_metadata_with_store_guard(metadata_request, &store)
+            {
                 let mut variable_data: HashMap<String, SupportedRustArrayD> = HashMap::new();
                 // Process each sub-object metadata
                 if let Some(sub_obj_metadata) = meta_response.sub_obj_metadata {
                     // level 1
                     let sub_obj_regions = sub_obj_metadata
-                        .par_iter()
+                        .iter()
                         .map(|(_oid, vname, meta)| {
                             // Extract metadata values similar to Python code
                             if let (
@@ -565,7 +597,9 @@ pub fn load_batch_samples(data: &mut RPCData) -> HandlerResult {
                             sub_obj_regions: Some(sub_obj_regions),
                         };
 
-                        if let Ok(slice_response) = get_single_object_data(slice_request) {
+                        if let Ok(slice_response) =
+                            _get_single_object_data_with_store_guard(slice_request, &store)
+                        {
                             // Process the slice response
                             if let Some(sub_obj_slices) = slice_response.sub_obj_slices {
                                 for (_, name, array_opt) in sub_obj_slices {

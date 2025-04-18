@@ -365,7 +365,7 @@ pub fn get_multiple_object_metadata_impl<'py>(
     // get metadata for each vnode_id
     let results = PyDict::new(py);
     for (vnode_id, obj_meta_params) in grouped_request {
-        let result = rpc_call::<Vec<GetObjectMetaParams>, Vec<GetObjectMetaResponse>>(
+        let result = rpc_call::<Vec<GetObjectMetaParams>, Vec<Option<GetObjectMetaResponse>>>(
             vnode_id % get_server_count(),
             "datastore::get_multiple_object_metadata",
             &obj_meta_params,
@@ -374,9 +374,10 @@ pub fn get_multiple_object_metadata_impl<'py>(
             PyErr::new::<PyValueError, _>(format!("Failed to get multiple object metadata: {}", e))
         })?;
         for response in result {
-            let obj_id = response.obj_id;
-            let obj_name = response.obj_name.clone();
-            let result_dict = converter::convert_get_object_meta_response_to_pydict(py, response)?;
+            let obj_id = response.as_ref().unwrap().obj_id;
+            let obj_name = response.as_ref().unwrap().obj_name.clone();
+            let result_dict =
+                converter::convert_get_object_meta_response_to_pydict(py, response.unwrap())?;
             match &obj_ids[0] {
                 ObjectIdentifier::U128(_id) => {
                     results.set_item(obj_id, result_dict)?;
