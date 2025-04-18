@@ -25,6 +25,7 @@ use std::collections::HashMap;
 use std::io::Write;
 use std::sync::atomic::{AtomicU32, AtomicU64};
 use std::sync::{Arc, RwLock, RwLockReadGuard};
+use std::time::Instant;
 
 // Global DataStore instance using the standard RwLock.
 lazy_static! {
@@ -520,9 +521,12 @@ pub fn load_batch_samples(data: &mut RPCData) -> HandlerResult {
 
     let store = GLOBAL_STORE.read().unwrap();
 
-    let result = params
+    // Collect results and timing data
+    let results_with_timing: Vec<((usize, GetSampleResponse), Vec<u128>)> = params
         .par_iter()
         .filter_map(|param| {
+            let mut ticks = Vec::new();
+            let timer = Instant::now();
             // First get metadata to determine slice regions
             let metadata_request = GetObjectMetaParams {
                 obj_id: param.obj_id.clone(),
@@ -535,10 +539,12 @@ pub fn load_batch_samples(data: &mut RPCData) -> HandlerResult {
             if let Ok(meta_response) =
                 _get_single_object_metadata_with_store_guard(metadata_request, &store)
             {
+                ticks.push(timer.elapsed().as_micros());
                 let mut variable_data: HashMap<String, SupportedRustArrayD> = HashMap::new();
                 // Process each sub-object metadata
                 if let Some(sub_obj_metadata) = meta_response.sub_obj_metadata {
                     // level 1
+
                     let sub_obj_regions = sub_obj_metadata
                         .iter()
                         .map(|(_oid, vname, meta)| {
@@ -587,7 +593,7 @@ pub fn load_batch_samples(data: &mut RPCData) -> HandlerResult {
                         })
                         .collect::<Vec<(String, Option<Vec<SerializableSliceInfoElem>>)>>();
                     // level 1 end
-
+                    ticks.push(timer.elapsed().as_micros());
                     // level 2
                     // Now fetch the actual array data using the slice regions
                     if !sub_obj_regions.is_empty() {
@@ -600,6 +606,7 @@ pub fn load_batch_samples(data: &mut RPCData) -> HandlerResult {
                         if let Ok(slice_response) =
                             _get_single_object_data_with_store_guard(slice_request, &store)
                         {
+                            ticks.push(timer.elapsed().as_micros());
                             // Process the slice response
                             if let Some(sub_obj_slices) = slice_response.sub_obj_slices {
                                 for (_, name, array_opt) in sub_obj_slices {
@@ -613,14 +620,19 @@ pub fn load_batch_samples(data: &mut RPCData) -> HandlerResult {
                             }
                         }
                     }
-                    // level 2 end
+                    ticks.push(timer.elapsed().as_micros());
+
+                    // Return both the result and timing data
                     Some((
-                        param.sample_id,
-                        GetSampleResponse {
-                            original_idx: param.original_idx,
-                            sample_id: param.sample_id,
-                            variable_data,
-                        },
+                        (
+                            param.sample_id,
+                            GetSampleResponse {
+                                original_idx: param.original_idx,
+                                sample_id: param.sample_id,
+                                variable_data,
+                            },
+                        ),
+                        ticks,
                     ))
                 } else {
                     None
@@ -629,13 +641,54 @@ pub fn load_batch_samples(data: &mut RPCData) -> HandlerResult {
                 None
             }
         })
-        .collect::<HashMap<usize, GetSampleResponse>>();
+        .collect();
+
+    // Separate results and timing data
+    let result: HashMap<usize, GetSampleResponse> = results_with_timing
+        .iter()
+        .map(|((sample_id, response), _)| (*sample_id, response.clone()))
+        .collect();
+
+    let time_tick_collection: Vec<Vec<u128>> = results_with_timing
+        .into_iter()
+        .map(|(_, ticks)| ticks)
+        .collect();
+
+    // Log timing statistics if needed
+    let mut timing_data = (0u128, 0u128, 0u128);
+    if !time_tick_collection.is_empty() {
+        let avg_meta_time: u128 = time_tick_collection
+            .iter()
+            .filter(|ticks| ticks.len() >= 2)
+            .map(|ticks| ticks[1] - ticks[0])
+            .sum::<u128>()
+            / time_tick_collection.len() as u128;
+
+        let avg_region_time: u128 = time_tick_collection
+            .iter()
+            .filter(|ticks| ticks.len() >= 3)
+            .map(|ticks| ticks[2] - ticks[1])
+            .sum::<u128>()
+            / time_tick_collection.len() as u128;
+
+        let avg_slice_time: u128 = time_tick_collection
+            .iter()
+            .filter(|ticks| ticks.len() >= 4)
+            .map(|ticks| ticks[3] - ticks[2])
+            .sum::<u128>()
+            / time_tick_collection.len() as u128;
+
+        timing_data = (avg_meta_time, avg_region_time, avg_slice_time);
+    }
 
     info!(
-        "[RX Rank {:?}] load_batch_samples: {}/{} samples loaded",
+        "[RX Rank {:?}] load_batch_samples: {}/{} samples loaded, timing (μs): avg_metadata={}, avg_region_calc={}, avg_slice_fetch={}",
         crate::srvctx::get_rank(),
         result.len(),
-        params.len()
+        params.len(),
+        timing_data.0,
+        timing_data.1,
+        timing_data.2
     );
 
     data.data = Some(
