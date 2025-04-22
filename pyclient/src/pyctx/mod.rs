@@ -806,15 +806,20 @@ pub fn prefetch_samples_into_queue_impl<'py>(
                 }
                 let mut found_count = 0;
                 Python::with_gil(|py| {
-                    index_group.iter().for_each(|(_, global_sample_id)| {
-                        if let Ok(pyobj) = converter::convert_sample_response_to_pydict(
-                            py,
-                            results.get(global_sample_id),
-                        ) {
-                            GLOBAL_DATA_QUEUE.push(pyobj.into_any().into());
-                            found_count += 1;
+                    let mut ordered_results = Vec::with_capacity(index_group.len());
+                    for (original_idx, global_sample_id) in index_group.iter() {
+                        if let Some(response) = results.get(global_sample_id) {
+                            if let Ok(pyobj) = converter::convert_sample_response_to_pydict(py, Some(response)) {
+                                ordered_results.push((*original_idx, pyobj.into_any().into()));
+                            }
                         }
-                    });
+                    }
+                    // Sort by original_idx before pushing to the queue
+                    ordered_results.sort_by_key(|(idx, _)| *idx);
+                    found_count += ordered_results.len();
+                    for (_, pyobj) in ordered_results {
+                        GLOBAL_DATA_QUEUE.push(pyobj);
+                    }
                 });
                 info!(
                     "[R{}/S{}] Background thread {} completed batch {}: {}/{} samples loaded, memory: {:?} MB",
