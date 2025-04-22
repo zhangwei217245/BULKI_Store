@@ -588,7 +588,7 @@ pub fn fetch_samples_impl<'py>(
     for (sample_id, response) in results {
         dict.set_item(
             sample_id,
-            converter::convert_sample_response_to_pydict(py, Some(response))?,
+            converter::convert_sample_response_to_pydict(py, Some(&response))?,
         )?;
     }
     let elapsed_time = timer.elapsed().as_millis();
@@ -668,7 +668,7 @@ pub fn prefetch_samples_normal_impl<'py>(
                     .map(|(_global_sample_id, data)| {
                         match converter::convert_sample_response_to_pydict(
                             py,
-                            Some(data.to_owned()),
+                            Some(data),
                         ) {
                             Ok(dict) => {
                                 if let Ok(pyobj) = dict.into_py_any(py) {

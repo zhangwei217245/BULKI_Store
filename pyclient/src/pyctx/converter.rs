@@ -472,7 +472,7 @@ pub fn convert_sample_response_to_pydict<'py>(
     let dict = PyDict::new(py);
     if let Some(response) = response {
         response.variable_data.iter().for_each(|(k, v)| {
-            dict.set_item(
+            let _ = dict.set_item(
                 k,
                 v.to_owned()
                     .into_bound_py_any(py)
