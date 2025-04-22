@@ -23,6 +23,7 @@ uuid = { workspace = true }
 fnv = { workspace = true }
 futures = { workspace = true }
 sysinfo = { workspace = true }
+moka = { workspace = true }
 
 [features]
 default = ["mpi"]

@@ -34,6 +34,8 @@ lazy_static! {
     static ref LAST_TIMESTAMP: AtomicU64 = AtomicU64::new(0);
     pub static ref JOB_PROGRESS: Arc<RwLock<HashMap<String, JobProgress>>> =
         Arc::new(RwLock::new(HashMap::new()));
+    pub static ref CACHE: Arc<RwLock<HashMap<u128, GetSampleResponse>>> =
+        Arc::new(RwLock::new(HashMap::new()));
 }
 
 /// Initialize the global DataStore.
@@ -126,57 +128,54 @@ fn _get_single_object_data_with_store_guard(
     params: GetObjectSliceParams,
     store: &RwLockReadGuard<DataStore>,
 ) -> Result<GetObjectSliceResponse> {
-    let obj_id = match params.obj_id {
+    let main_obj_id = match params.obj_id {
         ObjectIdentifier::U128(id) => Ok(id),
         ObjectIdentifier::Name(name) => match store.get_obj_id_by_name(&name.as_str()) {
             Some(id) => Ok(id),
             None => Err(anyhow::anyhow!("Object not found")),
         },
     }?;
-    match store.get(obj_id) {
-        Some(obj) => {
-            // Convert SerializableSliceInfoElem to SliceInfoElem
-            let array_slice = obj.get_array_slice(params.region.map(|slices| {
-                slices
-                    .into_iter()
-                    .map(SliceInfoElem::from)
-                    .collect::<Vec<_>>()
-            }));
-            let sub_obj_regions: Option<Vec<(u128, Option<Vec<SliceInfoElem>>)>> =
-                params.sub_obj_regions.map(|sub_regions| {
-                    sub_regions
-                        .into_par_iter()
-                        .filter_map(|(name, slices)| {
-                            obj.get_child_id_by_name(&name).map(|id| {
-                                (
-                                    id,
-                                    match slices {
-                                        Some(slices) => Some(
-                                            slices
-                                                .into_iter()
-                                                .map(|x| SliceInfoElem::from(x))
-                                                .collect::<Vec<_>>(),
-                                        ),
-                                        None => None,
-                                    },
-                                )
-                            })
-                        })
-                        .collect()
-                });
-            let sub_obj_slices = match sub_obj_regions {
-                Some(regions) => store.get_regions_by_obj_ids(regions),
-                None => vec![],
-            };
-            let response = GetObjectSliceResponse {
-                obj_id,
-                obj_name: obj.name.clone(),
-                array_slice,
-                sub_obj_slices: Some(sub_obj_slices),
-            };
-            Ok(response)
-        }
-        None => Err(anyhow::anyhow!("Object not found")),
+    let main_obj_region = params.region.map(|slices| {
+        slices
+            .into_iter()
+            .map(SliceInfoElem::from)
+            .collect::<Vec<_>>()
+    });
+    let mut obj_regions = vec![(main_obj_id, main_obj_region)];
+    let sub_obj_regions: Option<Vec<(u128, Option<Vec<SliceInfoElem>>)>> =
+        params.sub_obj_regions.map(|sub_regions| {
+            sub_regions
+                .into_iter()
+                .filter_map(|(name, slices)| {
+                    store.get_obj_id_by_name(&name).map(|id| {
+                        (
+                            id,
+                            match slices {
+                                Some(slices) => Some(
+                                    slices
+                                        .into_iter()
+                                        .map(|x| SliceInfoElem::from(x))
+                                        .collect::<Vec<_>>(),
+                                ),
+                                None => None,
+                            },
+                        )
+                    })
+                })
+                .collect()
+        });
+    obj_regions.extend(sub_obj_regions.unwrap_or_default());
+    let obj_slices = store.get_regions_by_obj_ids(obj_regions);
+    if obj_slices.is_empty() {
+        return Err(anyhow::anyhow!("Object not found"));
+    } else {
+        let main_obj_record = obj_slices[0].clone();
+        return Ok(GetObjectSliceResponse {
+            obj_id: main_obj_record.0,
+            obj_name: main_obj_record.1,
+            array_slice: main_obj_record.2,
+            sub_obj_slices: Some(obj_slices[1..].to_vec()),
+        });
     }
 }
 
@@ -474,39 +473,51 @@ pub fn update_metadata(data: &mut RPCData) -> HandlerResult {
             })
             .unwrap();
 
-    // Acquire a write lock.
-    let store = GLOBAL_STORE.write().unwrap();
-    match store.get(id) {
-        Some(mut obj) => {
-            // Update the metadata and reinsert the object.
+    let update_success = {
+        let store = GLOBAL_STORE.write().unwrap();
+        // Store the result in a local variable first
+        let obj_ref = store.get_obj_ref_mut(&id);
+        if let Some(mut obj) = obj_ref {
             obj.set_metadata(key, value);
-            match store.insert(obj.clone()) {
-                Ok(_) => (),
-                Err(e) => {
-                    return HandlerResult {
-                        status_code: StatusCode::Internal as u8,
-                        message: Some(format!("Failed to update metadata: {}", e)),
-                    }
-                }
-            };
-            data.data = Some(
-                rmp_serde::to_vec(&obj)
-                    .map_err(|e| HandlerResult {
-                        status_code: StatusCode::Internal as u8,
-                        message: Some(format!("Failed to serialize object: {}", e)),
-                    })
-                    .unwrap(),
-            );
-            HandlerResult {
-                status_code: StatusCode::Ok as u8,
-                message: None,
-            }
+            true
+        } else {
+            false
         }
-        None => HandlerResult {
+    }; // Lock is released here
+
+    // Now generate the response based on the update result
+    if update_success {
+        // Set response data
+        data.data = Some(rmp_serde::to_vec(&true).unwrap());
+
+        // Return success
+        HandlerResult {
+            status_code: StatusCode::Ok as u8,
+            message: None,
+        }
+    } else {
+        // Object not found
+        HandlerResult {
             status_code: StatusCode::NotFound as u8,
             message: Some(format!("Object with id {} not found", id)),
-        },
+        }
     }
+}
+
+pub fn _load_batch_from_cache(
+    params: Vec<GetSampleRequest>,
+) -> (HashMap<usize, GetSampleResponse>, Vec<GetSampleRequest>) {
+    let mut results = HashMap::new();
+    let mut missing_params = Vec::new();
+    let cache = CACHE.read().unwrap();
+    for param in params {
+        if let Some(result) = cache.get(&(param.sample_id as u128)) {
+            results.insert(param.original_idx, result.clone());
+        } else {
+            missing_params.push(param);
+        }
+    }
+    (results, missing_params)
 }
 
 pub fn load_batch_samples(data: &mut RPCData) -> HandlerResult {
@@ -520,10 +531,20 @@ pub fn load_batch_samples(data: &mut RPCData) -> HandlerResult {
         })
         .unwrap();
 
+    let num_asked = params.len();
+    // Try to load from cache first
+    // let (results, missing_params) = _load_batch_from_cache(params);
+    let (results, missing_params) = (HashMap::new(), params);
+
+    // calculate cache hit ratio
+    let cache_hit_ratio = results.len() as f64 / num_asked as f64;
+    debug!("Cache hit ratio: {}", cache_hit_ratio);
+
+    // Load missing samples from store
     let store = GLOBAL_STORE.read().unwrap();
 
     // Collect results and timing data
-    let results_with_timing: Vec<((usize, GetSampleResponse), Vec<u128>)> = params
+    let results_with_timing: Vec<((usize, GetSampleResponse), Vec<u128>)> = missing_params
         .par_iter()
         .filter_map(|param| {
             let mut ticks = Vec::new();
@@ -645,10 +666,12 @@ pub fn load_batch_samples(data: &mut RPCData) -> HandlerResult {
         .collect();
 
     // Separate results and timing data
-    let result: HashMap<usize, GetSampleResponse> = results_with_timing
+    let mut result: HashMap<usize, GetSampleResponse> = results_with_timing
         .iter()
         .map(|((sample_id, response), _)| (*sample_id, response.clone()))
         .collect();
+
+    result.extend(results);
 
     let time_tick_collection: Vec<Vec<u128>> = results_with_timing
         .into_iter()
@@ -695,10 +718,11 @@ pub fn load_batch_samples(data: &mut RPCData) -> HandlerResult {
     }
 
     info!(
-        "[RX Rank {:?}] load_batch_samples: {}/{} samples loaded, overall time {} μs: avg_sample_fetching={}, avg_metadata={}, avg_region_calc={}, avg_slice_fetch={}",
+        "[RX Rank {:?}] load_batch_samples: {}/{} samples loaded, cache hit ratio: {}, overall time {} μs: avg_sample_fetching={}, avg_metadata={}, avg_region_calc={}, avg_slice_fetch={}",
         crate::srvctx::get_rank(),
         result.len(),
-        params.len(),
+        num_asked,
+        cache_hit_ratio,
         overall_timer.elapsed().as_micros(),
         timing_data.3,
         timing_data.0,
@@ -733,7 +757,8 @@ pub fn update_array(data: &mut RPCData) -> HandlerResult {
             .unwrap();
 
     let store = GLOBAL_STORE.write().unwrap();
-    match store.get(id) {
+    let obj_ref = store.get_obj_ref_mut(&id);
+    match obj_ref {
         Some(mut obj) => {
             // Update the NDArray and reinsert the object.
             obj.attach_array(array);
@@ -747,7 +772,7 @@ pub fn update_array(data: &mut RPCData) -> HandlerResult {
                 }
             };
             data.data = Some(
-                rmp_serde::to_vec(&obj)
+                rmp_serde::to_vec(&true)
                     .map_err(|e| HandlerResult {
                         status_code: StatusCode::Internal as u8,
                         message: Some(format!("Failed to serialize object: {}", e)),

@@ -8,13 +8,14 @@ use ndarray::SliceInfoElem;
 use anyhow::Result;
 use objid::GlobalObjectIdExt;
 use params::CreateObjectParams;
-// use rayon::prelude::*;
+use rayon::prelude::*;
 use rmp_serde::encode;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::fmt::Debug;
 use std::fs::File;
 use std::io::Write;
+use std::ops::{Deref, DerefMut};
 use types::{MetadataValue, SupportedRustArrayD};
 
 /// A DataObject that can own an NDArray of various numeric types
@@ -118,7 +119,7 @@ impl DataObject {
         region: Option<Vec<SliceInfoElem>>,
     ) -> Option<SupportedRustArrayD> {
         match (self.array.as_ref(), region) {
-            (Some(arr), Some(region)) => Some(arr.slice(&region)),
+            (Some(arr), Some(region)) => Some(arr.slice_into_array_d(&region)),
             _ => None,
         }
     }
@@ -237,8 +238,19 @@ impl DataStore {
     }
 
     /// Retrieve a DataObject by its u128 ID.
-    pub fn get(&self, id: u128) -> Option<DataObject> {
+    pub fn get_obj_owned(&self, id: u128) -> Option<DataObject> {
         self.objects.get(&id).map(|entry| entry.clone())
+    }
+
+    pub fn get_obj_ref<'a>(&'a self, id: &u128) -> Option<impl Deref<Target = DataObject> + 'a> {
+        self.objects.get(id)
+    }
+
+    pub fn get_obj_ref_mut<'a>(
+        &'a self,
+        id: &u128,
+    ) -> Option<impl DerefMut<Target = DataObject> + 'a> {
+        self.objects.get_mut(id)
     }
 
     /// Retrieve a DataObject by its name.
@@ -254,7 +266,8 @@ impl DataStore {
         keys: Vec<&str>,
     ) -> Option<HashMap<String, MetadataValue>> {
         self.name_obj_idx.get(obj_name).and_then(|reference| {
-            self.get(reference.value().to_owned())
+            self.objects
+                .get(reference.value())
                 .map(|obj| obj.get_metadata_map(keys))
         })?
     }
@@ -334,7 +347,8 @@ impl DataStore {
         id: u128,
         region: Option<Vec<SliceInfoElem>>,
     ) -> Option<SupportedRustArrayD> {
-        self.get(id)?.get_array_slice(region)
+        self.get_obj_ref(&id)
+            .and_then(|obj| obj.get_array_slice(region))
     }
 
     /// Retrieve slices from multiple arrays, each with its own slice pattern
@@ -348,13 +362,23 @@ impl DataStore {
         &self,
         obj_regions: Vec<(u128, Option<Vec<SliceInfoElem>>)>,
     ) -> Vec<(u128, String, Option<SupportedRustArrayD>)> {
-        obj_regions
-            .into_iter()
-            .map(|(id, region)| match self.get(id) {
-                Some(obj) => (id, obj.name.clone(), self.get_object_slice(id, region)),
-                None => (id, "".to_string(), None),
+        let mut results: Vec<_> = obj_regions
+            .into_par_iter()
+            .enumerate()
+            .map(|(idx, (id, region))| {
+                let result = match self.get_obj_ref(&id) {
+                    Some(obj) => (id, obj.name.clone(), obj.get_array_slice(region)),
+                    None => (id, "".to_string(), None),
+                };
+                (idx, result)
             })
-            .collect()
+            .collect();
+
+        // Sort by the original index to restore input order
+        results.sort_by_key(|(idx, _)| *idx);
+
+        // Remove the index from the results
+        results.into_iter().map(|(_, result)| result).collect()
     }
 
     /// Remove a DataObject from the store by its u128 ID.

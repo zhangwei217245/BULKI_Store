@@ -1,5 +1,5 @@
 use super::objid::{GlobalObjectId, GlobalObjectIdExt};
-use ndarray::{ArrayD, IxDyn, SliceInfo, SliceInfoElem};
+use ndarray::{ArrayD, ArrayViewD, IxDyn, SliceInfo, SliceInfoElem};
 use serde::{Deserialize, Serialize};
 
 /// Represents various types of metadata values.
@@ -51,6 +51,81 @@ impl MetadataValue {
     }
 }
 
+pub enum SupportedRustArrayViewD<'a> {
+    Float32(ArrayViewD<'a, f32>),
+    Float64(ArrayViewD<'a, f64>),
+    // Signed integer types
+    Int8(ArrayViewD<'a, i8>),
+    Int16(ArrayViewD<'a, i16>),
+    Int32(ArrayViewD<'a, i32>),
+    Int64(ArrayViewD<'a, i64>),
+    Int128(ArrayViewD<'a, i128>),
+    // Unsigned integer types
+    UInt8(ArrayViewD<'a, u8>),
+    UInt16(ArrayViewD<'a, u16>),
+    UInt32(ArrayViewD<'a, u32>),
+    UInt64(ArrayViewD<'a, u64>),
+    UInt128(ArrayViewD<'a, u128>),
+}
+
+impl<'a> SupportedRustArrayViewD<'a> {
+    pub fn into_rust_array_d(&self) -> SupportedRustArrayD {
+        match self {
+            SupportedRustArrayViewD::Float32(arr) => SupportedRustArrayD::Float32(arr.to_owned()),
+            SupportedRustArrayViewD::Float64(arr) => SupportedRustArrayD::Float64(arr.to_owned()),
+            SupportedRustArrayViewD::Int8(arr) => SupportedRustArrayD::Int8(arr.to_owned()),
+            SupportedRustArrayViewD::Int16(arr) => SupportedRustArrayD::Int16(arr.to_owned()),
+            SupportedRustArrayViewD::Int32(arr) => SupportedRustArrayD::Int32(arr.to_owned()),
+            SupportedRustArrayViewD::Int64(arr) => SupportedRustArrayD::Int64(arr.to_owned()),
+            SupportedRustArrayViewD::Int128(arr) => SupportedRustArrayD::Int128(arr.to_owned()),
+            SupportedRustArrayViewD::UInt8(arr) => SupportedRustArrayD::UInt8(arr.to_owned()),
+            SupportedRustArrayViewD::UInt16(arr) => SupportedRustArrayD::UInt16(arr.to_owned()),
+            SupportedRustArrayViewD::UInt32(arr) => SupportedRustArrayD::UInt32(arr.to_owned()),
+            SupportedRustArrayViewD::UInt64(arr) => SupportedRustArrayD::UInt64(arr.to_owned()),
+            SupportedRustArrayViewD::UInt128(arr) => SupportedRustArrayD::UInt128(arr.to_owned()),
+        }
+    }
+
+    pub fn slice(&self, region: &[SliceInfoElem]) -> SupportedRustArrayViewD {
+        match self {
+            SupportedRustArrayViewD::Float32(arr) => {
+                SupportedRustArrayViewD::Float32(arr.slice(region))
+            }
+            SupportedRustArrayViewD::Float64(arr) => {
+                SupportedRustArrayViewD::Float64(arr.slice(region))
+            }
+            SupportedRustArrayViewD::Int8(arr) => SupportedRustArrayViewD::Int8(arr.slice(region)),
+            SupportedRustArrayViewD::Int16(arr) => {
+                SupportedRustArrayViewD::Int16(arr.slice(region))
+            }
+            SupportedRustArrayViewD::Int32(arr) => {
+                SupportedRustArrayViewD::Int32(arr.slice(region))
+            }
+            SupportedRustArrayViewD::Int64(arr) => {
+                SupportedRustArrayViewD::Int64(arr.slice(region))
+            }
+            SupportedRustArrayViewD::Int128(arr) => {
+                SupportedRustArrayViewD::Int128(arr.slice(region))
+            }
+            SupportedRustArrayViewD::UInt8(arr) => {
+                SupportedRustArrayViewD::UInt8(arr.slice(region))
+            }
+            SupportedRustArrayViewD::UInt16(arr) => {
+                SupportedRustArrayViewD::UInt16(arr.slice(region))
+            }
+            SupportedRustArrayViewD::UInt32(arr) => {
+                SupportedRustArrayViewD::UInt32(arr.slice(region))
+            }
+            SupportedRustArrayViewD::UInt64(arr) => {
+                SupportedRustArrayViewD::UInt64(arr.slice(region))
+            }
+            SupportedRustArrayViewD::UInt128(arr) => {
+                SupportedRustArrayViewD::UInt128(arr.slice(region))
+            }
+        }
+    }
+}
+
 /// Represents the different types of arrays that can be stored
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum SupportedRustArrayD {
@@ -72,8 +147,50 @@ pub enum SupportedRustArrayD {
 }
 
 impl SupportedRustArrayD {
+    pub fn into_array_view(&self) -> SupportedRustArrayViewD {
+        match self {
+            // Floating point types
+            SupportedRustArrayD::Float32(arr) => SupportedRustArrayViewD::Float32(arr.view()),
+            SupportedRustArrayD::Float64(arr) => SupportedRustArrayViewD::Float64(arr.view()),
+            // Signed integer types
+            SupportedRustArrayD::Int8(arr) => SupportedRustArrayViewD::Int8(arr.view()),
+            SupportedRustArrayD::Int16(arr) => SupportedRustArrayViewD::Int16(arr.view()),
+            SupportedRustArrayD::Int32(arr) => SupportedRustArrayViewD::Int32(arr.view()),
+            SupportedRustArrayD::Int64(arr) => SupportedRustArrayViewD::Int64(arr.view()),
+            SupportedRustArrayD::Int128(arr) => SupportedRustArrayViewD::Int128(arr.view()),
+            // Unsigned integer types
+            SupportedRustArrayD::UInt8(arr) => SupportedRustArrayViewD::UInt8(arr.view()),
+            SupportedRustArrayD::UInt16(arr) => SupportedRustArrayViewD::UInt16(arr.view()),
+            SupportedRustArrayD::UInt32(arr) => SupportedRustArrayViewD::UInt32(arr.view()),
+            SupportedRustArrayD::UInt64(arr) => SupportedRustArrayViewD::UInt64(arr.view()),
+            SupportedRustArrayD::UInt128(arr) => SupportedRustArrayViewD::UInt128(arr.view()),
+        }
+    }
+    /// Get a slice of the array, returning the corresponding array view type
+    pub fn slice_into_array_view(&self, region: &[SliceInfoElem]) -> SupportedRustArrayViewD {
+        // Create SliceInfo
+        let info = SliceInfo::<_, IxDyn, IxDyn>::try_from(region).expect("Invalid slice pattern");
+
+        match self {
+            // Floating point types
+            SupportedRustArrayD::Float32(arr) => SupportedRustArrayViewD::Float32(arr.slice(&info)),
+            SupportedRustArrayD::Float64(arr) => SupportedRustArrayViewD::Float64(arr.slice(&info)),
+            // Signed integer types
+            SupportedRustArrayD::Int8(arr) => SupportedRustArrayViewD::Int8(arr.slice(&info)),
+            SupportedRustArrayD::Int16(arr) => SupportedRustArrayViewD::Int16(arr.slice(&info)),
+            SupportedRustArrayD::Int32(arr) => SupportedRustArrayViewD::Int32(arr.slice(&info)),
+            SupportedRustArrayD::Int64(arr) => SupportedRustArrayViewD::Int64(arr.slice(&info)),
+            SupportedRustArrayD::Int128(arr) => SupportedRustArrayViewD::Int128(arr.slice(&info)),
+            // Unsigned integer types
+            SupportedRustArrayD::UInt8(arr) => SupportedRustArrayViewD::UInt8(arr.slice(&info)),
+            SupportedRustArrayD::UInt16(arr) => SupportedRustArrayViewD::UInt16(arr.slice(&info)),
+            SupportedRustArrayD::UInt32(arr) => SupportedRustArrayViewD::UInt32(arr.slice(&info)),
+            SupportedRustArrayD::UInt64(arr) => SupportedRustArrayViewD::UInt64(arr.slice(&info)),
+            SupportedRustArrayD::UInt128(arr) => SupportedRustArrayViewD::UInt128(arr.slice(&info)),
+        }
+    }
     /// Get a slice of the array, returning the same type
-    pub fn slice(&self, region: &[SliceInfoElem]) -> SupportedRustArrayD {
+    pub fn slice_into_array_d(&self, region: &[SliceInfoElem]) -> SupportedRustArrayD {
         // Create SliceInfo
         let info = SliceInfo::<_, IxDyn, IxDyn>::try_from(region).expect("Invalid slice pattern");
 
