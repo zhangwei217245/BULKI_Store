@@ -467,18 +467,19 @@ pub fn convert_get_object_meta_response_to_pydict<'py>(
 
 pub fn convert_sample_response_to_pydict<'py>(
     py: Python<'py>,
-    response: Option<GetSampleResponse>,
+    response: Option<&GetSampleResponse>,
 ) -> PyResult<Bound<'py, PyDict>> {
     let dict = PyDict::new(py);
-    let vdata = response.map(|r| r.variable_data).unwrap_or_default();
-    vdata.iter().for_each(|(var_key, data)| {
-        let _ = dict.set_item(
-            var_key,
-            data.to_owned()
-                .into_bound_py_any(py)
-                .unwrap_or(py.None().into_bound(py)),
-        );
-    });
+    if let Some(response) = response {
+        response.variable_data.iter().for_each(|(k, v)| {
+            dict.set_item(
+                k,
+                v.to_owned()
+                    .into_bound_py_any(py)
+                    .unwrap_or(py.None().into_bound(py)),
+            );
+        });
+    }
     Ok(dict)
 }
 

@@ -34,8 +34,6 @@ lazy_static! {
     static ref LAST_TIMESTAMP: AtomicU64 = AtomicU64::new(0);
     pub static ref JOB_PROGRESS: Arc<RwLock<HashMap<String, JobProgress>>> =
         Arc::new(RwLock::new(HashMap::new()));
-    pub static ref CACHE: Arc<RwLock<HashMap<u128, GetSampleResponse>>> =
-        Arc::new(RwLock::new(HashMap::new()));
 }
 
 /// Initialize the global DataStore.
@@ -504,22 +502,6 @@ pub fn update_metadata(data: &mut RPCData) -> HandlerResult {
     }
 }
 
-pub fn _load_batch_from_cache(
-    params: Vec<GetSampleRequest>,
-) -> (HashMap<usize, GetSampleResponse>, Vec<GetSampleRequest>) {
-    let mut results = HashMap::new();
-    let mut missing_params = Vec::new();
-    let cache = CACHE.read().unwrap();
-    for param in params {
-        if let Some(result) = cache.get(&(param.sample_id as u128)) {
-            results.insert(param.original_idx, result.clone());
-        } else {
-            missing_params.push(param);
-        }
-    }
-    (results, missing_params)
-}
-
 pub fn load_batch_samples(data: &mut RPCData) -> HandlerResult {
     // input : Vec<GetSampleRequest>,
     // output: HashMap<usize, GetSampleResponse>
@@ -531,20 +513,11 @@ pub fn load_batch_samples(data: &mut RPCData) -> HandlerResult {
         })
         .unwrap();
 
-    let num_asked = params.len();
-    // Try to load from cache first
-    // let (results, missing_params) = _load_batch_from_cache(params);
-    let (results, missing_params) = (HashMap::new(), params);
-
-    // calculate cache hit ratio
-    let cache_hit_ratio = results.len() as f64 / num_asked as f64;
-    debug!("Cache hit ratio: {}", cache_hit_ratio);
-
     // Load missing samples from store
     let store = GLOBAL_STORE.read().unwrap();
 
     // Collect results and timing data
-    let results_with_timing: Vec<((usize, GetSampleResponse), Vec<u128>)> = missing_params
+    let results_with_timing: Vec<((usize, GetSampleResponse), Vec<u128>)> = params
         .par_iter()
         .filter_map(|param| {
             let mut ticks = Vec::new();
@@ -666,12 +639,10 @@ pub fn load_batch_samples(data: &mut RPCData) -> HandlerResult {
         .collect();
 
     // Separate results and timing data
-    let mut result: HashMap<usize, GetSampleResponse> = results_with_timing
+    let result: HashMap<usize, GetSampleResponse> = results_with_timing
         .iter()
         .map(|((sample_id, response), _)| (*sample_id, response.clone()))
         .collect();
-
-    result.extend(results);
 
     let time_tick_collection: Vec<Vec<u128>> = results_with_timing
         .into_iter()
@@ -718,11 +689,10 @@ pub fn load_batch_samples(data: &mut RPCData) -> HandlerResult {
     }
 
     info!(
-        "[RX Rank {:?}] load_batch_samples: {}/{} samples loaded, cache hit ratio: {}, overall time {} μs: avg_sample_fetching={}, avg_metadata={}, avg_region_calc={}, avg_slice_fetch={}",
+        "[RX Rank {:?}] load_batch_samples: {}/{} samples loaded, overall time {} μs: avg_sample_fetching={}, avg_metadata={}, avg_region_calc={}, avg_slice_fetch={}",
         crate::srvctx::get_rank(),
         result.len(),
-        num_asked,
-        cache_hit_ratio,
+        params.len(),
         overall_timer.elapsed().as_micros(),
         timing_data.3,
         timing_data.0,

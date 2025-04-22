@@ -737,7 +737,7 @@ pub fn prefetch_samples_into_queue_impl<'py>(
         PREFETCH_THREAD_POOL.spawn(move || {
             let thread_id_clone = thread_id.clone();
             loop {
-                let batch = match GLOBAL_INDEX_QUEUE.pop() {
+                let ordered_index_group = match GLOBAL_INDEX_QUEUE.pop() {
                     Some(batch) => batch,
                     None => {
                         // If queue is empty, sleep a bit and try again
@@ -745,12 +745,11 @@ pub fn prefetch_samples_into_queue_impl<'py>(
                         continue;
                     }
                 };
-                let (batch_idx, batch_data) = batch;
+                let (group_idx, index_group) = ordered_index_group;
                 // Calculate partition mappings (objectId, local_sample_id, global_sample_id)
-                let mut grouped_request: HashMap<u32, Vec<GetSampleRequest>> = HashMap::new();
-                batch_data
+                let grouped_requests = index_group
                     .iter()
-                    .for_each(|(original_idx, global_sample_id)| {
+                    .map(|(original_idx, global_sample_id)| {
                         let part_id = global_sample_id / part_size;
                         let local_smp_id = global_sample_id % part_size;
                         let obj_identifier = ObjectIdentifier::Name(format!(
@@ -759,19 +758,18 @@ pub fn prefetch_samples_into_queue_impl<'py>(
                             part_id
                         ));
                         let lookup_id = obj_identifier.vnode_id() % get_server_count();
-                        let request = GetSampleRequest {
+                        (lookup_id, GetSampleRequest {
                             original_idx: *original_idx,
                             sample_id: *global_sample_id,
                             obj_id: obj_identifier,
                             local_sample_id: local_smp_id,
                             sample_var_keys: sample_var_keys_clone.clone(),
-                        };
-                        grouped_request
-                            .entry(lookup_id)
-                            .and_modify(|v: &mut Vec<GetSampleRequest>| v.push(request.clone()))
-                            .or_insert_with(|| vec![request.clone()]);
+                        })
+                    }).fold(HashMap::new(), |mut acc, (lookup_id, request)| {
+                        acc.entry(lookup_id).or_insert_with(Vec::new).push(request);
+                        acc
                     });
-                let results = grouped_request
+                let results = grouped_requests
                     .par_iter()
                     .map(|(&lookup_id, requests)| {
                         match rpc_call::<Vec<GetSampleRequest>, HashMap<usize, GetSampleResponse>>(
@@ -799,7 +797,7 @@ pub fn prefetch_samples_into_queue_impl<'py>(
                 // Wait until it's this batch's turn to be processed
                 loop {
                     let current_index = NEXT_BATCH_INDEX.load(Ordering::SeqCst);
-                    if current_index == batch_idx {
+                    if current_index == group_idx {
                         // It's our turn to process
                         break;
                     }
@@ -808,13 +806,11 @@ pub fn prefetch_samples_into_queue_impl<'py>(
                 }
                 let mut found_count = 0;
                 Python::with_gil(|py| {
-                    batch_data.iter().for_each(|(_, global_sample_id)| {
-                        let response = results.get(global_sample_id).unwrap().clone();
-                        let pyobj = converter::convert_sample_response_to_pydict(
+                    index_group.iter().for_each(|(_, global_sample_id)| {
+                        if let Ok(pyobj) = converter::convert_sample_response_to_pydict(
                             py,
-                            Some(response.to_owned()),
-                        );
-                        if let Ok(pyobj) = pyobj {
+                            results.get(global_sample_id),
+                        ) {
                             GLOBAL_DATA_QUEUE.push(pyobj.into_any().into());
                             found_count += 1;
                         }
@@ -825,9 +821,9 @@ pub fn prefetch_samples_into_queue_impl<'py>(
                     get_client_rank(),
                     get_client_count(),
                     thread_id_clone,
-                    batch_idx,
+                    group_idx,
                     found_count,
-                    batch_data.len(),
+                    index_group.len(),
                     SystemUtility::get_current_memory_usage_mb()
                 );
                 NEXT_BATCH_INDEX.fetch_add(1, Ordering::SeqCst);
