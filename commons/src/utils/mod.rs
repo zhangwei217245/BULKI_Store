@@ -72,7 +72,7 @@ impl RPCUtility {
             Some(metadata) => {
                 let current_time = TimeUtility::get_timestamp_us();
                 let request_transfer = metadata.request_received_time - metadata.request_issued_time;
-                info!("Request id: {:?}, handler name: {:?}, request-transfer: {:?}  processing-duration: {:?}  calculated-response-transfer: {:?}  total-time: {:?}", 
+                debug!("Request id: {:?}, handler name: {:?}, request-transfer: {:?}  processing-duration: {:?}  calculated-response-transfer: {:?}  total-time: {:?}", 
                 metadata.request_id, metadata.handler_name, 
                 request_transfer, // request-transfer
                 metadata.processing_duration_us, // processing duration without serde

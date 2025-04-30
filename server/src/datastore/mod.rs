@@ -23,7 +23,7 @@ use rayon::prelude::*;
 use rmp_serde;
 use std::collections::HashMap;
 use std::io::Write;
-use std::sync::atomic::{AtomicU32, AtomicU64};
+use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, RwLock, RwLockReadGuard};
 use std::time::Instant;
 
@@ -34,6 +34,7 @@ lazy_static! {
     static ref LAST_TIMESTAMP: AtomicU64 = AtomicU64::new(0);
     pub static ref JOB_PROGRESS: Arc<RwLock<HashMap<String, JobProgress>>> =
         Arc::new(RwLock::new(HashMap::new()));
+    pub static ref LOG_EXEC_COUNTER: AtomicU32 = AtomicU32::new(0);
 }
 
 /// Initialize the global DataStore.
@@ -192,11 +193,13 @@ pub fn get_object_data(data: &mut RPCData) -> HandlerResult {
         })
         .unwrap();
 
-    info!(
-        "[RX Rank {:?}] get_object_data: from client {:?}",
-        crate::srvctx::get_rank(),
-        data.metadata.as_ref().unwrap().client_rank
-    );
+    if LOG_EXEC_COUNTER.fetch_add(1, Ordering::Relaxed) % 100 == 0 {
+        info!(
+            "[RX Rank {:?}] get_object_data: from client {:?}",
+            crate::srvctx::get_rank(),
+            data.metadata.as_ref().unwrap().client_rank
+        );
+    }
 
     match get_single_object_data(params) {
         Ok(response) => {
@@ -688,17 +691,19 @@ pub fn load_batch_samples(data: &mut RPCData) -> HandlerResult {
         );
     }
 
-    info!(
-        "[RX Rank {:?}] load_batch_samples: {}/{} samples loaded, overall time {} μs: avg_sample_fetching={}, avg_metadata={}, avg_region_calc={}, avg_slice_fetch={}",
-        crate::srvctx::get_rank(),
-        result.len(),
-        params.len(),
-        overall_timer.elapsed().as_micros(),
-        timing_data.3,
-        timing_data.0,
-        timing_data.1,
-        timing_data.2
-    );
+    if LOG_EXEC_COUNTER.fetch_add(1, Ordering::Relaxed) % 100 == 0 {
+        info!(
+            "[RX Rank {:?}] load_batch_samples: {}/{} samples loaded, overall time {} μs: avg_sample_fetching={}, avg_metadata={}, avg_region_calc={}, avg_slice_fetch={}",
+            crate::srvctx::get_rank(),
+            result.len(),
+            params.len(),
+            overall_timer.elapsed().as_micros(),
+            timing_data.3,
+            timing_data.0,
+            timing_data.1,
+            timing_data.2
+        );
+    }
 
     data.data = Some(
         rmp_serde::to_vec(&result)

@@ -60,6 +60,7 @@ lazy_static! {
             .expect("Failed to build Rayon thread pool")
     };
     pub static ref NEXT_BATCH_INDEX: Arc<AtomicUsize> = Arc::new(AtomicUsize::new(0));
+    pub static ref LOG_EXEC_COUNTER: AtomicU32 = AtomicU32::new(0);
 }
 
 pub fn init_py<'py>(
@@ -291,11 +292,12 @@ pub fn create_object_impl<'py>(
     .map_err(|e| PyErr::new::<PyValueError, _>(format!("Failed to create objects: {}", e)))?;
     debug!("create_objects: result vector length: {:?}", result.len());
     debug!("create_objects: result vector: {:?}", result);
-    info!(
-        "[R{}/S{}] create_objects: result vector: {:?} in {:?} ms, memory: {:?} MB",
-        get_client_rank(),
-        get_client_count(),
-        result,
+    if LOG_EXEC_COUNTER.fetch_add(1, Ordering::Relaxed) % 100 == 0 {
+        info!(
+            "[R{}/S{}] create_objects: result vector: {:?} in {:?} ms, memory: {:?} MB",
+            get_client_rank(),
+            get_client_count(),
+            result,
         timer.elapsed().as_millis(),
         SystemUtility::get_current_memory_usage_mb()
     );
@@ -327,11 +329,12 @@ pub fn get_object_metadata_impl<'py>(
                 PyErr::new::<PyValueError, _>(format!("Failed to get object metadata: {}", e))
             })?;
             debug!("get_object_metadata: result: {:?}", result);
-            info!(
-                "[R{}/S{}] get_object_metadata: result: {:?}, {:?} in {:?} ms, memory: {:?} MB",
-                get_client_rank(),
-                get_client_count(),
-                result.obj_id,
+            if LOG_EXEC_COUNTER.fetch_add(1, Ordering::Relaxed) % 100 == 0 {
+                info!(
+                    "[R{}/S{}] get_object_metadata: result: {:?}, {:?} in {:?} ms, memory: {:?} MB",
+                    get_client_rank(),
+                    get_client_count(),
+                    result.obj_id,
                 result.obj_name,
                 timer.elapsed().as_millis(),
                 SystemUtility::get_current_memory_usage_mb()
@@ -388,14 +391,16 @@ pub fn get_multiple_object_metadata_impl<'py>(
             };
         }
     }
-    info!(
-        "[R{}/S{}] get_multiple_object_metadata complete, {:?} in {:?} ms, memory usage: {} MB",
-        get_client_rank(),
-        get_client_count(),
-        obj_ids.len(),
-        timer.elapsed().as_millis(),
-        SystemUtility::get_current_memory_usage_mb()
-    );
+    if LOG_EXEC_COUNTER.fetch_add(1, Ordering::Relaxed) % 100 == 0 {
+        info!(
+            "[R{}/S{}] get_multiple_object_metadata complete, {:?} in {:?} ms, memory usage: {} MB",
+            get_client_rank(),
+            get_client_count(),
+            obj_ids.len(),
+            timer.elapsed().as_millis(),
+            SystemUtility::get_current_memory_usage_mb()
+        );
+    }
     Ok(results.into())
 }
 
@@ -429,15 +434,17 @@ pub fn get_object_data_impl<'py>(
                 }),
             }?;
 
-            info!(
-                "[R{}/S{}] get_object_data: result: {:?}, {:?} in {:?}ms, memory: {:?} MB",
-                get_client_rank(),
-                get_client_count(),
-                result.obj_id,
-                result.obj_name,
-                timer.elapsed().as_millis(),
-                SystemUtility::get_current_memory_usage_mb()
-            );
+            if LOG_EXEC_COUNTER.fetch_add(1, Ordering::Relaxed) % 100 == 0 {
+                info!(
+                    "[R{}/S{}] get_object_data: result: {:?}, {:?} in {:?}ms, memory: {:?} MB",
+                    get_client_rank(),
+                    get_client_count(),
+                    result.obj_id,
+                    result.obj_name,
+                    timer.elapsed().as_millis(),
+                    SystemUtility::get_current_memory_usage_mb()
+                );
+            }
             converter::convert_get_object_slice_response_to_pydict(py, result)
                 .map(|dict| dict.into())
         }
@@ -488,14 +495,16 @@ pub fn get_multiple_object_data_impl<'py>(
             };
         }
     }
-    info!(
-        "[R{}/S{}] get_multiple_object_data complete, {:?} in {:?} ms, memory usage: {} MB",
-        get_client_rank(),
-        get_client_count(),
-        obj_ids.len(),
-        timer.elapsed().as_millis(),
-        SystemUtility::get_current_memory_usage_mb()
-    );
+    if LOG_EXEC_COUNTER.fetch_add(1, Ordering::Relaxed) % 100 == 0 {
+        info!(
+            "[R{}/S{}] get_multiple_object_data complete, {:?} in {:?} ms, memory usage: {} MB",
+            get_client_rank(),
+            get_client_count(),
+            obj_ids.len(),
+            timer.elapsed().as_millis(),
+            SystemUtility::get_current_memory_usage_mb()
+        );
+    }
     Ok(results.into())
 }
 
@@ -592,14 +601,16 @@ pub fn fetch_samples_impl<'py>(
         )?;
     }
     let elapsed_time = timer.elapsed().as_millis();
-    info!(
-        "[R{}/S{}] fetch_samples: {:?} in {:?} ms, memory: {:?} MB",
-        get_client_rank(),
-        get_client_count(),
-        sample_ids.len(),
-        elapsed_time,
-        SystemUtility::get_current_memory_usage_mb()
-    );
+    if LOG_EXEC_COUNTER.fetch_add(1, Ordering::Relaxed) % 100 == 0 {
+        info!(
+            "[R{}/S{}] fetch_samples: {:?} in {:?} ms, memory: {:?} MB",
+            get_client_rank(),
+            get_client_count(),
+            sample_ids.len(),
+            elapsed_time,
+            SystemUtility::get_current_memory_usage_mb()
+        );
+    }
     Ok(dict.into())
 }
 
@@ -653,7 +664,7 @@ pub fn prefetch_samples_normal_impl<'py>(
             ) {
                 Ok(result) => result,
                 Err(e) => {
-                    eprintln!(
+                    error!(
                         "Error in background prefetch task for server {}: {}",
                         server_id, e
                     );
@@ -683,15 +694,17 @@ pub fn prefetch_samples_normal_impl<'py>(
                     })
                     .sum::<usize>();
 
-                info!(
-                    "[R{}/S{}] Background thread for server {} completed: {}/{} samples loaded, memory: {:?} MB",
-                    get_client_rank(),
-                    get_client_count(),
-                    server_id,
-                    found_count,
-                    requests_clone.len(),
-                    SystemUtility::get_current_memory_usage_mb()
-                );
+                if LOG_EXEC_COUNTER.fetch_add(1, Ordering::Relaxed) % 100 == 0 {
+                    info!(
+                        "[R{}/S{}] Background thread for server {} completed: {}/{} samples loaded, memory: {:?} MB",
+                        get_client_rank(),
+                        get_client_count(),
+                        server_id,
+                        found_count,
+                        requests_clone.len(),
+                        SystemUtility::get_current_memory_usage_mb()
+                    );
+                }
             });
         });
     }
@@ -821,16 +834,18 @@ pub fn prefetch_samples_into_queue_impl<'py>(
                         GLOBAL_DATA_QUEUE.push(pyobj);
                     }
                 });
-                info!(
-                    "[R{}/S{}] Background thread {} completed batch {}: {}/{} samples loaded, memory: {:?} MB",
-                    get_client_rank(),
-                    get_client_count(),
-                    thread_id_clone,
-                    group_idx,
-                    found_count,
-                    index_group.len(),
-                    SystemUtility::get_current_memory_usage_mb()
-                );
+                if LOG_EXEC_COUNTER.fetch_add(1, Ordering::Relaxed) % 100 == 0 {
+                    info!(
+                        "[R{}/S{}] Background thread {} completed batch {}: {}/{} samples loaded, memory: {:?} MB",
+                        get_client_rank(),
+                        get_client_count(),
+                        thread_id_clone,
+                        group_idx,
+                        found_count,
+                        index_group.len(),
+                        SystemUtility::get_current_memory_usage_mb()
+                    );
+                }
                 NEXT_BATCH_INDEX.fetch_add(1, Ordering::SeqCst);
                 // Explicit memory management to prevent leaks
                 Python::with_gil(|py| {
