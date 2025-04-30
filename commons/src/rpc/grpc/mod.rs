@@ -5,7 +5,7 @@ pub mod bulkistore {
 
 use crate::err::RpcErr;
 use crate::handler::HandlerDispatcher;
-use crate::utils::{FileUtility, TimeUtility};
+use crate::utils::{FileUtility, NetworkUtility, TimeUtility};
 use crate::{
     err::{RPCResult, StatusCode},
     rpc::{MessageType, RPCData, RPCMetadata, RxContext, RxEndpoint, TxContext, TxEndpoint},
@@ -29,14 +29,14 @@ use std::io::Write;
 use std::marker::Sync;
 use std::net::SocketAddr;
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use tokio::sync::oneshot;
 use tonic::codec::CompressionEncoding;
 use tonic::transport::{Channel, Server};
 use tonic::Request;
 
 const MAX_SERVER_ADDR_LEN: usize = 256;
-const DEFAULT_BASE_PORT: u16 = 50051;
+const DEFAULT_BASE_PORT: u16 = 50000;
 
 const MAX_DECODING_MESSAGE_SIZE: usize = usize::MAX - 100;
 const MAX_ENCODING_MESSAGE_SIZE: usize = usize::MAX - 100;
@@ -292,67 +292,68 @@ impl RxEndpoint for GrpcRX {
         start_listen: oneshot::Sender<()>,
         shutdown_rx: oneshot::Receiver<()>,
     ) -> Result<(), anyhow::Error> {
-        let rx_rank = (self.rx_id % 10 * 100) + self.context.rank as u16;
+        let rx_rank = (self.rx_id % 10 * 10) + self.context.rank as u16;
         let base_port = DEFAULT_BASE_PORT + rx_rank;
-        let max_attempts = 20;
+        // let max_attempts = 200;
 
         let hostname = hostname::get()?
             .into_string()
             .map_err(|_| anyhow::anyhow!("Invalid hostname"))?;
 
-        // Use localhost IP for binding
-        for port in base_port..base_port + max_attempts {
-            debug!("Attempting to start server on {}:{}", hostname, port);
-
-            let addr = format!("0.0.0.0:{}", port);
-            let service = Arc::new(self.clone());
-
-            match addr.parse::<SocketAddr>() {
-                Ok(socket_addr) => {
-                    // bind with TCPListener
-                    let listener = tokio::net::TcpListener::bind(socket_addr).await?;
-                    // spawn a new task to start server
-                    tokio::spawn(async move {
-                        Server::builder()
-                            .add_service(
-                                GrpcBulkistoreServer::from_arc(service)
-                                    .max_decoding_message_size(MAX_DECODING_MESSAGE_SIZE)
-                                    .max_encoding_message_size(MAX_ENCODING_MESSAGE_SIZE)
-                                    .accept_compressed(CompressionEncoding::Zstd)
-                                    .send_compressed(CompressionEncoding::Zstd),
-                            )
-                            // add as a dev-dependency the crate `tokio-stream` with feature `net` enabled
-                            .serve_with_incoming_shutdown(
-                                tokio_stream::wrappers::TcpListenerStream::new(listener),
-                                async move {
-                                    shutdown_rx.await.ok();
-                                    // TODO: any operation needed.
-                                },
-                            )
-                            .await
-                    });
-                    debug!("Successfully started server on {}:{}", hostname, port);
-
-                    self.port = port;
-                    self.hostname = hostname.clone();
-                    self.context.address = Some(addr);
-
-                    let mut server_addresses = vec![String::new(); self.context.size as usize];
-                    server_addresses[self.context.rank] = format!("{}:{}", hostname, port);
-                    self.context.server_addresses = Some(server_addresses);
-                    debug!(
-                        "[Rank {}] Server addresses: {:?}",
-                        self.context.rank, self.context.server_addresses
-                    );
-                    debug!("[Rank {}] Server started", self.context.rank);
-                    break;
-                }
-                Err(e) => {
-                    debug!("Failed to parse address {}:{}: {}", hostname, port, e);
-                    continue;
-                }
-            }
+        let port = NetworkUtility::find_available_port(base_port, self.context.rank as u16);
+        if port.is_none() {
+            return Err(anyhow::anyhow!("Failed to find available port"));
         }
+        let port = port.unwrap();
+        let addr = format!("0.0.0.0:{}", port);
+
+        let Ok(socket_addr) = addr.parse::<SocketAddr>() else {
+            return Err(anyhow::anyhow!(
+                "Failed to parse address {}:{}",
+                hostname,
+                port
+            ));
+        };
+        // bind with TCPListener
+        let listener = tokio::net::TcpListener::bind(socket_addr).await?;
+
+        self.port = port;
+        self.hostname = hostname.clone();
+        self.context.address = Some(addr);
+        let mut server_addresses = vec![String::new(); self.context.size as usize];
+        server_addresses[self.context.rank] = format!("{}:{}", hostname, port);
+        self.context.server_addresses = Some(server_addresses);
+        debug!(
+            "[Rank {}] Server addresses: {:?}",
+            self.context.rank, self.context.server_addresses
+        );
+
+        let service = Arc::new(self.clone());
+        // spawn a new task to start server
+        tokio::spawn(async move {
+            Server::builder()
+                .add_service(
+                    GrpcBulkistoreServer::from_arc(service)
+                        .max_decoding_message_size(MAX_DECODING_MESSAGE_SIZE)
+                        .max_encoding_message_size(MAX_ENCODING_MESSAGE_SIZE)
+                        .accept_compressed(CompressionEncoding::Zstd)
+                        .send_compressed(CompressionEncoding::Zstd),
+                )
+                // add as a dev-dependency the crate `tokio-stream` with feature `net` enabled
+                .serve_with_incoming_shutdown(
+                    tokio_stream::wrappers::TcpListenerStream::new(listener),
+                    async move {
+                        shutdown_rx.await.ok();
+                    },
+                )
+                .await
+        });
+
+        debug!(
+            "[Rank {}] Successfully started server on {}:{}",
+            self.context.rank, hostname, port
+        );
+
         let _ = start_listen.send(());
         Ok(())
     }
@@ -375,6 +376,7 @@ impl RxEndpoint for GrpcRX {
         // Create buffer to receive all server information
         let mut all_server_info = vec![0u8; MAX_SERVER_ADDR_LEN * self.context.size as usize];
 
+        let exchange_addresses_time = Instant::now();
         // All gather the fixed-size buffers
         #[cfg(feature = "mpi")]
         {
@@ -387,6 +389,11 @@ impl RxEndpoint for GrpcRX {
             // For single process, just copy the local info into the first slot
             all_server_info[..info_bytes.len()].copy_from_slice(&info_bytes);
         }
+        debug!(
+            "[Rank {}] all_gather_into time: {} ms",
+            self.context.rank,
+            exchange_addresses_time.elapsed().as_millis()
+        );
 
         for i in 0..self.context.size as usize {
             let start = i * MAX_SERVER_ADDR_LEN;

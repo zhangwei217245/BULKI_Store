@@ -15,6 +15,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, RwLock};
+use std::time::Instant;
 use tokio::sync::{oneshot, Mutex as TokioMutex};
 mod reqhandler;
 mod resphandler;
@@ -228,19 +229,36 @@ impl ServerContext {
             }
         }
 
+        let address_sync_time = Instant::now();
         // Exchange addresses for registered endpoints
         if let Some(c2s) = self.endpoints.get("c2s") {
             c2s.lock().await.exchange_addresses()?;
         }
+        debug!(
+            "[Rank {}] c2s Exchange addresses time: {} ms",
+            self.rank,
+            address_sync_time.elapsed().as_millis()
+        );
 
         if let Some(s2s) = self.endpoints.get("s2s") {
             s2s.lock().await.exchange_addresses()?;
         }
+        debug!(
+            "[Rank {}] s2s Exchange addresses time: {} ms",
+            self.rank,
+            address_sync_time.elapsed().as_millis()
+        );
 
         // Execute the callback function so we can get the server ready.
         if let Some(callback) = callback {
             callback()?;
         }
+
+        debug!(
+            "[Rank {}] callback time: {} ms",
+            self.rank,
+            address_sync_time.elapsed().as_millis()
+        );
 
         // Write addresses for registered endpoints
         if let Some(c2s) = self.endpoints.get("c2s") {
@@ -250,6 +268,12 @@ impl ServerContext {
         if let Some(s2s) = self.endpoints.get("s2s") {
             s2s.lock().await.write_addresses()?;
         }
+
+        debug!(
+            "[Rank {}] write addresses time: {} ms",
+            self.rank,
+            address_sync_time.elapsed().as_millis()
+        );
 
         // test if s2s ready file is there, if yes, let's move on, otherwise, just wait for that file to be created
         let ready_file = FileUtility::get_pdc_tmp_dir().join(format!("rx_s2s_ready.txt"));
