@@ -45,14 +45,9 @@ fn rust_ext<'py>(m: &Bound<'py, PyModule>) -> PyResult<()> {
     // Module initialization - just register the init function
     #[pyfn(m)]
     #[pyo3(name = "init")]
-    #[pyo3(signature = (rank=None, size=None, batch_size=None))]
-    fn init_py<'py>(
-        py: Python<'py>,
-        rank: Option<u32>,
-        size: Option<u32>,
-        batch_size: Option<usize>,
-    ) -> PyResult<()> {
-        pyctx::init_py(py, rank, size, batch_size)
+    #[pyo3(signature = (rank=None, size=None))]
+    fn init_py<'py>(py: Python<'py>, rank: Option<u32>, size: Option<u32>) -> PyResult<()> {
+        pyctx::init_py(py, rank, size)
     }
 
     #[pyfn(m)]

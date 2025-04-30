@@ -4,7 +4,7 @@ use commons::rpc::grpc::{GrpcRX, GrpcTX};
 use commons::rpc::{RxEndpoint, TxEndpoint};
 use commons::utils::FileUtility;
 use lazy_static::lazy_static;
-use log::{debug, info, warn};
+use log::{info, trace, warn};
 #[cfg(feature = "mpi")]
 use mpi::{
     environment::Universe,
@@ -131,7 +131,7 @@ impl ServerContext {
     ) -> Result<()> {
         let (shutdown_tx, shutdown_rx) = oneshot::channel();
         let _ = endpoint.listen(start_listen_tx, shutdown_rx).await?;
-        debug!("Endpoint {} is listening now", id);
+        trace!("Endpoint {} is listening now", id);
         let endpoint = Arc::new(TokioMutex::new(endpoint));
         self.endpoints.insert(id.to_string(), endpoint);
         self.endpoint_shutdowns.insert(id.to_string(), shutdown_tx);
@@ -139,7 +139,7 @@ impl ServerContext {
     }
 
     pub async fn initialize(&mut self, universe: Option<Arc<Universe>>) -> Result<()> {
-        debug!("ServerContext::initialize");
+        trace!("ServerContext::initialize");
         #[cfg(feature = "mpi")]
         {
             if let Some(universe) = universe {
@@ -171,22 +171,22 @@ impl ServerContext {
         }
 
         // Initialize client-server endpoint
-        debug!("Initializing client-server endpoint");
+        trace!("Initializing client-server endpoint");
         let mut c2s = GrpcRX::new("c2s".to_string(), self.world.clone());
         c2s.initialize(0u16, reqhandler::register_handlers)?;
         self.c2s_endpoint = Some(c2s);
 
         // Initialize server-server endpoint
-        debug!("Initializing server-server endpoint");
+        trace!("Initializing server-server endpoint");
         let mut s2s = GrpcRX::new("s2s".to_string(), self.world.clone());
         s2s.initialize(1u16, reqhandler::register_handlers)?;
         self.s2s_endpoint = Some(s2s);
 
         // Initialize the datastore
-        debug!("Initializing datastore...");
+        trace!("Initializing datastore...");
         crate::datastore::init_datastore();
 
-        debug!(
+        trace!(
             "DataStore initialized! Server running on MPI process {}",
             self.rank
         );
@@ -219,7 +219,7 @@ impl ServerContext {
             }
         }
         // Send start listen signal
-        debug!("c2s and s2s endpoints registered");
+        trace!("c2s and s2s endpoints registered");
 
         // apply MPI barrier
         #[cfg(feature = "mpi")]
@@ -234,7 +234,7 @@ impl ServerContext {
         if let Some(c2s) = self.endpoints.get("c2s") {
             c2s.lock().await.exchange_addresses()?;
         }
-        debug!(
+        trace!(
             "[Rank {}] c2s Exchange addresses time: {} ms",
             self.rank,
             address_sync_time.elapsed().as_millis()
@@ -243,7 +243,7 @@ impl ServerContext {
         if let Some(s2s) = self.endpoints.get("s2s") {
             s2s.lock().await.exchange_addresses()?;
         }
-        debug!(
+        trace!(
             "[Rank {}] s2s Exchange addresses time: {} ms",
             self.rank,
             address_sync_time.elapsed().as_millis()
@@ -254,7 +254,7 @@ impl ServerContext {
             callback()?;
         }
 
-        debug!(
+        trace!(
             "[Rank {}] callback time: {} ms",
             self.rank,
             address_sync_time.elapsed().as_millis()
@@ -269,7 +269,7 @@ impl ServerContext {
             s2s.lock().await.write_addresses()?;
         }
 
-        debug!(
+        trace!(
             "[Rank {}] write addresses time: {} ms",
             self.rank,
             address_sync_time.elapsed().as_millis()
@@ -287,11 +287,11 @@ impl ServerContext {
             }
             tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
         }
-        debug!("s2s ready file found: {}", ready_file.display());
+        trace!("s2s ready file found: {}", ready_file.display());
 
         // Check if the global s2s client is poisoned
         let s2s_is_poisoned = GLOBAL_S2S_CLIENT.is_poisoned();
-        debug!("s2s client poisoned: {}", s2s_is_poisoned);
+        trace!("s2s client poisoned: {}", s2s_is_poisoned);
 
         Ok(())
     }

@@ -4,7 +4,7 @@ use commons::err::{RPCResult, RpcErr, StatusCode};
 use commons::rpc::grpc::GrpcTX;
 use commons::rpc::TxEndpoint;
 use lazy_static::lazy_static;
-use log::{debug, info};
+use log::{info, trace};
 #[cfg(feature = "mpi")]
 use mpi::environment::Universe;
 #[cfg(feature = "mpi")]
@@ -46,7 +46,7 @@ pub struct ClientContext {
     rank: usize,
     size: usize,
     pub c2s_client: Option<GrpcTX>,
-    pub batch_size: Option<usize>,
+    // pub batch_size: Option<usize>,
 }
 #[allow(dead_code)]
 #[derive(Debug)]
@@ -72,7 +72,7 @@ impl ClientContext {
             rank: 0,
             size: 1,
             c2s_client: None,
-            batch_size: Some(128),
+            // batch_size: Some(128),
         }
     }
     #[cfg(feature = "mpi")]
@@ -81,7 +81,7 @@ impl ClientContext {
         universe: Option<Arc<Universe>>,
         rank: Option<u32>,
         size: Option<u32>,
-        batch_size: Option<usize>,
+        // batch_size: Option<usize>,
     ) -> Result<()> {
         if let Some(universe) = universe {
             // Store the universe first
@@ -104,9 +104,9 @@ impl ClientContext {
             "[MPI Enabled] Client rank: {}, Client count: {}",
             self.rank, self.size
         );
-        if let Some(batch_size) = batch_size {
-            self.batch_size = Some(batch_size);
-        }
+        // if let Some(batch_size) = batch_size {
+        //     self.batch_size = Some(batch_size);
+        // }
         Ok(())
     }
     #[cfg(not(feature = "mpi"))]
@@ -120,9 +120,9 @@ impl ClientContext {
             "[MPI Disabled]Client rank: {}, Client count: {}",
             self.rank, self.size
         );
-        if let Some(batch_size) = batch_size {
-            self.batch_size = Some(batch_size);
-        }
+        // if let Some(batch_size) = batch_size {
+        //     self.batch_size = Some(batch_size);
+        // }
         Ok(())
     }
     #[allow(dead_code)]
@@ -130,12 +130,12 @@ impl ClientContext {
         if self.c2s_client.is_none() {
             // Initialize client-server endpoint
             let mut c2s_client = GrpcTX::new("c2s".to_string(), self.world.clone());
-            debug!("Initializing client-server endpoint");
+            trace!("Initializing client-server endpoint");
             c2s_client.initialize(resphandler::register_handlers)?;
-            debug!("Client-server endpoint initialized");
+            trace!("Client-server endpoint initialized");
             let server_count = c2s_client.discover_servers()?;
             SERVER_COUNT.store(server_count as u32, Ordering::SeqCst);
-            debug!(
+            trace!(
                 "{:?} Servers discovered",
                 SERVER_COUNT.load(Ordering::SeqCst)
             );
@@ -172,7 +172,7 @@ impl ClientContext {
         R: for<'de> Deserialize<'de>,
     {
         if let Some(client) = &self.c2s_client {
-            debug!("Sending message to server rank {}", server_rank);
+            trace!("Sending message to server rank {}", server_rank);
             client.send_message(server_rank, handler_name, data).await
         } else {
             Err(RpcErr::new(
@@ -211,7 +211,7 @@ impl ClientContext {
     //         base_requests
     //     };
 
-    //     debug!(
+    //     trace!(
     //         "Rank {} will send {} requests (base={}, remainder={})",
     //         rank, num_requests, base_requests, remainder
     //     );

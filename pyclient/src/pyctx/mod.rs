@@ -15,7 +15,7 @@ use converter::{IntoBoundPyAny, MetaKeySpec, SupportedNumpyArray};
 
 use crossbeam::queue::SegQueue;
 use lazy_static::lazy_static;
-use log::{debug, info, warn};
+use log::{error, info, trace, warn};
 use numpy::{
     ndarray::{ArrayD, ArrayViewD, ArrayViewMutD, Axis},
     Complex64,
@@ -63,12 +63,7 @@ lazy_static! {
     pub static ref LOG_EXEC_COUNTER: AtomicU32 = AtomicU32::new(0);
 }
 
-pub fn init_py<'py>(
-    _py: Python<'py>,
-    rank: Option<u32>,
-    size: Option<u32>,
-    batch_size: Option<usize>,
-) -> PyResult<()> {
+pub fn init_py<'py>(_py: Python<'py>, rank: Option<u32>, size: Option<u32>) -> PyResult<()> {
     // First check if MPI should be initialized
     let universe = {
         #[cfg(feature = "mpi")]
@@ -155,7 +150,7 @@ pub fn init_py<'py>(
         // Get a reference to the runtime
         let rt = RUNTIME.get().expect("Runtime not initialized");
         // Initialize context with MPI if available
-        rt.block_on(context.initialize(universe, rank, size, batch_size))
+        rt.block_on(context.initialize(universe, rank, size))
             .map_err(|e| {
                 PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!(
                     "Failed to initialize context: {}",
@@ -181,9 +176,9 @@ pub fn init_py<'py>(
                 .lock()
                 .await;
             // Reinitialize with new parameters if provided
-            if rank.is_some() || size.is_some() || batch_size.is_some() {
+            if rank.is_some() || size.is_some() {
                 let _ = context_guard
-                    .initialize(universe, rank, size, batch_size)
+                    .initialize(universe, rank, size)
                     .await
                     .map_err(|e| {
                         PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!(
@@ -290,17 +285,18 @@ pub fn create_object_impl<'py>(
         &create_obj_params,
     )
     .map_err(|e| PyErr::new::<PyValueError, _>(format!("Failed to create objects: {}", e)))?;
-    debug!("create_objects: result vector length: {:?}", result.len());
-    debug!("create_objects: result vector: {:?}", result);
+    trace!("create_objects: result vector length: {:?}", result.len());
+    trace!("create_objects: result vector: {:?}", result);
     if LOG_EXEC_COUNTER.fetch_add(1, Ordering::Relaxed) % 100 == 0 {
         info!(
             "[R{}/S{}] create_objects: result vector: {:?} in {:?} ms, memory: {:?} MB",
             get_client_rank(),
             get_client_count(),
             result,
-        timer.elapsed().as_millis(),
-        SystemUtility::get_current_memory_usage_mb()
-    );
+            timer.elapsed().as_millis(),
+            SystemUtility::get_current_memory_usage_mb()
+        );
+    }
     drop(create_obj_params);
     converter::convert_vec_u128_to_py_long(py, result)
 }
@@ -328,17 +324,18 @@ pub fn get_object_metadata_impl<'py>(
             .map_err(|e| {
                 PyErr::new::<PyValueError, _>(format!("Failed to get object metadata: {}", e))
             })?;
-            debug!("get_object_metadata: result: {:?}", result);
+            trace!("get_object_metadata: result: {:?}", result);
             if LOG_EXEC_COUNTER.fetch_add(1, Ordering::Relaxed) % 100 == 0 {
                 info!(
                     "[R{}/S{}] get_object_metadata: result: {:?}, {:?} in {:?} ms, memory: {:?} MB",
                     get_client_rank(),
                     get_client_count(),
                     result.obj_id,
-                result.obj_name,
-                timer.elapsed().as_millis(),
-                SystemUtility::get_current_memory_usage_mb()
-            );
+                    result.obj_name,
+                    timer.elapsed().as_millis(),
+                    SystemUtility::get_current_memory_usage_mb()
+                );
+            }
             converter::convert_get_object_meta_response_to_pydict(py, result)
                 .map(|dict| dict.into())
         }
@@ -510,7 +507,7 @@ pub fn get_multiple_object_data_impl<'py>(
 
 pub fn pop_queue_data_impl<'py>(_py: Python<'py>) -> PyResult<Py<PyAny>> {
     let data = GLOBAL_DATA_QUEUE.pop();
-    debug!(
+    trace!(
         "[R{}/S{}] queue length after pop_queue_data: {:?}, memory usage: {} MB",
         get_client_rank(),
         get_client_count(),
@@ -521,7 +518,7 @@ pub fn pop_queue_data_impl<'py>(_py: Python<'py>) -> PyResult<Py<PyAny>> {
 }
 
 pub fn check_queue_length_impl<'py>(py: Python<'py>) -> PyResult<Py<PyAny>> {
-    debug!(
+    trace!(
         "[R{}/S{}] current queue length: {:?}, memory usage: {} MB",
         get_client_rank(),
         get_client_count(),

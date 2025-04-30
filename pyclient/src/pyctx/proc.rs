@@ -10,7 +10,7 @@ use commons::object::{
     },
     types::{ObjectIdentifier, SerializableSliceInfoElem},
 };
-use log::debug;
+use log::trace;
 use pyo3::{
     types::{PyDict, PySlice},
     Bound,
@@ -156,9 +156,11 @@ pub fn get_object_slice_req_proc<'py>(
     region: Option<Vec<Bound<'py, PySlice>>>,
     sub_obj_regions: Option<Vec<(String, Vec<Bound<'py, PySlice>>)>>,
 ) -> Result<GetObjectSliceParams> {
-    debug!(
+    trace!(
         "get_object_slice_req_proc: obj_id: {:?}, region: {:?}, sub_obj_regions: {:?}",
-        obj_id, region, sub_obj_regions
+        obj_id,
+        region,
+        sub_obj_regions
     );
 
     // Convert main region
@@ -215,9 +217,11 @@ pub fn get_object_metadata_req_proc<'py>(
     meta_keys: Option<Vec<String>>,
     sub_meta_keys: Option<converter::MetaKeySpec>,
 ) -> Result<GetObjectMetaParams> {
-    debug!(
+    trace!(
         "get_object_metadata_req_proc: obj_id: {:?}, meta_keys: {:?}, sub_meta_keys: {:?}",
-        obj_id, meta_keys, sub_meta_keys
+        obj_id,
+        meta_keys,
+        sub_meta_keys
     );
     Ok(GetObjectMetaParams {
         obj_id,

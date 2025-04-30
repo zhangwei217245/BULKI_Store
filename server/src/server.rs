@@ -1,5 +1,5 @@
 use commons::utils::SystemUtility;
-use log::{debug, info};
+use log::{info, trace};
 use std::sync::Arc;
 mod bench;
 mod datastore;
@@ -17,7 +17,7 @@ lazy_static! {
 }
 
 fn prepare_resources() -> Result<()> {
-    debug!("[R{}/S{}] Loading Data...", get_rank(), get_size());
+    trace!("[R{}/S{}] Loading Data...", get_rank(), get_size());
     let timer = Instant::now();
     let num_obj_loaded = datastore::load_memory_store()?;
     info!(
@@ -100,13 +100,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 info!("[R{}/S{}] Received Ctrl+C signal", get_rank(), get_size());
                 // Signal memory monitor thread to stop
                 server_context.shutdown(|| async { close_resources() }).await?;
-                debug!("[R{}/S{}] Server shutdown complete", get_rank(), get_size());
+                trace!("[R{}/S{}] Server shutdown complete", get_rank(), get_size());
             }
             _ = terminate.recv() => {
                 info!("[R{}/S{}] Received SIGTERM signal", get_rank(), get_size());
                 // Signal memory monitor thread to stop
                 server_context.shutdown(|| async { close_resources() }).await?;
-                debug!("[R{}/S{}] Server shutdown complete", get_rank(), get_size());
+                trace!("[R{}/S{}] Server shutdown complete", get_rank(), get_size());
             }
         }
     }
@@ -117,12 +117,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         server_context
             .shutdown(|| async { close_resources() })
             .await?;
-        debug!("[R{}/S{}] Server shutdown complete", get_rank(), get_size());
+        trace!("[R{}/S{}] Server shutdown complete", get_rank(), get_size());
     }
 
     // // Wait for memory monitor thread to finish
     // if let Err(e) = memory_monitor_thread.join() {
-    //     debug!(
+    //     trace!(
     //         "[R{}/S{}] Error joining memory monitor thread: {:?}",
     //         get_rank(),
     //         get_size(),

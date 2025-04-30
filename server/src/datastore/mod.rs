@@ -17,7 +17,7 @@ use commons::object::{
 use commons::region::SerializableNDArray;
 use commons::rpc::RPCData;
 use lazy_static::lazy_static;
-use log::{debug, error, info, warn};
+use log::{error, info, trace, warn};
 use ndarray::SliceInfoElem;
 use rayon::prelude::*;
 use rmp_serde;
@@ -57,7 +57,7 @@ fn create_object_internal(param: CreateObjectParams) -> Result<u128> {
 
 /// Create a new DataObject with server-generated ID
 pub fn create_objects(data: &mut RPCData) -> HandlerResult {
-    debug!("Received request to create objects");
+    trace!("Received request to create objects");
     // Deserialize the creation parameters
     let params: Vec<CreateObjectParams> = rmp_serde::from_slice(&data.data.as_ref().unwrap())
         .map_err(|e| HandlerResult {
@@ -74,14 +74,14 @@ pub fn create_objects(data: &mut RPCData) -> HandlerResult {
         Ok(obj_id) => obj_ids.push(obj_id),
         Err(e) => {
             message = Some(format!("Failed to create object: {:?}", e));
-            debug!("Failed to create object: {:?}", e);
+            trace!("Failed to create object: {:?}", e);
             return HandlerResult {
                 status_code: StatusCode::Internal as u8,
                 message,
             };
         }
     }
-    debug!("Created main object with id: {:?}", obj_ids[0]);
+    trace!("Created main object with id: {:?}", obj_ids[0]);
 
     if params.len() > 1 {
         // using rayon to parallelize the creation of remaining objects (sub-objects)
@@ -94,14 +94,14 @@ pub fn create_objects(data: &mut RPCData) -> HandlerResult {
             match id {
                 Ok(obj_id) => obj_ids.push(obj_id),
                 Err(e) => {
-                    debug!("Failed to create object: {:?}", e);
+                    trace!("Failed to create object: {:?}", e);
                     message = Some(format!("Failed to create object: {:?}", e));
                 }
             }
         }
     }
-    debug!("create_objects: obj_ids length: {:?}", obj_ids.len());
-    debug!(
+    trace!("create_objects: obj_ids length: {:?}", obj_ids.len());
+    trace!(
         "[RX Rank {:?}] create_objects: main_obj_id: {:?}, main_obj_name: {:?}",
         crate::srvctx::get_rank(),
         &obj_ids[0],
@@ -116,7 +116,7 @@ pub fn create_objects(data: &mut RPCData) -> HandlerResult {
             })
             .unwrap(),
     );
-    debug!("create_objects: {:?}", data.data.as_ref().unwrap().len());
+    trace!("create_objects: {:?}", data.data.as_ref().unwrap().len());
     HandlerResult {
         status_code: StatusCode::Ok as u8,
         message: message,
@@ -204,7 +204,7 @@ pub fn get_object_data(data: &mut RPCData) -> HandlerResult {
     match get_single_object_data(params) {
         Ok(response) => {
             data.data = Some(rmp_serde::to_vec(&response).unwrap());
-            debug!(
+            trace!(
                 "[RX Rank {:?}] get_object_data response: obj_id: {:?}, obj_name: {:?}",
                 crate::srvctx::get_rank(),
                 response.obj_id,
@@ -237,7 +237,7 @@ pub fn get_multiple_object_data(data: &mut RPCData) -> HandlerResult {
             results.push(result);
         }
     }
-    debug!(
+    trace!(
         "[RX Rank {:?}] get_multiple_object_data: req length: {} , resp length: {} , {} failure ignored.",
         crate::srvctx::get_rank(),
         param_len,
@@ -388,7 +388,7 @@ pub fn get_object_metadata(data: &mut RPCData) -> HandlerResult {
         }
     };
 
-    debug!(
+    trace!(
         "[RX Rank {:?}] get_object_metadata: obj_id: {:?}, obj_name: {:?}",
         crate::srvctx::get_rank(),
         result.obj_id,
@@ -421,7 +421,7 @@ fn _get_multiple_object_metadata_with_store_guard(
             results.push(None);
         }
     }
-    debug!(
+    trace!(
         "[RX Rank {:?}] _get_multiple_object_metadata: req length: {} , resp length: {} , {} failure ignored.",
         crate::srvctx::get_rank(),
         param_len,
@@ -1132,7 +1132,7 @@ pub fn load_memory_store() -> Result<usize> {
 pub fn times_two(data: &mut RPCData) -> HandlerResult {
     match rmp_serde::from_slice::<SupportedRustArrayD>(&data.data.as_ref().unwrap()) {
         Ok(array) => {
-            debug!("Received array: {:?}", array);
+            trace!("Received array: {:?}", array);
             let result = match array {
                 SupportedRustArrayD::Int8(arr) => SupportedRustArrayD::Int8(arr.mapv(|x| x * 2)),
                 SupportedRustArrayD::Int16(arr) => SupportedRustArrayD::Int16(arr.mapv(|x| x * 2)),
@@ -1161,7 +1161,7 @@ pub fn times_two(data: &mut RPCData) -> HandlerResult {
                     SupportedRustArrayD::Int128(arr.mapv(|x| x * 2))
                 }
             };
-            debug!("Result array: {:?}", result);
+            trace!("Result array: {:?}", result);
             data.data = Some(rmp_serde::to_vec(&result).unwrap());
             HandlerResult {
                 status_code: StatusCode::Ok as u8,
