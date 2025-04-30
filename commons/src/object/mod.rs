@@ -16,6 +16,7 @@ use std::fmt::Debug;
 use std::fs::File;
 use std::io::Write;
 use std::ops::{Deref, DerefMut};
+use std::path::PathBuf;
 use types::{MetadataValue, SupportedRustArrayD};
 
 /// A DataObject that can own an NDArray of various numeric types
@@ -544,121 +545,16 @@ impl DataStore {
             server_count,
             checkpoint_files.len()
         );
-        let mut total_loaded = 0;
-        for i in 0..checkpoint_files.len() {
-            let file_path = &checkpoint_files[(i + server_rank as usize) % checkpoint_files.len()];
 
-            let file_name = file_path.file_name().unwrap_or_default().to_string_lossy();
-            let file = std::fs::File::open(&file_path).unwrap();
-            let mut reader = std::io::BufReader::new(file);
-
-            // Read and validate the header
-            let header: Result<DSCheckpointHeader, _> = rmp_serde::decode::from_read(&mut reader);
-
-            match header {
-                Ok(header) => {
-                    info!(
-                        "[R{}/S{}] Processing checkpoint file: {}, version: {}, from rank {}/{}, with {} objects",
-                        server_rank, server_count, file_name, header.version, header.rank, header.size, header.object_count
-                    );
-
-                    if header.object_count == 0 {
-                        continue;
-                    }
-
-                    // Track progress
-                    let mut objects_processed = 0;
-                    let mut objects_loaded = 0;
-                    let progress_interval = std::cmp::max(1, header.object_count as usize / 100);
-
-                    // Read and process each object
-                    loop {
-                        // Read object ID
-                        let id_result: Result<u128, _> = rmp_serde::decode::from_read(&mut reader);
-
-                        match id_result {
-                            Ok(id) => {
-                                // Read the corresponding object
-                                let obj_result: Result<DataObject, _> =
-                                    rmp_serde::decode::from_read(&mut reader);
-
-                                match obj_result {
-                                    Ok(obj) => {
-                                        objects_processed += 1;
-
-                                        // Use the vnode_id from the object ID to determine if this server should load it
-                                        let vnode_id = id.vnode_id();
-                                        let should_load = vnode_id % server_count == server_rank;
-
-                                        if should_load {
-                                            // Insert the object into our store
-                                            let obj_name = obj.name.clone();
-
-                                            self.objects.insert(id, obj);
-                                            if !obj_name.is_empty() {
-                                                self.name_obj_idx.insert(obj_name, id);
-                                            }
-
-                                            objects_loaded += 1;
-                                        }
-
-                                        // Report progress periodically
-                                        if objects_processed % progress_interval == 0
-                                            || objects_processed == header.object_count as usize
-                                        {
-                                            let progress = (objects_processed as f64 * 100.0)
-                                                / header.object_count as f64;
-                                            info!(
-                                                "[R{}/S{}] Processed {}/{} objects ({:.1}%), loaded {} objects",
-                                                server_rank, server_count, objects_processed, header.object_count, progress, objects_loaded
-                                            );
-                                        }
-
-                                        // Check if we've processed all objects in this file
-                                        if objects_processed >= header.object_count as usize {
-                                            break;
-                                        }
-                                    }
-                                    Err(e) => {
-                                        warn!(
-                                            "[R{}/S{}] Error reading object from {}: {}",
-                                            server_rank, server_count, file_name, e
-                                        );
-                                        break;
-                                    }
-                                }
-                            }
-                            Err(e) => {
-                                if objects_processed >= header.object_count as usize {
-                                    // We've read all objects, this is expected EOF
-                                    break;
-                                } else {
-                                    // Unexpected error
-                                    warn!(
-                                        "[R{}/S{}] Error reading object ID from {}: {}",
-                                        server_rank, server_count, file_name, e
-                                    );
-                                    break;
-                                }
-                            }
-                        }
-                    }
-
-                    info!(
-                        "[R{}/S{}] Completed loading from {}: processed {} objects, loaded {} objects",
-                        server_rank, server_count, file_name, objects_processed, objects_loaded
-                    );
-
-                    total_loaded += objects_loaded as usize;
-                }
-                Err(e) => {
-                    warn!(
-                        "[R{}/S{}] Failed to read header from {}: {}",
-                        server_rank, server_count, file_name, e
-                    );
-                }
-            }
-        }
+        let total_loaded: usize = (0..checkpoint_files.len())
+            .into_par_iter()
+            .map(|i| {
+                let file_path =
+                    &checkpoint_files[(i + server_rank as usize) % checkpoint_files.len()];
+                // Process file_path
+                self.process_checkpoint_file(file_path, server_rank, server_count)
+            })
+            .sum();
 
         info!(
             "[R{}/S{}] Total objects loaded: {}",
@@ -666,5 +562,124 @@ impl DataStore {
         );
 
         Ok(total_loaded)
+    }
+
+    fn process_checkpoint_file(
+        &self,
+        file_path: &PathBuf,
+        server_rank: u32,
+        server_count: u32,
+    ) -> usize {
+        let file_name = file_path.file_name().unwrap_or_default().to_string_lossy();
+        let file = std::fs::File::open(&file_path).unwrap();
+        let mut reader = std::io::BufReader::with_capacity(10 * 1024 * 1024, file);
+
+        // Read and validate the header
+        let header: Result<DSCheckpointHeader, _> = rmp_serde::decode::from_read(&mut reader);
+
+        match header {
+            Ok(header) => {
+                info!(
+                            "[R{}/S{}] Processing checkpoint file: {}, version: {}, from rank {}/{}, with {} objects",
+                            server_rank, server_count, file_name, header.version, header.rank, header.size, header.object_count
+                        );
+
+                if header.object_count == 0 {
+                    return 0;
+                }
+
+                // Track progress
+                let mut objects_processed = 0;
+                let mut objects_loaded = 0;
+                let progress_interval = std::cmp::max(1, header.object_count as usize / 100);
+
+                // Read and process each object
+                loop {
+                    // Read object ID
+                    let id_result: Result<u128, _> = rmp_serde::decode::from_read(&mut reader);
+
+                    match id_result {
+                        Ok(id) => {
+                            // Read the corresponding object
+                            let obj_result: Result<DataObject, _> =
+                                rmp_serde::decode::from_read(&mut reader);
+
+                            match obj_result {
+                                Ok(obj) => {
+                                    objects_processed += 1;
+
+                                    // Use the vnode_id from the object ID to determine if this server should load it
+                                    let vnode_id = id.vnode_id();
+                                    let should_load = vnode_id % server_count == server_rank;
+
+                                    if should_load {
+                                        // Insert the object into our store
+                                        let obj_name = obj.name.clone();
+
+                                        self.objects.insert(id, obj);
+                                        if !obj_name.is_empty() {
+                                            self.name_obj_idx.insert(obj_name, id);
+                                        }
+
+                                        objects_loaded += 1;
+                                    }
+
+                                    // Report progress periodically
+                                    if objects_processed % (progress_interval * 5) == 0
+                                        || objects_processed == header.object_count as usize
+                                    {
+                                        let progress = (objects_processed as f64 * 100.0)
+                                            / header.object_count as f64;
+                                        info!(
+                                                    "[R{}/S{}] Processed {}/{} objects ({:.1}%), loaded {} objects",
+                                                    server_rank, server_count, objects_processed, header.object_count, progress, objects_loaded
+                                                );
+                                    }
+
+                                    // Check if we've processed all objects in this file
+                                    if objects_processed >= header.object_count as usize {
+                                        break;
+                                    }
+                                }
+                                Err(e) => {
+                                    warn!(
+                                        "[R{}/S{}] Error reading object from {}: {}",
+                                        server_rank, server_count, file_name, e
+                                    );
+                                    break;
+                                }
+                            }
+                        }
+                        Err(e) => {
+                            if objects_processed >= header.object_count as usize {
+                                // We've read all objects, this is expected EOF
+                                break;
+                            } else {
+                                // Unexpected error
+                                warn!(
+                                    "[R{}/S{}] Error reading object ID from {}: {}",
+                                    server_rank, server_count, file_name, e
+                                );
+                                break;
+                            }
+                        }
+                    }
+                }
+
+                info!(
+                    "[R{}/S{}] Completed loading from {}: processed {} objects, loaded {} objects",
+                    server_rank, server_count, file_name, objects_processed, objects_loaded
+                );
+
+                objects_loaded as usize
+            }
+            Err(e) => {
+                warn!(
+                    "[R{}/S{}] Failed to read header from {}: {}",
+                    server_rank, server_count, file_name, e
+                );
+                0
+            }
+        }
     }
 }
