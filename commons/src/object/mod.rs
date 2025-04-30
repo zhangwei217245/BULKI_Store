@@ -572,7 +572,7 @@ impl DataStore {
     ) -> usize {
         let file_name = file_path.file_name().unwrap_or_default().to_string_lossy();
         let file = std::fs::File::open(&file_path).unwrap();
-        let mut reader = std::io::BufReader::with_capacity(10 * 1024 * 1024, file);
+        let mut reader = std::io::BufReader::with_capacity(100 * 1024 * 1024, file);
 
         // Read and validate the header
         let header: Result<DSCheckpointHeader, _> = rmp_serde::decode::from_read(&mut reader);
