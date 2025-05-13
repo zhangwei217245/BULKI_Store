@@ -1,5 +1,7 @@
 # BULKI Store
 
+Object Store implementation inspired by DAOS and PDC. Built for I/O Researchers. 
+
 ## Prerequisites
 
 MPICH 4.0+ is required.
