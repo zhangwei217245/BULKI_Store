@@ -1,6 +1,10 @@
 # BULKI Store
 
-Object Store implementation inspired by DAOS and PDC. Built for I/O Researchers. 
+A memory-safe Object Store implementation in Rust. 
+
+Inspired by DAOS and PDC. 
+
+Built for I/O Researchers. 
 
 ## Prerequisites
 
