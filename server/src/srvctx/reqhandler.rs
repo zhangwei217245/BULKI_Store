@@ -25,11 +25,31 @@ pub fn register_handlers(rx: &mut GrpcRX) -> Result<()> {
                 crate::datastore::get_object_metadata,
             )
             .register(
+                "datastore::get_multiple_object_metadata",
+                crate::datastore::get_multiple_object_metadata,
+            )
+            .register(
+                "datastore::get_multiple_object_data",
+                crate::datastore::get_multiple_object_data,
+            )
+            .register(
+                "datastore::load_batch_samples",
+                crate::datastore::load_batch_samples,
+            )
+            .register(
                 "datastore::update_metadata",
                 crate::datastore::update_metadata,
             )
             .register("datastore::update_array", crate::datastore::update_array)
-            .register("datastore::delete_object", crate::datastore::delete_object);
+            .register("datastore::delete_object", crate::datastore::delete_object)
+            .register(
+                "datastore::force_checkpointing",
+                crate::datastore::force_checkpointing,
+            )
+            .register(
+                "datastore::get_checkpointing_progress",
+                crate::datastore::get_checkpointing_progress,
+            );
         Ok(())
     } else {
         Err(anyhow::anyhow!("Handler dispatcher not initialized"))

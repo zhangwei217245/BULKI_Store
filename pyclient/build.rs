@@ -15,7 +15,7 @@ fn main() {
     // Sync versions between workspace Cargo.toml and pyproject.toml
     // sync_versions();
 }
-
+#[allow(dead_code)]
 fn sync_versions() {
     // Read version from workspace Cargo.toml
     let workspace_path = Path::new("../Cargo.toml");

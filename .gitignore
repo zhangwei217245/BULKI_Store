@@ -11,3 +11,4 @@ __pycache__/
 *.so
 *.abi3.*
 .ipynb_checkpoints
+.bulkistore_data

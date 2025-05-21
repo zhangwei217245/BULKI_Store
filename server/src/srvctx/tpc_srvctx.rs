@@ -1,10 +1,10 @@
 use anyhow::Result;
 use commons::err::RPCResult;
-use commons::rpc::grpc::{GrpcRX, GrpcTX};
-use commons::rpc::{RxEndpoint, TxEndpoint};
+use commons::rpc::tcp::{TcpRxEndpoint, TcpTxEndpoint};
+use commons::rpc::{RPCImpl, RxContext, RxEndpoint, TxContext, TxEndpoint};
 use commons::utils::FileUtility;
 use lazy_static::lazy_static;
-use log::{info, trace, warn};
+use log::{debug, info, warn};
 #[cfg(feature = "mpi")]
 use mpi::{
     environment::Universe,
@@ -13,23 +13,24 @@ use mpi::{
 };
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::net::SocketAddr;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, RwLock};
-use std::time::Instant;
 use tokio::sync::{oneshot, Mutex as TokioMutex};
-mod reqhandler;
-mod resphandler;
+// mod reqhandler;
+// mod resphandler;
 
 lazy_static! {
     static ref PROCESS_RANK: AtomicU32 = AtomicU32::new(0);
     static ref PROCESS_SIZE: AtomicU32 = AtomicU32::new(1);
     // Global S2S client that can be accessed from any thread
     // Initialize s2s client
-    static ref GLOBAL_S2S_CLIENT: RwLock<Option<GrpcTX>> = {
-        let mut s2s_client = GrpcTX::new("s2s".to_string(), None);
+    static ref GLOBAL_S2S_CLIENT: RwLock<Option<Box<dyn TxEndpoint<Address = SocketAddr>>>> = {
+        let mut s2s_context = TxContext::<SocketAddr>::new("s2s".to_string(), None);
+        let mut s2s_client = TcpTxEndpoint::new(s2s_context);
         let _ = s2s_client.initialize(resphandler::register_handlers);
         let _ = s2s_client.discover_servers();
-        RwLock::new(Some(s2s_client))
+        RwLock::new(Some(Box::new(s2s_client)))
     };
     static ref RUNTIME: RwLock<Option<tokio::runtime::Runtime>> = {
         match tokio::runtime::Runtime::new() {
@@ -95,10 +96,10 @@ pub struct ServerContext {
     #[cfg(not(feature = "mpi"))]
     pub world: Option<()>,
     // RxEndpoint for client-server communication
-    pub c2s_endpoint: Option<GrpcRX>,
+    pub c2s_endpoint: Option<Box<dyn RxEndpoint<Address = SocketAddr>>>,
     // RxEndpoint for server-server communication
-    pub s2s_endpoint: Option<GrpcRX>,
-    endpoints: HashMap<String, Arc<TokioMutex<GrpcRX>>>,
+    pub s2s_endpoint: Option<Box<dyn RxEndpoint<Address = SocketAddr>>>,
+    endpoints: HashMap<String, Arc<TokioMutex<Box<dyn RxEndpoint<Address = SocketAddr>>>>>,
     endpoint_shutdowns: HashMap<String, oneshot::Sender<()>>,
 }
 
@@ -127,11 +128,11 @@ impl ServerContext {
         &mut self,
         id: &str,
         start_listen_tx: oneshot::Sender<()>,
-        mut endpoint: GrpcRX,
+        mut endpoint: Box<dyn RxEndpoint<Address = SocketAddr>>,
     ) -> Result<()> {
         let (shutdown_tx, shutdown_rx) = oneshot::channel();
         let _ = endpoint.listen(start_listen_tx, shutdown_rx).await?;
-        trace!("Endpoint {} is listening now", id);
+        debug!("Endpoint {} is listening now", id);
         let endpoint = Arc::new(TokioMutex::new(endpoint));
         self.endpoints.insert(id.to_string(), endpoint);
         self.endpoint_shutdowns.insert(id.to_string(), shutdown_tx);
@@ -139,7 +140,7 @@ impl ServerContext {
     }
 
     pub async fn initialize(&mut self, universe: Option<Arc<Universe>>) -> Result<()> {
-        trace!("ServerContext::initialize");
+        debug!("ServerContext::initialize");
         #[cfg(feature = "mpi")]
         {
             if let Some(universe) = universe {
@@ -171,22 +172,24 @@ impl ServerContext {
         }
 
         // Initialize client-server endpoint
-        trace!("Initializing client-server endpoint");
-        let mut c2s = GrpcRX::new("c2s".to_string(), self.world.clone());
+        debug!("Initializing client-server endpoint");
+        let mut c2s_context = RxContext::<SocketAddr>::new("c2s".to_string(), self.world.clone());
+        let mut c2s = TcpRxEndpoint::new(c2s_context);
         c2s.initialize(0u16, reqhandler::register_handlers)?;
-        self.c2s_endpoint = Some(c2s);
+        self.c2s_endpoint = Some(Box::new(c2s));
 
         // Initialize server-server endpoint
-        trace!("Initializing server-server endpoint");
-        let mut s2s = GrpcRX::new("s2s".to_string(), self.world.clone());
+        debug!("Initializing server-server endpoint");
+        let mut s2s_context = RxContext::<SocketAddr>::new("s2s".to_string(), self.world.clone());
+        let mut s2s = TcpRxEndpoint::new(s2s_context);
         s2s.initialize(1u16, reqhandler::register_handlers)?;
-        self.s2s_endpoint = Some(s2s);
+        self.s2s_endpoint = Some(Box::new(s2s));
 
         // Initialize the datastore
-        trace!("Initializing datastore...");
+        debug!("Initializing datastore...");
         crate::datastore::init_datastore();
 
-        trace!(
+        debug!(
             "DataStore initialized! Server running on MPI process {}",
             self.rank
         );
@@ -219,7 +222,7 @@ impl ServerContext {
             }
         }
         // Send start listen signal
-        trace!("c2s and s2s endpoints registered");
+        debug!("c2s and s2s endpoints registered");
 
         // apply MPI barrier
         #[cfg(feature = "mpi")]
@@ -229,36 +232,19 @@ impl ServerContext {
             }
         }
 
-        let address_sync_time = Instant::now();
         // Exchange addresses for registered endpoints
         if let Some(c2s) = self.endpoints.get("c2s") {
             c2s.lock().await.exchange_addresses()?;
         }
-        trace!(
-            "[Rank {}] c2s Exchange addresses time: {} ms",
-            self.rank,
-            address_sync_time.elapsed().as_millis()
-        );
 
         if let Some(s2s) = self.endpoints.get("s2s") {
             s2s.lock().await.exchange_addresses()?;
         }
-        trace!(
-            "[Rank {}] s2s Exchange addresses time: {} ms",
-            self.rank,
-            address_sync_time.elapsed().as_millis()
-        );
 
         // Execute the callback function so we can get the server ready.
         if let Some(callback) = callback {
             callback()?;
         }
-
-        trace!(
-            "[Rank {}] callback time: {} ms",
-            self.rank,
-            address_sync_time.elapsed().as_millis()
-        );
 
         // Write addresses for registered endpoints
         if let Some(c2s) = self.endpoints.get("c2s") {
@@ -268,12 +254,6 @@ impl ServerContext {
         if let Some(s2s) = self.endpoints.get("s2s") {
             s2s.lock().await.write_addresses()?;
         }
-
-        trace!(
-            "[Rank {}] write addresses time: {} ms",
-            self.rank,
-            address_sync_time.elapsed().as_millis()
-        );
 
         // test if s2s ready file is there, if yes, let's move on, otherwise, just wait for that file to be created
         let ready_file = FileUtility::get_pdc_tmp_dir().join(format!("rx_s2s_ready.txt"));
@@ -287,11 +267,11 @@ impl ServerContext {
             }
             tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
         }
-        trace!("s2s ready file found: {}", ready_file.display());
+        debug!("s2s ready file found: {}", ready_file.display());
 
         // Check if the global s2s client is poisoned
         let s2s_is_poisoned = GLOBAL_S2S_CLIENT.is_poisoned();
-        trace!("s2s client poisoned: {}", s2s_is_poisoned);
+        debug!("s2s client poisoned: {}", s2s_is_poisoned);
 
         Ok(())
     }

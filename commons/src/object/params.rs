@@ -21,7 +21,7 @@ pub struct GetObjectSliceParams {
     pub sub_obj_regions: Option<Vec<(String, Option<Vec<SerializableSliceInfoElem>>)>>,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct GetObjectSliceResponse {
     pub obj_id: u128,
     pub obj_name: String,
@@ -48,4 +48,20 @@ pub struct GetObjectMetaResponse {
     pub obj_name: String,
     pub metadata: Option<HashMap<String, MetadataValue>>,
     pub sub_obj_metadata: Option<Vec<(u128, String, HashMap<String, MetadataValue>)>>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct GetSampleRequest {
+    pub original_idx: usize,
+    pub sample_id: usize,
+    pub obj_id: ObjectIdentifier,
+    pub local_sample_id: usize,
+    pub sample_var_keys: Vec<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, Default)]
+pub struct GetSampleResponse {
+    pub original_idx: usize,
+    pub sample_id: usize,
+    pub variable_data: HashMap<String, SupportedRustArrayD>,
 }

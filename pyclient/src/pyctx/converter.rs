@@ -1,11 +1,11 @@
 use commons::object::{
-    params::{GetObjectMetaResponse, GetObjectSliceResponse},
+    params::{GetObjectMetaResponse, GetObjectSliceResponse, GetSampleResponse},
     types::{MetadataValue, ObjectIdentifier, SerializableSliceInfoElem, SupportedRustArrayD},
 };
 
 // use log::info;
 use ndarray::SliceInfoElem;
-use numpy::{IntoPyArray, PyArrayDyn, PyArrayMethods, ToPyArray};
+use numpy::{PyArrayDyn, PyArrayMethods, ToPyArray};
 use pyo3::{
     exceptions::PyValueError,
     types::{PyAnyMethods, PyDict, PyDictMethods, PyInt, PyList, PyListMethods, PySlice},
@@ -390,25 +390,13 @@ pub fn convert_pyslice_vec_to_rust_slice_vec<'py>(
 pub fn convert_get_object_slice_response_to_pydict<'py>(
     py: Python<'py>,
     response: GetObjectSliceResponse,
-) -> PyResult<Py<PyDict>> {
+) -> PyResult<Bound<'py, PyDict>> {
     let dict = PyDict::new(py);
     dict.set_item(
         "array_slice",
         response
             .array_slice
-            .map(|x| match x {
-                SupportedRustArrayD::Int8(a) => Ok(a.into_pyarray(py).into_any()),
-                SupportedRustArrayD::Int16(a) => Ok(a.into_pyarray(py).into_any()),
-                SupportedRustArrayD::Int32(a) => Ok(a.into_pyarray(py).into_any()),
-                SupportedRustArrayD::Int64(a) => Ok(a.into_pyarray(py).into_any()),
-                SupportedRustArrayD::UInt8(a) => Ok(a.into_pyarray(py).into_any()),
-                SupportedRustArrayD::UInt16(a) => Ok(a.into_pyarray(py).into_any()),
-                SupportedRustArrayD::UInt32(a) => Ok(a.into_pyarray(py).into_any()),
-                SupportedRustArrayD::UInt64(a) => Ok(a.into_pyarray(py).into_any()),
-                SupportedRustArrayD::Float32(a) => Ok(a.into_pyarray(py).into_any()),
-                SupportedRustArrayD::Float64(a) => Ok(a.into_pyarray(py).into_any()),
-                _ => Err(PyErr::new::<PyValueError, _>("Unsupported array type")),
-            })
+            .map(|x| x.into_bound_py_any(py))
             .transpose()?,
     )?;
 
@@ -422,21 +410,7 @@ pub fn convert_get_object_slice_response_to_pydict<'py>(
                 sub_dict.set_item("name", name)?;
 
                 // Convert array to Python object if present
-                let py_array = array
-                    .map(|x| match x {
-                        SupportedRustArrayD::Int8(a) => Ok(a.into_pyarray(py).into_any()),
-                        SupportedRustArrayD::Int16(a) => Ok(a.into_pyarray(py).into_any()),
-                        SupportedRustArrayD::Int32(a) => Ok(a.into_pyarray(py).into_any()),
-                        SupportedRustArrayD::Int64(a) => Ok(a.into_pyarray(py).into_any()),
-                        SupportedRustArrayD::UInt8(a) => Ok(a.into_pyarray(py).into_any()),
-                        SupportedRustArrayD::UInt16(a) => Ok(a.into_pyarray(py).into_any()),
-                        SupportedRustArrayD::UInt32(a) => Ok(a.into_pyarray(py).into_any()),
-                        SupportedRustArrayD::UInt64(a) => Ok(a.into_pyarray(py).into_any()),
-                        SupportedRustArrayD::Float32(a) => Ok(a.into_pyarray(py).into_any()),
-                        SupportedRustArrayD::Float64(a) => Ok(a.into_pyarray(py).into_any()),
-                        _ => Err(PyErr::new::<PyValueError, _>("Unsupported array type")),
-                    })
-                    .transpose()?;
+                let py_array = array.map(|x| x.into_bound_py_any(py)).transpose()?;
 
                 sub_dict.set_item("array", py_array)?;
                 temp_array.push(sub_dict);
@@ -446,14 +420,13 @@ pub fn convert_get_object_slice_response_to_pydict<'py>(
         None => None,
     };
     dict.set_item("sub_obj_slices", sub_slices)?;
-    // debug!("Converted response: {:?}", dict);
-    Ok(dict.into())
+    Ok(dict)
 }
 
 pub fn convert_get_object_meta_response_to_pydict<'py>(
     py: Python<'py>,
     response: GetObjectMetaResponse,
-) -> PyResult<Py<PyDict>> {
+) -> PyResult<Bound<'py, PyDict>> {
     let dict = PyDict::new(py);
 
     // Convert obj_id to Python int
@@ -489,10 +462,28 @@ pub fn convert_get_object_meta_response_to_pydict<'py>(
     } else {
         dict.set_item("sub_obj_metadata", py.None())?;
     }
-    Ok(dict.into())
+    Ok(dict)
 }
 
-#[derive(Debug)]
+pub fn convert_sample_response_to_pydict<'py>(
+    py: Python<'py>,
+    response: Option<&GetSampleResponse>,
+) -> PyResult<Bound<'py, PyDict>> {
+    let dict = PyDict::new(py);
+    if let Some(response) = response {
+        response.variable_data.iter().for_each(|(k, v)| {
+            let _ = dict.set_item(
+                k,
+                v.to_owned()
+                    .into_bound_py_any(py)
+                    .unwrap_or(py.None().into_bound(py)),
+            );
+        });
+    }
+    Ok(dict)
+}
+
+#[derive(Debug, Clone)]
 pub enum MetaKeySpec {
     Simple(Vec<String>),
     WithObject(HashMap<String, Vec<String>>),

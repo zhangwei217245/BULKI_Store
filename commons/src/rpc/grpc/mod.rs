@@ -5,7 +5,7 @@ pub mod bulkistore {
 
 use crate::err::RpcErr;
 use crate::handler::HandlerDispatcher;
-use crate::utils::{FileUtility, TimeUtility};
+use crate::utils::{FileUtility, NetworkUtility, TimeUtility};
 use crate::{
     err::{RPCResult, StatusCode},
     rpc::{MessageType, RPCData, RPCMetadata, RxContext, RxEndpoint, TxContext, TxEndpoint},
@@ -29,17 +29,17 @@ use std::io::Write;
 use std::marker::Sync;
 use std::net::SocketAddr;
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use tokio::sync::oneshot;
 use tonic::codec::CompressionEncoding;
 use tonic::transport::{Channel, Server};
 use tonic::Request;
 
 const MAX_SERVER_ADDR_LEN: usize = 256;
-const DEFAULT_BASE_PORT: u16 = 50051;
+const DEFAULT_BASE_PORT: u16 = 50000;
 
-const MAX_DECODING_MESSAGE_SIZE: usize = usize::MAX;
-const MAX_ENCODING_MESSAGE_SIZE: usize = usize::MAX;
+const MAX_DECODING_MESSAGE_SIZE: usize = usize::MAX - 100;
+const MAX_ENCODING_MESSAGE_SIZE: usize = usize::MAX - 100;
 
 #[derive(Default, Clone)]
 pub struct GrpcRX {
@@ -55,7 +55,17 @@ pub struct GrpcTX {
 }
 
 impl GrpcRX {
+    #[cfg(feature = "mpi")]
     pub fn new(rpc_id: String, world: Option<Arc<SimpleCommunicator>>) -> Self {
+        Self {
+            context: RxContext::new(rpc_id, world),
+            port: 0,
+            hostname: String::new(),
+            rx_id: 0,
+        }
+    }
+    #[cfg(not(feature = "mpi"))]
+    pub fn new(rpc_id: String, world: Option<()>) -> Self {
         Self {
             context: RxContext::new(rpc_id, world),
             port: 0,
@@ -72,12 +82,21 @@ impl GrpcTX {
     const KEEPALIVE_TIMEOUT: Duration = Duration::from_secs(10);
     // const MAX_CONCURRENT_REQUESTS: usize = 1000;
 
+    #[cfg(feature = "mpi")]
     pub fn new(rpc_id: String, world: Option<Arc<SimpleCommunicator>>) -> Self {
         Self {
             context: TxContext::new(rpc_id, world),
             connections: DashMap::new(),
         }
     }
+    #[cfg(not(feature = "mpi"))]
+    pub fn new(rpc_id: String, world: Option<()>) -> Self {
+        Self {
+            context: TxContext::new(rpc_id, world),
+            connections: DashMap::new(),
+        }
+    }
+
     async fn check_connection_health(&self, channel: &Channel) -> bool {
         // Send an empty message just to check if connection is alive
         let metadata = RPCMetadata {
@@ -136,10 +155,10 @@ impl GrpcTX {
         let server_addr = server_addresses[rx_id].as_str();
         let endpoint = format!("http://{}", server_addr);
 
-        info!("[TX Rank {}] got endpoint {}", self.context.rank, endpoint);
+        debug!("[TX Rank {}] got endpoint {}", self.context.rank, endpoint);
 
         // Use Tonic's advanced channel features
-        let channel = Channel::builder(endpoint.parse().unwrap())
+        let channel = match Channel::builder(endpoint.parse().unwrap())
             .connect_timeout(Self::CONNECT_TIMEOUT)
             .tcp_keepalive(Some(Self::KEEPALIVE_INTERVAL))
             // .tcp_nodelay(true) // Disable Nagle's algorithm for better latency
@@ -147,15 +166,20 @@ impl GrpcTX {
             .keep_alive_timeout(Self::KEEPALIVE_TIMEOUT)
             .connect()
             .await
-            .unwrap();
+        {
+            Ok(channel) => channel,
+            Err(e) => {
+                return Err(anyhow::anyhow!("Failed to connect to {}: {}", endpoint, e));
+            }
+        };
 
-        info!("[TX Rank {}] Connected to RX {}", self.context.rank, rx_id);
+        debug!("[TX Rank {}] Connected to RX {}", self.context.rank, rx_id);
 
         self.connections.insert(rx_id, channel);
 
         let client = GrpcBulkistoreClient::new(self.connections.get(&rx_id).unwrap().clone())
-            .send_compressed(CompressionEncoding::Gzip)
-            .accept_compressed(CompressionEncoding::Gzip)
+            .send_compressed(CompressionEncoding::Zstd)
+            .accept_compressed(CompressionEncoding::Zstd)
             .max_decoding_message_size(MAX_DECODING_MESSAGE_SIZE)
             .max_encoding_message_size(MAX_ENCODING_MESSAGE_SIZE);
 
@@ -199,6 +223,7 @@ impl GrpcBulkistore for GrpcRX {
     ) -> Result<tonic::Response<RpcMessage>, tonic::Status> {
         let request = request.into_inner();
 
+        let start_time = TimeUtility::get_timestamp_ms();
         // Deserialize the binary_data back into RPCData
         let rpc_data = match rmp_serde::from_slice::<RPCData>(&request.binary_data) {
             Ok(data) => data,
@@ -209,6 +234,10 @@ impl GrpcBulkistore for GrpcRX {
                 )))
             }
         };
+        debug!(
+            "Request deserialization time: {} ms",
+            TimeUtility::get_timestamp_ms() - start_time
+        );
 
         // Call respond and await its result
         let response = self
@@ -216,9 +245,15 @@ impl GrpcBulkistore for GrpcRX {
             .await
             .map_err(|e| tonic::Status::internal(format!("Failed to process request: {}", e)))?;
 
+        let response_start_time = TimeUtility::get_timestamp_ms();
         // Serialize the response back to binary format
         let binary_response = rmp_serde::to_vec(&response)
             .map_err(|e| tonic::Status::internal(format!("Failed to serialize response: {}", e)))?;
+
+        debug!(
+            "Response serialization time: {} ms",
+            TimeUtility::get_timestamp_ms() - response_start_time
+        );
 
         // Create the RpcMessage response
         Ok(tonic::Response::new(RpcMessage {
@@ -257,67 +292,68 @@ impl RxEndpoint for GrpcRX {
         start_listen: oneshot::Sender<()>,
         shutdown_rx: oneshot::Receiver<()>,
     ) -> Result<(), anyhow::Error> {
-        let rx_rank = (self.rx_id % 10 * 100) + self.context.rank as u16;
+        let rx_rank = (self.rx_id % 10 * 10) + self.context.rank as u16;
         let base_port = DEFAULT_BASE_PORT + rx_rank;
-        let max_attempts = 20;
+        // let max_attempts = 200;
 
         let hostname = hostname::get()?
             .into_string()
             .map_err(|_| anyhow::anyhow!("Invalid hostname"))?;
 
-        // Use localhost IP for binding
-        for port in base_port..base_port + max_attempts {
-            debug!("Attempting to start server on {}:{}", hostname, port);
-
-            let addr = format!("0.0.0.0:{}", port);
-            let service = Arc::new(self.clone());
-
-            match addr.parse::<SocketAddr>() {
-                Ok(socket_addr) => {
-                    // bind with TCPListener
-                    let listener = tokio::net::TcpListener::bind(socket_addr).await?;
-                    // spawn a new task to start server
-                    tokio::spawn(async move {
-                        Server::builder()
-                            .add_service(
-                                GrpcBulkistoreServer::from_arc(service)
-                                    .max_decoding_message_size(MAX_DECODING_MESSAGE_SIZE)
-                                    .max_encoding_message_size(MAX_ENCODING_MESSAGE_SIZE)
-                                    .accept_compressed(CompressionEncoding::Gzip)
-                                    .send_compressed(CompressionEncoding::Gzip),
-                            )
-                            // add as a dev-dependency the crate `tokio-stream` with feature `net` enabled
-                            .serve_with_incoming_shutdown(
-                                tokio_stream::wrappers::TcpListenerStream::new(listener),
-                                async move {
-                                    shutdown_rx.await.ok();
-                                    // TODO: any operation needed.
-                                },
-                            )
-                            .await
-                    });
-                    debug!("Successfully started server on {}:{}", hostname, port);
-
-                    self.port = port;
-                    self.hostname = hostname.clone();
-                    self.context.address = Some(addr);
-
-                    let mut server_addresses = vec![String::new(); self.context.size as usize];
-                    server_addresses[self.context.rank] = format!("{}:{}", hostname, port);
-                    self.context.server_addresses = Some(server_addresses);
-                    debug!(
-                        "[Rank {}] Server addresses: {:?}",
-                        self.context.rank, self.context.server_addresses
-                    );
-                    debug!("[Rank {}] Server started", self.context.rank);
-                    break;
-                }
-                Err(e) => {
-                    debug!("Failed to parse address {}:{}: {}", hostname, port, e);
-                    continue;
-                }
-            }
+        let port = NetworkUtility::find_available_port(base_port, self.context.rank as u16);
+        if port.is_none() {
+            return Err(anyhow::anyhow!("Failed to find available port"));
         }
+        let port = port.unwrap();
+        let addr = format!("0.0.0.0:{}", port);
+
+        let Ok(socket_addr) = addr.parse::<SocketAddr>() else {
+            return Err(anyhow::anyhow!(
+                "Failed to parse address {}:{}",
+                hostname,
+                port
+            ));
+        };
+        // bind with TCPListener
+        let listener = tokio::net::TcpListener::bind(socket_addr).await?;
+
+        self.port = port;
+        self.hostname = hostname.clone();
+        self.context.address = Some(addr);
+        let mut server_addresses = vec![String::new(); self.context.size as usize];
+        server_addresses[self.context.rank] = format!("{}:{}", hostname, port);
+        self.context.server_addresses = Some(server_addresses);
+        debug!(
+            "[Rank {}] Server addresses: {:?}",
+            self.context.rank, self.context.server_addresses
+        );
+
+        let service = Arc::new(self.clone());
+        // spawn a new task to start server
+        tokio::spawn(async move {
+            Server::builder()
+                .add_service(
+                    GrpcBulkistoreServer::from_arc(service)
+                        .max_decoding_message_size(MAX_DECODING_MESSAGE_SIZE)
+                        .max_encoding_message_size(MAX_ENCODING_MESSAGE_SIZE)
+                        .accept_compressed(CompressionEncoding::Zstd)
+                        .send_compressed(CompressionEncoding::Zstd),
+                )
+                // add as a dev-dependency the crate `tokio-stream` with feature `net` enabled
+                .serve_with_incoming_shutdown(
+                    tokio_stream::wrappers::TcpListenerStream::new(listener),
+                    async move {
+                        shutdown_rx.await.ok();
+                    },
+                )
+                .await
+        });
+
+        debug!(
+            "[Rank {}] Successfully started server on {}:{}",
+            self.context.rank, hostname, port
+        );
+
         let _ = start_listen.send(());
         Ok(())
     }
@@ -329,7 +365,7 @@ impl RxEndpoint for GrpcRX {
             self.context.rank,
             self.context.server_addresses.as_ref().unwrap()[self.context.rank]
         );
-        info!(target:"server", "[Rank {}] Server info: {}", self.context.rank, server_info);
+        debug!(target:"server", "[Rank {}] Server info: {}", self.context.rank, server_info);
 
         // Broadcast server info to all ranks
         // Convert string to bytes for MPI communication
@@ -340,6 +376,7 @@ impl RxEndpoint for GrpcRX {
         // Create buffer to receive all server information
         let mut all_server_info = vec![0u8; MAX_SERVER_ADDR_LEN * self.context.size as usize];
 
+        let exchange_addresses_time = Instant::now();
         // All gather the fixed-size buffers
         #[cfg(feature = "mpi")]
         {
@@ -352,6 +389,11 @@ impl RxEndpoint for GrpcRX {
             // For single process, just copy the local info into the first slot
             all_server_info[..info_bytes.len()].copy_from_slice(&info_bytes);
         }
+        debug!(
+            "[Rank {}] all_gather_into time: {} ms",
+            self.context.rank,
+            exchange_addresses_time.elapsed().as_millis()
+        );
 
         for i in 0..self.context.size as usize {
             let start = i * MAX_SERVER_ADDR_LEN;
@@ -419,7 +461,7 @@ impl RxEndpoint for GrpcRX {
         let start_time = Instant::now();
         // update the received time in the metadata
         if let Some(metadata) = &mut msg.metadata {
-            metadata.request_received_time = TimeUtility::get_timestamp_ms();
+            metadata.request_received_time = TimeUtility::get_timestamp_us();
         }
 
         let mut result = self
@@ -478,7 +520,7 @@ impl TxEndpoint for GrpcTX {
     }
     fn discover_servers(&mut self) -> Result<isize> {
         let pdc_tmp_dir = FileUtility::get_pdc_tmp_dir();
-        info!("Getting PDC tmp dir: {}", pdc_tmp_dir.display());
+        debug!("Getting PDC tmp dir: {}", pdc_tmp_dir.display());
 
         // Wait for ready file to be created
         let ready_file = pdc_tmp_dir.join(format!("rx_{}_ready.txt", self.context.rpc_id));
@@ -551,7 +593,7 @@ impl TxEndpoint for GrpcTX {
             client_rank: self.context.rank as u32,
             server_rank: rx_id as u32,
             request_id: rand::rng().random::<u64>(),
-            request_issued_time: TimeUtility::get_timestamp_ms(),
+            request_issued_time: TimeUtility::get_timestamp_us(),
             request_received_time: 0,
             processing_duration_us: None,
             message_type: MessageType::Request,

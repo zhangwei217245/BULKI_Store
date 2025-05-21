@@ -1,0 +1,27 @@
+# Linux targets
+[target.x86_64-unknown-linux-gnu]
+linker = "cc"
+
+[target.aarch64-unknown-linux-gnu]
+linker = "cc"
+
+# macOS targets
+[target.x86_64-apple-darwin]
+linker = "cc"
+
+[target.aarch64-apple-darwin]
+linker = "cc"
+
+# Windows targets (MSVC and GNU toolchains)
+[target.x86_64-pc-windows-msvc]
+linker = "link"
+
+[target.x86_64-pc-windows-gnu]
+linker = "gcc"
+
+[target.aarch64-pc-windows-msvc]
+linker = "link"
+
+# FreeBSD (and other similar BSDs)
+[target.x86_64-unknown-freebsd]
+linker = "cc"

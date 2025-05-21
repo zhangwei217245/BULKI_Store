@@ -23,6 +23,9 @@ const VERSION: &str = env!("CARGO_PKG_VERSION");
 fn rust_ext<'py>(m: &Bound<'py, PyModule>) -> PyResult<()> {
     env_logger::init();
 
+    // Initialize Python for multi-threaded use
+    pyo3::prepare_freethreaded_python();
+
     #[pyclass]
     struct BKCObject {
         #[pyo3(get)]
@@ -42,8 +45,15 @@ fn rust_ext<'py>(m: &Bound<'py, PyModule>) -> PyResult<()> {
     // Module initialization - just register the init function
     #[pyfn(m)]
     #[pyo3(name = "init")]
-    fn init_py(py: Python<'_>) -> PyResult<()> {
-        pyctx::init_py(py)
+    #[pyo3(signature = (rank=None, size=None))]
+    fn init_py<'py>(py: Python<'py>, rank: Option<u32>, size: Option<u32>) -> PyResult<()> {
+        pyctx::init_py(py, rank, size)
+    }
+
+    #[pyfn(m)]
+    #[pyo3(name = "close")]
+    fn close_py<'py>(py: Python<'py>) -> PyResult<()> {
+        pyctx::close_py(py)
     }
 
     #[pyfn(m)]
@@ -120,6 +130,114 @@ fn rust_ext<'py>(m: &Bound<'py, PyModule>) -> PyResult<()> {
         sub_obj_regions: Option<Vec<(String, Vec<Bound<'py, PySlice>>)>>,
     ) -> PyResult<Py<PyDict>> {
         pyctx::get_object_data_impl(py, obj_id.into(), region, sub_obj_regions)
+    }
+
+    #[pyfn(m)]
+    #[pyo3(name = "get_multiple_object_metadata")]
+    #[pyo3(signature = (obj_ids, arr_meta_keys, arr_sub_meta_keys))]
+    fn get_multiple_object_metadata<'py>(
+        py: Python<'py>,
+        obj_ids: Vec<PyObjectIdentifier>,
+        arr_meta_keys: Option<Vec<Vec<String>>>,
+        arr_sub_meta_keys: Option<Vec<MetaKeySpec>>,
+    ) -> PyResult<Py<PyDict>> {
+        let rust_obj_ids = obj_ids.into_iter().map(|obj_id| obj_id.into()).collect();
+        pyctx::get_multiple_object_metadata_impl(py, rust_obj_ids, arr_meta_keys, arr_sub_meta_keys)
+    }
+
+    #[pyfn(m)]
+    #[pyo3(name = "get_multiple_object_data")]
+    #[pyo3(signature = (obj_ids, arr_regions, arr_sub_obj_regions))]
+    fn get_multiple_object_data<'py>(
+        py: Python<'py>,
+        obj_ids: Vec<PyObjectIdentifier>,
+        arr_regions: Option<Vec<Vec<Bound<'py, PySlice>>>>,
+        arr_sub_obj_regions: Option<Vec<Vec<(String, Vec<Bound<'py, PySlice>>)>>>,
+    ) -> PyResult<Py<PyDict>> {
+        pyctx::get_multiple_object_data_impl(
+            py,
+            obj_ids.into_iter().map(|obj_id| obj_id.into()).collect(),
+            arr_regions,
+            arr_sub_obj_regions,
+        )
+    }
+
+    #[pyfn(m)]
+    #[pyo3(name = "pop_queue_data")]
+    fn pop_queue_data<'py>(py: Python<'py>) -> PyResult<Py<PyAny>> {
+        pyctx::pop_queue_data_impl(py)
+    }
+
+    #[pyfn(m)]
+    #[pyo3(name = "check_queue_length")]
+    fn check_queue_length<'py>(py: Python<'py>) -> PyResult<Py<PyAny>> {
+        pyctx::check_queue_length_impl(py)
+    }
+
+    #[pyfn(m)]
+    #[pyo3(name = "prefetch_samples")]
+    #[pyo3(signature = (label, sample_ids, part_size, sample_var_keys, batch_size=None, prefetch_factor=None))]
+    fn prefetch_samples<'py>(
+        py: Python<'py>,
+        label: String,
+        sample_ids: Vec<usize>,
+        part_size: usize,
+        sample_var_keys: Vec<String>,
+        batch_size: Option<usize>,
+        prefetch_factor: Option<usize>,
+    ) -> PyResult<Py<PyAny>> {
+        if batch_size.is_none() {
+            return pyctx::prefetch_samples_normal_impl(
+                py,
+                label,
+                sample_ids,
+                part_size,
+                sample_var_keys,
+            );
+        }
+        pyctx::prefetch_samples_into_queue_impl(
+            py,
+            label,
+            sample_ids,
+            part_size,
+            sample_var_keys,
+            batch_size,
+            prefetch_factor,
+        )
+    }
+
+    #[pyfn(m)]
+    #[pyo3(name = "fetch_samples")]
+    #[pyo3(signature = (label, sample_ids, part_size, sample_var_keys))]
+    fn fetch_samples<'py>(
+        py: Python<'py>,
+        label: String,
+        sample_ids: Vec<usize>,
+        part_size: usize,
+        sample_var_keys: Vec<String>,
+    ) -> PyResult<Py<PyAny>> {
+        pyctx::fetch_samples_impl(py, label, sample_ids, part_size, sample_var_keys)
+    }
+
+    /// Forces a checkpoint of the memory store.
+    #[pyfn(m)]
+    #[pyo3(name = "force_checkpointing")]
+    fn force_checkpointing<'py>(py: Python<'py>) -> PyResult<Py<PyAny>> {
+        pyctx::force_checkpointing_impl(py)
+    }
+
+    #[pyfn(m)]
+    #[pyo3(name = "get_checkpointing_status")]
+    #[pyo3(signature = (job_id))]
+    fn get_checkpointing_status<'py>(py: Python<'py>, job_id: String) -> PyResult<Py<PyAny>> {
+        pyctx::get_job_progress_impl(py, job_id)
+    }
+
+    #[pyfn(m)]
+    #[pyo3(name = "is_job_completed")]
+    #[pyo3(signature = (job_id))]
+    fn is_job_completed<'py>(py: Python<'py>, job_id: String) -> PyResult<Py<PyAny>> {
+        pyctx::is_job_completed_impl(py, job_id)
     }
 
     ///////////////////////////////////////////////////////////////////////////

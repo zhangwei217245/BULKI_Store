@@ -1,22 +1,26 @@
 use crate::pyctx::converter;
 use anyhow::Result;
 use client::cltctx::get_client_rank;
+use commons::object::types::SupportedRustArrayD;
 use commons::object::{
     objid::GlobalObjectIdExt,
     params::{
-        CreateObjectParams, GetObjectMetaParams, GetObjectSliceParams, SerializableMetaKeySpec,
+        CreateObjectParams, GetObjectMetaParams, GetObjectSliceParams, GetObjectSliceResponse,
+        SerializableMetaKeySpec,
     },
     types::{ObjectIdentifier, SerializableSliceInfoElem},
 };
-use log::debug;
+use log::trace;
 use pyo3::{
     types::{PyDict, PySlice},
     Bound,
 };
 use rand::distr::Alphanumeric;
+use rand::rngs::StdRng;
 use rand::Rng;
-// use rayon::prelude::*;
+use rand::SeedableRng;
 use std::time::{SystemTime, UNIX_EPOCH};
+// use rayon::prelude::*;
 
 use crate::pyctx::converter::SupportedNumpyArray;
 
@@ -152,9 +156,11 @@ pub fn get_object_slice_req_proc<'py>(
     region: Option<Vec<Bound<'py, PySlice>>>,
     sub_obj_regions: Option<Vec<(String, Vec<Bound<'py, PySlice>>)>>,
 ) -> Result<GetObjectSliceParams> {
-    debug!(
+    trace!(
         "get_object_slice_req_proc: obj_id: {:?}, region: {:?}, sub_obj_regions: {:?}",
-        obj_id, region, sub_obj_regions
+        obj_id,
+        region,
+        sub_obj_regions
     );
 
     // Convert main region
@@ -211,9 +217,11 @@ pub fn get_object_metadata_req_proc<'py>(
     meta_keys: Option<Vec<String>>,
     sub_meta_keys: Option<converter::MetaKeySpec>,
 ) -> Result<GetObjectMetaParams> {
-    debug!(
+    trace!(
         "get_object_metadata_req_proc: obj_id: {:?}, meta_keys: {:?}, sub_meta_keys: {:?}",
-        obj_id, meta_keys, sub_meta_keys
+        obj_id,
+        meta_keys,
+        sub_meta_keys
     );
     Ok(GetObjectMetaParams {
         obj_id,
@@ -228,4 +236,121 @@ pub fn get_object_metadata_req_proc<'py>(
             None => None,
         },
     })
+}
+
+#[allow(dead_code)]
+pub fn gen_sim_data(
+    get_object_slice_params: GetObjectSliceParams,
+) -> Result<GetObjectSliceResponse> {
+    // Use the current timestamp as a seed for deterministic but varying data
+    let seed = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_millis() as u64;
+    let mut rng = StdRng::seed_from_u64(seed);
+
+    // Calculate shape from region if provided
+    let shape = if let Some(region) = &get_object_slice_params.region {
+        calculate_shape_from_region(region)
+    } else {
+        // Default shape if no region is provided
+        vec![2, 2]
+    };
+
+    // Generate random array data
+    let array_data = generate_random_array(&shape, &mut rng);
+
+    // Generate sub-object data if requested
+    let sub_obj_slices = if let Some(sub_regions) = &get_object_slice_params.sub_obj_regions {
+        let mut sub_slices = Vec::new();
+
+        for (sub_name, sub_region) in sub_regions {
+            // Generate a unique sub-object ID
+            let sub_obj_id = rng.random::<u128>();
+
+            // Calculate shape for sub-object
+            let sub_shape = if let Some(region) = sub_region {
+                calculate_shape_from_region(region)
+            } else {
+                // Default shape for sub-objects
+                vec![2, 2]
+            };
+
+            // Generate random data for sub-object
+            let sub_data = generate_random_array(&sub_shape, &mut rng);
+
+            sub_slices.push((sub_obj_id, sub_name.clone(), Some(sub_data)));
+        }
+
+        Some(sub_slices)
+    } else {
+        None
+    };
+
+    // Create response
+    Ok(GetObjectSliceResponse {
+        obj_id: get_object_slice_params.obj_id.vnode_id() as u128,
+        obj_name: format!("sim_obj_{}", get_object_slice_params.obj_id.vnode_id()),
+        array_slice: Some(array_data),
+        sub_obj_slices,
+    })
+}
+
+// Helper function to calculate shape from region slice information
+fn calculate_shape_from_region(region: &[SerializableSliceInfoElem]) -> Vec<usize> {
+    let mut shape = Vec::new();
+
+    for elem in region {
+        match elem {
+            SerializableSliceInfoElem::Slice { start, end, step } => {
+                let size = if *step > 0 {
+                    (end.unwrap_or(start + 1) - start + step - 1) / step
+                } else if *step < 0 {
+                    (start - end.unwrap_or(start + 1) + (-step) - 1) / (-step)
+                } else {
+                    // Step is 0, which is invalid
+                    1
+                };
+                shape.push(size.max(0) as usize);
+            }
+            SerializableSliceInfoElem::Index(_) => {
+                // Index doesn't contribute to shape
+            }
+            SerializableSliceInfoElem::NewAxis => {
+                shape.push(1);
+            }
+        }
+    }
+
+    // Ensure we have at least a 2D array
+    if shape.is_empty() {
+        shape.push(1);
+        shape.push(1);
+    } else if shape.len() == 1 {
+        shape.push(1);
+    }
+
+    shape
+}
+
+// Helper function to generate random array data
+fn generate_random_array(shape: &[usize], rng: &mut impl rand::Rng) -> SupportedRustArrayD {
+    use commons::object::types::SupportedRustArrayD;
+    use ndarray::{ArrayD, IxDyn};
+
+    // Calculate total size
+    let size: usize = shape.iter().product();
+
+    // Create a dynamic dimension
+    let dim = IxDyn(&shape);
+
+    // Generate random f64 data
+    let mut data = Vec::with_capacity(size);
+    for _ in 0..size {
+        data.push(rng.random::<f64>());
+    }
+
+    // Create array and return
+    let array = ArrayD::from_shape_vec(dim, data).unwrap();
+    SupportedRustArrayD::Float64(array)
 }
