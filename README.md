@@ -1,5 +1,11 @@
 # BULKI Store
 
+A memory-safe Object Store implementation in Rust. 
+
+Inspired by DAOS and PDC. 
+
+Built for I/O Researchers. 
+
 ## Prerequisites
 
 MPICH 4.0+ is required.
